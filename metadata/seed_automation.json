@@ -1,0 +1,539 @@
+{
+ "validation_rules": [
+  {
+   "name": "CloseDate not in past",
+   "object": "Opportunity",
+   "active": true,
+   "condition": {
+    "and": [
+     {
+      "not": {
+       "in": [
+        {
+         "field": "Stage"
+        },
+        [
+         "Closed Won",
+         "Closed Lost"
+        ]
+       ]
+      }
+     },
+     {
+      "<": [
+       {
+        "field": "CloseDate"
+       },
+       {
+        "today": true
+       }
+      ]
+     }
+    ]
+   },
+   "message": "Close Date cannot be in the past for an open opportunity."
+  }
+ ],
+ "flows": [
+  {
+   "name": "Negotiation follow-up task",
+   "object": "Opportunity",
+   "trigger": "on_update",
+   "active": true,
+   "condition": {
+    "and": [
+     {
+      "==": [
+       {
+        "field": "Stage"
+       },
+       "Negotiation"
+      ]
+     },
+     {
+      "!=": [
+       {
+        "field_old": "Stage"
+       },
+       "Negotiation"
+      ]
+     }
+    ]
+   },
+   "actions": [
+    {
+     "type": "create_record",
+     "object": "Task",
+     "fields": {
+      "Subject": "Follow up: {{Trigger.Name}}",
+      "Status": "Not Started",
+      "Priority": "High",
+      "AccountId": "{{Trigger.AccountId}}"
+     }
+    }
+   ]
+  },
+  {
+   "name": "Quick contact create",
+   "flow_type": "screen",
+   "active": true,
+   "screens": [
+    {
+     "id": "s1",
+     "title": "New contact",
+     "fields": [
+      {
+       "name": "FirstName",
+       "label": "First name",
+       "type": "text"
+      },
+      {
+       "name": "LastName",
+       "label": "Last name",
+       "type": "text",
+       "required": true
+      },
+      {
+       "name": "Email",
+       "label": "Email",
+       "type": "email"
+      },
+      {
+       "name": "Phone",
+       "label": "Phone",
+       "type": "phone"
+      }
+     ]
+    },
+    {
+     "id": "s2",
+     "title": "Role",
+     "fields": [
+      {
+       "name": "Title",
+       "label": "Title",
+       "type": "text"
+      }
+     ]
+    }
+   ],
+   "finish_actions": [
+    {
+     "type": "create_record",
+     "object": "Contact",
+     "fields": {
+      "FirstName": "{{Trigger.FirstName}}",
+      "LastName": "{{Trigger.LastName}}",
+      "Email": "{{Trigger.Email}}",
+      "Phone": "{{Trigger.Phone}}",
+      "Title": "{{Trigger.Title}}"
+     }
+    }
+   ]
+  }
+ ],
+ "approval_processes": [
+  {
+   "name": "Large Discount Approval",
+   "object": "Opportunity",
+   "active": true,
+   "entry_conditions": {
+    "<": [
+     20,
+     {
+      "field": "DiscountPercent"
+     }
+    ]
+   },
+   "steps": [
+    {
+     "name": "Sales Manager approval",
+     "approver": "manager"
+    }
+   ]
+  }
+ ],
+ "record_types": [
+  {
+   "name": "SMB",
+   "label": "SMB",
+   "object": "Opportunity",
+   "is_default": true
+  },
+  {
+   "name": "Enterprise",
+   "label": "Enterprise",
+   "object": "Opportunity",
+   "picklist_overrides": {
+    "Stage": [
+     "Prospecting",
+     "Qualification",
+     "Security Review",
+     "Proposal",
+     "Negotiation",
+     "Closed Won",
+     "Closed Lost"
+    ]
+   }
+  }
+ ],
+ "reports": [
+  {
+   "name": "Pipeline by Stage",
+   "object": "Opportunity",
+   "active": true,
+   "columns": [
+    "Name",
+    "Amount",
+    "Stage",
+    "CloseDate"
+   ],
+   "filters": {},
+   "group_by": "Stage",
+   "aggregate": {
+    "func": "sum",
+    "field": "Amount"
+   },
+   "chart": "bar"
+  }
+ ],
+ "sharing_rules": [
+  {
+   "name": "Critical cases to support",
+   "object": "Case",
+   "active": true,
+   "criteria": {
+    "==": [
+     {
+      "field": "Priority"
+     },
+     "Critical"
+    ]
+   },
+   "share_with": {
+    "type": "role",
+    "role": "Support Agent"
+   }
+  }
+ ],
+ "matching_rules": [
+  {
+   "name": "Lead email duplicates",
+   "object": "Lead",
+   "active": true,
+   "fields": [
+    "Email"
+   ]
+  }
+ ],
+ "permission_sets": [
+  {
+   "name": "DeleteLeads",
+   "label": "Delete Leads",
+   "object_permissions": {
+    "Lead": {
+     "create": false,
+     "read": false,
+     "edit": false,
+     "delete": true
+    }
+   },
+   "field_permissions": {}
+  }
+ ],
+ "permission_set_assignments": {
+  "maya": [
+   "DeleteLeads"
+  ]
+ },
+ "triggers": [
+  {
+   "name": "Set Probability from Stage",
+   "object": "Opportunity",
+   "active": true,
+   "order": 10,
+   "events": [
+    "before_insert",
+    "before_update"
+   ],
+   "code": "PROB = {'Prospecting': 10, 'Qualification': 25, 'Security Review': 35,\n        'Proposal': 50, 'Negotiation': 75, 'Closed Won': 100, 'Closed Lost': 0}\nstage = record.get('Stage')\nif stage in PROB:\n    record['Probability'] = PROB[stage]\n"
+  },
+  {
+   "name": "Block Account delete with open Opps",
+   "object": "Account",
+   "active": true,
+   "order": 10,
+   "events": [
+    "before_delete"
+   ],
+   "code": "open_opps = [o for o in query('Opportunity', AccountId=record.get('id'))\n             if o.get('Stage') not in ('Closed Won', 'Closed Lost')]\nif open_opps:\n    errors.append(f\"Cannot delete: {len(open_opps)} open opportunity(s) exist\")\n"
+  },
+  {
+   "name": "Welcome task for new Contact",
+   "object": "Contact",
+   "active": true,
+   "order": 20,
+   "events": [
+    "after_insert"
+   ],
+   "code": "create('Task', {'Subject': f\"Welcome {record.get('FirstName') or ''} {record.get('LastName')}\".strip(),\n                'Status': 'Not Started', 'Priority': 'Normal'})\n"
+  },
+  {
+   "name": "Compute quote line total",
+   "object": "QuoteLineItem",
+   "active": true,
+   "order": 10,
+   "events": [
+    "before_insert",
+    "before_update"
+   ],
+   "code": "qty = record.get('Quantity') or 0\nprice = record.get('UnitPrice') or 0\ndisc = record.get('Discount') or 0\ntry:\n    total = float(qty) * float(price) * (1 - float(disc) / 100)\nexcept (TypeError, ValueError):\n    total = 0\nrecord['TotalPrice'] = round(total, 2)\n"
+  }
+ ],
+ "list_views": [
+  {
+   "name": "All Accounts",
+   "object": "Account",
+   "shared": true,
+   "columns": [
+    "Name",
+    "Industry",
+    "Phone",
+    "TotalPipeline"
+   ],
+   "filters": {},
+   "sort_by": "Name",
+   "sort_dir": "asc"
+  },
+  {
+   "name": "My Open Pipeline",
+   "object": "Opportunity",
+   "shared": true,
+   "columns": [
+    "Name",
+    "Amount",
+    "Stage",
+    "CloseDate"
+   ],
+   "filters": {
+    "and": [
+     {
+      "==": [
+       {
+        "field": "OwnerId"
+       },
+       {
+        "user_id": true
+       }
+      ]
+     },
+     {
+      "not": {
+       "in": [
+        {
+         "field": "Stage"
+        },
+        [
+         "Closed Won",
+         "Closed Lost"
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "sort_by": "Amount",
+   "sort_dir": "desc"
+  },
+  {
+   "name": "New Leads",
+   "object": "Lead",
+   "shared": true,
+   "columns": [
+    "LastName",
+    "Company",
+    "Status",
+    "Rating"
+   ],
+   "filters": {
+    "==": [
+     {
+      "field": "Status"
+     },
+     "New"
+    ]
+   },
+   "sort_by": "CreatedDate",
+   "sort_dir": "desc"
+  }
+ ],
+ "scheduled_jobs": [
+  {
+   "name": "Close-date reminders",
+   "active": true,
+   "interval_minutes": 1440,
+   "run_as": "admin",
+   "code": "soon = (today() + timedelta(days=7)).isoformat()\nfor o in query('Opportunity'):\n    cd = o.get('CloseDate') or ''\n    if o.get('Stage') in ('Closed Won', 'Closed Lost') or not cd or cd > soon:\n        continue\n    create('Task', {'Subject': f\"Closing soon: {o.get('Name')} ({cd})\",\n                    'Status': 'Not Started', 'Priority': 'High',\n                    'OwnerId': o.get('owner_id')})\n"
+  },
+  {
+   "name": "Case SLA monitor",
+   "interval_minutes": 60,
+   "run_as": "admin",
+   "active": true,
+   "code": "breached = automation.check_sla_breaches(store, security)\nfor m in breached:\n    rec = store.get(m.get('object') or 'Case', m['record_id'])\n    if rec:\n        automation.apply_escalation_rules(store, registry, security,\n            m.get('object') or 'Case', rec, None, user,\n            trigger_on='sla_breach')\n"
+  }
+ ],
+ "assignment_rules": [
+  {
+   "name": "Round-robin web leads",
+   "object": "Lead",
+   "active": true,
+   "order": 10,
+   "criteria": {
+    "==": [
+     {
+      "field": "LeadSource"
+     },
+     "Web"
+    ]
+   },
+   "assignee": {
+    "type": "round_robin",
+    "usernames": [
+     "leo",
+     "maya"
+    ]
+   }
+  }
+ ],
+ "email_templates": [
+  {
+   "name": "New lead welcome",
+   "subject": "Welcome, {{Record.FirstName}}!",
+   "body": "Hi {{Record.FirstName}},\n\nThanks for your interest in {{Record.Company}}.\nI'll be in touch shortly.\n\nBest,\n{{User.Name}}"
+  },
+  {
+   "name": "New case acknowledgment",
+   "subject": "We received your case: {{Record.Subject}}",
+   "body": "Hi {{Record.FirstName}},\n\nThanks for contacting support. We've opened case '{{Record.Subject}}' and will respond shortly.\n\nBest,\n{{User.Name}}"
+  }
+ ],
+ "paths": [
+  {
+   "name": "Opportunity sales path",
+   "object": "Opportunity",
+   "field": "Stage",
+   "active": true,
+   "guidance": {
+    "Prospecting": "Identify the prospect's needs and confirm fit before investing more time.",
+    "Qualification": "Confirm budget, authority, need, and timeline (BANT).",
+    "Proposal": "Send the proposal and agree on decision criteria and date.",
+    "Negotiation": "Handle objections; keep discount approvals tight.",
+    "Closed Won": "Hand off to delivery. Celebrate!",
+    "Closed Lost": "Log the loss reason so we learn from it."
+   }
+  }
+ ],
+ "auto_responses": [],
+ "sla_policies": [
+  {
+   "name": "Standard case SLA - Critical",
+   "object": "Case",
+   "active": true,
+   "priority": "Critical",
+   "milestones": [
+    {
+     "name": "First response",
+     "target_minutes": 30
+    },
+    {
+     "name": "Resolution",
+     "target_minutes": 240
+    }
+   ]
+  },
+  {
+   "name": "Standard case SLA - High",
+   "object": "Case",
+   "active": true,
+   "priority": "High",
+   "milestones": [
+    {
+     "name": "First response",
+     "target_minutes": 60
+    },
+    {
+     "name": "Resolution",
+     "target_minutes": 480
+    }
+   ]
+  },
+  {
+   "name": "Standard case SLA - Medium",
+   "object": "Case",
+   "active": true,
+   "priority": "Medium",
+   "milestones": [
+    {
+     "name": "First response",
+     "target_minutes": 240
+    },
+    {
+     "name": "Resolution",
+     "target_minutes": 1440
+    }
+   ]
+  },
+  {
+   "name": "Standard case SLA - Low",
+   "object": "Case",
+   "active": true,
+   "priority": "Low",
+   "milestones": [
+    {
+     "name": "First response",
+     "target_minutes": 480
+    },
+    {
+     "name": "Resolution",
+     "target_minutes": 2880
+    }
+   ]
+  }
+ ],
+ "escalation_rules": [
+  {
+   "name": "VIP escalation",
+   "object": "Case",
+   "active": true,
+   "trigger_on": "save",
+   "criteria": {
+    "contains": [
+     {
+      "field": "Subject"
+     },
+     "urgent"
+    ]
+   },
+   "action": {
+    "type": "set_fields",
+    "fields": {
+     "Priority": "Critical"
+    }
+   }
+  },
+  {
+   "name": "Escalate SLA-breached cases",
+   "object": "Case",
+   "active": true,
+   "trigger_on": "sla_breach",
+   "criteria": {},
+   "action": {
+    "type": "set_fields",
+    "fields": {
+     "Status": "Escalated"
+    }
+   }
+  }
+ ]
+}
