@@ -1,0 +1,630 @@
+[
+ {
+  "fields": [
+   {
+    "label": "Account Name",
+    "length": 120,
+    "name": "Name",
+    "required": true,
+    "type": "Text"
+   },
+   {
+    "label": "Industry",
+    "name": "Industry",
+    "picklist_values": [
+     "Technology",
+     "Healthcare",
+     "Finance",
+     "Manufacturing",
+     "Retail",
+     "Other"
+    ],
+    "type": "Picklist"
+   },
+   {
+    "label": "Annual Revenue",
+    "name": "AnnualRevenue",
+    "type": "Currency"
+   },
+   {
+    "label": "Phone",
+    "name": "Phone",
+    "type": "Phone"
+   },
+   {
+    "label": "Website",
+    "name": "Website",
+    "type": "URL"
+   },
+   {
+    "label": "Billing City",
+    "length": 80,
+    "name": "BillingCity",
+    "type": "Text"
+   },
+   {
+    "label": "Billing State",
+    "length": 40,
+    "name": "BillingState",
+    "type": "Text"
+   },
+   {
+    "label": "Description",
+    "name": "Description",
+    "type": "TextArea"
+   },
+   {
+    "name": "TotalPipeline",
+    "label": "Total Pipeline",
+    "type": "Currency",
+    "rollup": {
+     "object": "Opportunity",
+     "via": "AccountId",
+     "field": "Amount",
+     "func": "sum"
+    }
+   },
+   {
+    "name": "OpenOpportunityCount",
+    "label": "Open Opportunities",
+    "type": "Number",
+    "rollup": {
+     "object": "Opportunity",
+     "via": "AccountId",
+     "field": "Amount",
+     "func": "count",
+     "filter": {
+      "not": {
+       "in": [
+        {
+         "field": "Stage"
+        },
+        [
+         "Closed Won",
+         "Closed Lost"
+        ]
+       ]
+      }
+     }
+    }
+   }
+  ],
+  "is_custom": false,
+  "label": "Account",
+  "name": "Account",
+  "plural": "Accounts"
+ },
+ {
+  "fields": [
+   {
+    "label": "First Name",
+    "length": 60,
+    "name": "FirstName",
+    "type": "Text"
+   },
+   {
+    "label": "Last Name",
+    "length": 60,
+    "name": "LastName",
+    "required": true,
+    "type": "Text"
+   },
+   {
+    "label": "Email",
+    "name": "Email",
+    "type": "Email"
+   },
+   {
+    "label": "Phone",
+    "name": "Phone",
+    "type": "Phone"
+   },
+   {
+    "label": "Title",
+    "length": 80,
+    "name": "Title",
+    "type": "Text"
+   },
+   {
+    "label": "Account",
+    "name": "AccountId",
+    "reference_to": "Account",
+    "type": "Lookup"
+   }
+  ],
+  "is_custom": false,
+  "label": "Contact",
+  "name": "Contact",
+  "plural": "Contacts"
+ },
+ {
+  "fields": [
+   {
+    "label": "First Name",
+    "length": 60,
+    "name": "FirstName",
+    "type": "Text"
+   },
+   {
+    "label": "Last Name",
+    "length": 60,
+    "name": "LastName",
+    "required": true,
+    "type": "Text"
+   },
+   {
+    "label": "Company",
+    "length": 120,
+    "name": "Company",
+    "required": true,
+    "type": "Text"
+   },
+   {
+    "label": "Email",
+    "name": "Email",
+    "type": "Email"
+   },
+   {
+    "label": "Phone",
+    "name": "Phone",
+    "type": "Phone"
+   },
+   {
+    "default": "New",
+    "label": "Status",
+    "name": "Status",
+    "picklist_values": [
+     "New",
+     "Working",
+     "Nurturing",
+     "Qualified",
+     "Unqualified",
+     "Converted"
+    ],
+    "required": true,
+    "type": "Picklist"
+   },
+   {
+    "label": "Rating",
+    "name": "Rating",
+    "picklist_values": [
+     "Hot",
+     "Warm",
+     "Cold"
+    ],
+    "type": "Picklist"
+   },
+   {
+    "label": "Lead Source",
+    "name": "LeadSource",
+    "picklist_values": [
+     "Web",
+     "Referral",
+     "Partner",
+     "Trade Show",
+     "Other"
+    ],
+    "type": "Picklist"
+   }
+  ],
+  "is_custom": false,
+  "label": "Lead",
+  "name": "Lead",
+  "plural": "Leads"
+ },
+ {
+  "fields": [
+   {
+    "label": "Opportunity Name",
+    "length": 120,
+    "name": "Name",
+    "required": true,
+    "type": "Text"
+   },
+   {
+    "label": "Account",
+    "name": "AccountId",
+    "reference_to": "Account",
+    "type": "Lookup"
+   },
+   {
+    "label": "Amount",
+    "name": "Amount",
+    "type": "Currency"
+   },
+   {
+    "default": "Prospecting",
+    "label": "Stage",
+    "name": "Stage",
+    "picklist_values": [
+     "Prospecting",
+     "Qualification",
+     "Proposal",
+     "Negotiation",
+     "Closed Won",
+     "Closed Lost"
+    ],
+    "required": true,
+    "type": "Picklist"
+   },
+   {
+    "label": "Probability %",
+    "name": "Probability",
+    "type": "Percent"
+   },
+   {
+    "label": "Close Date",
+    "name": "CloseDate",
+    "type": "Date"
+   },
+   {
+    "label": "Description",
+    "name": "Description",
+    "type": "TextArea"
+   },
+   {
+    "name": "DiscountPercent",
+    "label": "Discount %",
+    "type": "Percent"
+   },
+   {
+    "name": "DaysOpen",
+    "label": "Days Open",
+    "type": "Number",
+    "formula": {
+     "days_between": [
+      {
+       "field": "CreatedDate"
+      },
+      {
+       "today": true
+      }
+     ]
+    }
+   }
+  ],
+  "is_custom": false,
+  "label": "Opportunity",
+  "name": "Opportunity",
+  "plural": "Opportunities"
+ },
+ {
+  "fields": [
+   {
+    "label": "Subject",
+    "length": 120,
+    "name": "Subject",
+    "required": true,
+    "type": "Text"
+   },
+   {
+    "default": "New",
+    "label": "Status",
+    "name": "Status",
+    "picklist_values": [
+     "New",
+     "Working",
+     "Escalated",
+     "Closed"
+    ],
+    "required": true,
+    "type": "Picklist"
+   },
+   {
+    "default": "Medium",
+    "label": "Priority",
+    "name": "Priority",
+    "picklist_values": [
+     "Low",
+     "Medium",
+     "High",
+     "Critical"
+    ],
+    "type": "Picklist"
+   },
+   {
+    "label": "Contact",
+    "name": "ContactId",
+    "reference_to": "Contact",
+    "type": "Lookup"
+   },
+   {
+    "label": "Account",
+    "name": "AccountId",
+    "reference_to": "Account",
+    "type": "Lookup"
+   },
+   {
+    "label": "Description",
+    "name": "Description",
+    "type": "TextArea"
+   },
+   {
+    "label": "Origin",
+    "name": "Origin",
+    "type": "Picklist",
+    "picklist_values": [
+     "Web",
+     "Email",
+     "Phone",
+     "Other"
+    ],
+    "default": "Other"
+   }
+  ],
+  "is_custom": false,
+  "label": "Case",
+  "name": "Case",
+  "plural": "Cases"
+ },
+ {
+  "name": "Task",
+  "label": "Task",
+  "plural": "Tasks",
+  "is_custom": false,
+  "fields": [
+   {
+    "name": "Subject",
+    "label": "Subject",
+    "type": "Text",
+    "length": 120,
+    "required": true
+   },
+   {
+    "name": "Status",
+    "label": "Status",
+    "type": "Picklist",
+    "required": true,
+    "default": "Not Started",
+    "picklist_values": [
+     "Not Started",
+     "In Progress",
+     "Completed",
+     "Deferred"
+    ]
+   },
+   {
+    "name": "Priority",
+    "label": "Priority",
+    "type": "Picklist",
+    "default": "Normal",
+    "picklist_values": [
+     "Low",
+     "Normal",
+     "High"
+    ]
+   },
+   {
+    "name": "DueDate",
+    "label": "Due Date",
+    "type": "Date"
+   },
+   {
+    "name": "AccountId",
+    "label": "Account",
+    "type": "Lookup",
+    "reference_to": "Account"
+   },
+   {
+    "name": "Description",
+    "label": "Description",
+    "type": "TextArea"
+   }
+  ]
+ },
+ {
+  "name": "Product",
+  "label": "Product",
+  "plural": "Products",
+  "is_custom": false,
+  "fields": [
+   {
+    "name": "Name",
+    "label": "Product Name",
+    "type": "Text",
+    "required": true,
+    "length": 120
+   },
+   {
+    "name": "ProductCode",
+    "label": "Product Code",
+    "type": "Text",
+    "length": 40
+   },
+   {
+    "name": "Description",
+    "label": "Description",
+    "type": "TextArea"
+   },
+   {
+    "name": "Family",
+    "label": "Family",
+    "type": "Picklist",
+    "picklist_values": [
+     "Hardware",
+     "Software",
+     "Services"
+    ]
+   },
+   {
+    "name": "IsActive",
+    "label": "Active",
+    "type": "Checkbox",
+    "default": true
+   }
+  ],
+  "org_wide_visible": true
+ },
+ {
+  "name": "PriceBook",
+  "label": "Price Book",
+  "plural": "Price Books",
+  "is_custom": false,
+  "fields": [
+   {
+    "name": "Name",
+    "label": "Price Book Name",
+    "type": "Text",
+    "required": true,
+    "length": 120
+   },
+   {
+    "name": "Description",
+    "label": "Description",
+    "type": "TextArea"
+   },
+   {
+    "name": "IsActive",
+    "label": "Active",
+    "type": "Checkbox",
+    "default": true
+   },
+   {
+    "name": "IsStandard",
+    "label": "Standard",
+    "type": "Checkbox",
+    "default": false
+   }
+  ],
+  "org_wide_visible": true
+ },
+ {
+  "name": "PriceBookEntry",
+  "label": "Price Book Entry",
+  "plural": "Price Book Entries",
+  "is_custom": false,
+  "fields": [
+   {
+    "name": "PriceBookId",
+    "label": "Price Book",
+    "type": "Lookup",
+    "reference_to": "PriceBook",
+    "required": true
+   },
+   {
+    "name": "ProductId",
+    "label": "Product",
+    "type": "Lookup",
+    "reference_to": "Product",
+    "required": true
+   },
+   {
+    "name": "UnitPrice",
+    "label": "Unit Price",
+    "type": "Currency",
+    "required": true
+   },
+   {
+    "name": "IsActive",
+    "label": "Active",
+    "type": "Checkbox",
+    "default": true
+   }
+  ],
+  "org_wide_visible": true
+ },
+ {
+  "name": "Quote",
+  "label": "Quote",
+  "plural": "Quotes",
+  "is_custom": false,
+  "fields": [
+   {
+    "name": "Name",
+    "label": "Quote Name",
+    "type": "Text",
+    "required": true,
+    "length": 120
+   },
+   {
+    "name": "OpportunityId",
+    "label": "Opportunity",
+    "type": "Lookup",
+    "reference_to": "Opportunity"
+   },
+   {
+    "name": "PriceBookId",
+    "label": "Price Book",
+    "type": "Lookup",
+    "reference_to": "PriceBook"
+   },
+   {
+    "name": "Status",
+    "label": "Status",
+    "type": "Picklist",
+    "picklist_values": [
+     "Draft",
+     "Needs Review",
+     "Approved",
+     "Rejected"
+    ],
+    "default": "Draft"
+   },
+   {
+    "name": "ExpirationDate",
+    "label": "Expiration Date",
+    "type": "Date"
+   },
+   {
+    "name": "Description",
+    "label": "Description",
+    "type": "TextArea"
+   },
+   {
+    "name": "GrandTotal",
+    "label": "Grand Total",
+    "type": "Currency",
+    "rollup": {
+     "object": "QuoteLineItem",
+     "via": "QuoteId",
+     "field": "TotalPrice",
+     "func": "sum"
+    }
+   }
+  ]
+ },
+ {
+  "name": "QuoteLineItem",
+  "label": "Quote Line Item",
+  "plural": "Quote Line Items",
+  "is_custom": false,
+  "fields": [
+   {
+    "name": "QuoteId",
+    "label": "Quote",
+    "type": "Lookup",
+    "reference_to": "Quote",
+    "required": true
+   },
+   {
+    "name": "PriceBookEntryId",
+    "label": "Price Book Entry",
+    "type": "Lookup",
+    "reference_to": "PriceBookEntry"
+   },
+   {
+    "name": "Quantity",
+    "label": "Quantity",
+    "type": "Number",
+    "required": true,
+    "default": 1
+   },
+   {
+    "name": "UnitPrice",
+    "label": "Unit Price",
+    "type": "Currency",
+    "required": true
+   },
+   {
+    "name": "Discount",
+    "label": "Discount %",
+    "type": "Percent"
+   },
+   {
+    "name": "TotalPrice",
+    "label": "Total Price",
+    "type": "Currency"
+   }
+  ]
+ }
+]
