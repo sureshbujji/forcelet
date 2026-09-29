@@ -203,4 +203,141 @@ def bootstrap(db_path: str):
             _seed("PriceBookEntry", {"PriceBookId": pb, "ProductId": pid,
                                      "UnitPrice": price, "IsActive": True})
 
+    # seed automotive demo data (Automotive Cloud-style objects)
+    if store.count("VehicleDefinition") == 0:
+        rep = security.get_user_by_username("leo")
+        owner_id = rep["id"] if rep else None
+
+        def _aseed(obj_name, fields):
+            rec = dict(fields)
+            rec["owner_id"] = owner_id
+            rec["created_by"] = owner_id
+            return store.insert(obj_name, rec)
+
+        accts = [a for a in store.query("Account", owner_ids=None, limit=100)
+                 if a.get("Name") == "Acme Corp"]
+        acme = accts[0]["id"] if accts else None
+
+        air = _aseed("VehicleDefinition", {
+            "Name": "Lucid Air", "Make": "Lucid", "ModelYear": 2026,
+            "Trim": "Pure", "BodyStyle": "Sedan", "BaseMSRP": 69900.00,
+            "Description": "Luxury electric sedan."})
+        grav = _aseed("VehicleDefinition", {
+            "Name": "Lucid Gravity", "Make": "Lucid", "ModelYear": 2026,
+            "Trim": "Touring", "BodyStyle": "SUV", "BaseMSRP": 79900.00,
+            "Description": "Luxury electric SUV."})
+
+        v1 = _aseed("Vehicle", {
+            "Name": "Air Pure #101", "VIN": "7U4AA1C50RA101101",
+            "VehicleDefinitionId": air, "AccountId": acme, "Status": "In Stock",
+            "Odometer": 12, "Color": "Eureka Gold", "LicensePlate": ""})
+        v2 = _aseed("Vehicle", {
+            "Name": "Gravity Touring #201", "VIN": "7U4AA2C58RA201202",
+            "VehicleDefinitionId": grav, "AccountId": acme, "Status": "Reserved",
+            "Odometer": 8, "Color": "Stellar White", "LicensePlate": ""})
+
+        p_air = _aseed("Product", {"Name": "Lucid Air Pure", "ProductCode": "AIR-PURE",
+                                  "Family": "Vehicle", "IsActive": True})
+        p_grav = _aseed("Product", {"Name": "Lucid Gravity Touring",
+                                   "ProductCode": "GRAV-TOUR", "Family": "Vehicle",
+                                   "IsActive": True})
+        pbs = [p for p in store.query("PriceBook", owner_ids=None, limit=10)
+               if p.get("Name") == "Standard Price Book"]
+        if pbs:
+            _aseed("PriceBookEntry", {"PriceBookId": pbs[0]["id"], "ProductId": p_air,
+                                     "UnitPrice": 69900.00, "IsActive": True})
+            _aseed("PriceBookEntry", {"PriceBookId": pbs[0]["id"], "ProductId": p_grav,
+                                     "UnitPrice": 79900.00, "IsActive": True})
+
+        ord1 = _aseed("Order", {
+            "OrderNumber": "ORD-000001", "AccountId": acme, "Status": "Activated",
+            "OrderDate": "2026-09-20",
+            "Description": "Acme Corp fleet order: 1 Air Pure + 1 Gravity Touring."})
+        _aseed("OrderItem", {"OrderId": ord1, "ProductId": p_air, "VehicleId": v1,
+                             "Quantity": 1, "UnitPrice": 69900.00,
+                             "LineTotal": 69900.00})
+        _aseed("OrderItem", {"OrderId": ord1, "ProductId": p_grav, "VehicleId": v2,
+                             "Quantity": 1, "UnitPrice": 79900.00,
+                             "LineTotal": 79900.00})
+
+        d1 = _aseed("Delivery", {
+            "Name": "Delivery for ORD-000001", "DeliveryNumber": "DLV-000001",
+            "OrderId": ord1, "VehicleId": v1, "AccountId": acme,
+            "Status": "Scheduled", "ScheduledDate": "2026-10-05",
+            "DeliveryAddress": "1 Fleet Way, Austin, TX 78701"})
+
+        _aseed("Asset", {
+            "Name": "Air Pure #101 Asset", "AccountId": acme, "ProductId": p_air,
+            "VehicleId": v1, "SerialNumber": "7U4AA1C50RA101101",
+            "Status": "Registered", "PurchaseDate": "2026-09-20",
+            "WarrantyEndDate": "2030-09-20"})
+
+    # seed service / marketing / contracts / knowledge demo data
+    if store.count("Campaign") == 0:
+        rep = security.get_user_by_username("leo")
+        owner_id = rep["id"] if rep else None
+
+        def _bseed(obj_name, fields):
+            rec = dict(fields)
+            rec["owner_id"] = owner_id
+            rec["created_by"] = owner_id
+            return store.insert(obj_name, rec)
+
+        accts = [a for a in store.query("Account", owner_ids=None, limit=100)
+                 if a.get("Name") == "Acme Corp"]
+        acme = accts[0]["id"] if accts else None
+        contacts = store.query("Contact", owner_ids=None, limit=100)
+        c1 = contacts[0]["id"] if contacts else None
+        c2 = contacts[1]["id"] if len(contacts) > 1 else None
+        vehs = [v for v in store.query("Vehicle", owner_ids=None, limit=100)
+                if v.get("VIN") == "7U4AA1C50RA101101"]
+        v1 = vehs[0]["id"] if vehs else None
+
+        camp = _bseed("Campaign", {
+            "Name": "Q4 Launch Webinar", "Type": "Webinar", "Status": "In Progress",
+            "StartDate": "2026-10-15", "EndDate": "2026-10-15",
+            "BudgetedCost": 5000.00, "ExpectedRevenue": 200000.00,
+            "Description": "Launch webinar for the 2026 lineup."})
+        _bseed("CampaignMember", {"CampaignId": camp, "ContactId": c1,
+                                 "Status": "Responded", "Responded": True})
+        _bseed("CampaignMember", {"CampaignId": camp, "ContactId": c2,
+                                 "Status": "Sent", "Responded": False})
+
+        _bseed("Contract", {
+            "ContractNumber": "C-000001", "AccountId": acme, "Status": "Activated",
+            "StartDate": "2026-10-01", "EndDate": "2027-09-30", "ContractTerm": 12,
+            "Description": "Acme Corp fleet service contract."})
+
+        _bseed("KnowledgeArticle", {
+            "Title": "How to pair your phone key", "ArticleNumber": "KA-000001",
+            "Summary": "Pair a smartphone as a vehicle key.",
+            "Body": "Open the mobile app, go to Vehicle > Phone Key, and follow the prompts.",
+            "Status": "Published", "Category": "How-To", "ViewCount": 128})
+        _bseed("KnowledgeArticle", {
+            "Title": "Charging troubleshooting", "ArticleNumber": "KA-000002",
+            "Summary": "Steps when the vehicle will not charge.",
+            "Body": "Check the charge port light, try a different charger, then contact service.",
+            "Status": "Published", "Category": "Troubleshooting", "ViewCount": 342})
+
+        wo = _bseed("WorkOrder", {
+            "WorkOrderNumber": "W-000001", "AccountId": acme, "ContactId": c1,
+            "VehicleId": v1, "Status": "In Progress", "Priority": "High",
+            "Subject": "Annual inspection",
+            "Description": "Annual multi-point inspection and software update.",
+            "ScheduledStart": "2026-10-06T09:00:00", "ScheduledEnd": "2026-10-06T12:00:00"})
+        _bseed("ServiceAppointment", {
+            "Name": "Inspection visit", "WorkOrderId": wo, "Status": "Scheduled",
+            "ScheduledStart": "2026-10-06T09:00:00",
+            "ScheduledEnd": "2026-10-06T12:00:00",
+            "Technician": "Sam Rivera",
+            "Address": "1 Fleet Way, Austin, TX 78701"})
+
+        _bseed("Event", {
+            "Subject": "Q4 business review", "EventType": "Meeting",
+            "StartDateTime": "2026-10-20T14:00:00",
+            "EndDateTime": "2026-10-20T15:00:00",
+            "Location": "Acme HQ, Austin",
+            "AccountId": acme, "ContactId": c1,
+            "Description": "Quarterly review with Acme fleet team."})
+
     return store, registry, security
