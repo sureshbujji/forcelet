@@ -127,6 +127,9 @@ class Store:
                      (id TEXT PRIMARY KEY, user_id TEXT, ntype TEXT,
                       title TEXT, body TEXT, object_name TEXT, record_id TEXT,
                       is_read INTEGER DEFAULT 0, created_at TEXT)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS mf_recycle_bin
+                     (id TEXT PRIMARY KEY, object_name TEXT, record_id TEXT,
+                      data TEXT, deleted_by TEXT, deleted_at TEXT)""")
         self._commit()
 
     def meta_put(self, table: str, key: str, definition: dict):
@@ -141,7 +144,9 @@ class Store:
     def meta_get(self, table: str, key: str):
         pk = "name" if table != "mf_users" else "id"
         row = self._execute(f"SELECT definition FROM {table} WHERE {pk}=?", (key,)).fetchone()
-        return json.loads(row["definition"]) if row else None
+        # A concurrent writer can leave a momentarily-NULL definition visible;
+        # treat it as "not found" instead of raising.
+        return json.loads(row["definition"]) if row and row["definition"] else None
 
     def meta_all(self, table: str):
         rows = self._execute(f"SELECT definition FROM {table}").fetchall()
@@ -254,6 +259,44 @@ class Store:
         cur = self._execute(f"DELETE FROM {self._table(obj_name)} WHERE id=?", (record_id,))
         self._commit()
         return cur.rowcount > 0
+
+    # ------------------------------------------------------------ recycle bin
+    def recycle_put(self, obj_name: str, record: dict, deleted_by: str) -> str:
+        bid = new_id()
+        self._execute(
+            "INSERT INTO mf_recycle_bin (id, object_name, record_id, data, deleted_by, deleted_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (bid, obj_name, record.get("id"), json.dumps(record), deleted_by, utcnow()),
+        )
+        self._commit()
+        return bid
+
+    def recycle_list(self, deleted_by: str | None = None):
+        if deleted_by:
+            rows = self._execute(
+                "SELECT * FROM mf_recycle_bin WHERE deleted_by=? ORDER BY deleted_at DESC",
+                (deleted_by,)).fetchall()
+        else:
+            rows = self._execute(
+                "SELECT * FROM mf_recycle_bin ORDER BY deleted_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def recycle_get(self, bid: str):
+        row = self._execute("SELECT * FROM mf_recycle_bin WHERE id=?", (bid,)).fetchone()
+        return dict(row) if row else None
+
+    def recycle_delete(self, bid: str) -> bool:
+        cur = self._execute("DELETE FROM mf_recycle_bin WHERE id=?", (bid,))
+        self._commit()
+        return cur.rowcount > 0
+
+    def recycle_clear(self, deleted_by: str | None = None) -> int:
+        if deleted_by:
+            cur = self._execute("DELETE FROM mf_recycle_bin WHERE deleted_by=?", (deleted_by,))
+        else:
+            cur = self._execute("DELETE FROM mf_recycle_bin")
+        self._commit()
+        return cur.rowcount
 
     def count(self, obj_name: str) -> int:
         return self._execute(f"SELECT COUNT(*) AS n FROM {self._table(obj_name)}").fetchone()["n"]
