@@ -1,0 +1,233 @@
+{
+ "profiles": [
+  {
+   "field_permissions": {},
+   "name": "System Administrator",
+   "object_permissions": {
+    "*": {
+     "create": true,
+     "delete": true,
+     "edit": true,
+     "read": true
+    }
+   }
+  },
+  {
+   "field_permissions": {
+    "Opportunity": {
+     "Amount": {
+      "edit": true,
+      "read": true
+     }
+    }
+   },
+   "name": "Standard User",
+   "object_permissions": {
+    "Account": {
+     "create": true,
+     "delete": true,
+     "edit": true,
+     "read": true
+    },
+    "Case": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "Contact": {
+     "create": true,
+     "delete": true,
+     "edit": true,
+     "read": true
+    },
+    "Lead": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "Opportunity": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "Task": {
+     "create": true,
+     "read": true,
+     "edit": true,
+     "delete": true
+    },
+    "Product": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "PriceBook": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "PriceBookEntry": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Quote": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "QuoteLineItem": {
+     "create": true,
+     "delete": true,
+     "edit": true,
+     "read": true
+    }
+   }
+  },
+  {
+   "field_permissions": {
+    "Opportunity": {
+     "Amount": {
+      "read": false
+     }
+    }
+   },
+   "name": "Read Only",
+   "object_permissions": {
+    "Account": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Case": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Contact": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Lead": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Opportunity": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Task": {
+     "create": false,
+     "read": true,
+     "edit": false,
+     "delete": false
+    },
+    "Product": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "PriceBook": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "PriceBookEntry": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Quote": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "QuoteLineItem": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    }
+   }
+  }
+ ],
+ "roles": [
+  {
+   "name": "CEO",
+   "parent": null
+  },
+  {
+   "name": "VP Sales",
+   "parent": "CEO"
+  },
+  {
+   "name": "Sales Manager",
+   "parent": "VP Sales"
+  },
+  {
+   "name": "Sales Rep",
+   "parent": "Sales Manager"
+  },
+  {
+   "name": "VP Support",
+   "parent": "CEO"
+  },
+  {
+   "name": "Support Agent",
+   "parent": "VP Support"
+  }
+ ],
+ "users": [
+  {
+   "id": "u_admin01",
+   "name": "Ava Admin",
+   "profile": "System Administrator",
+   "role": "CEO",
+   "username": "admin",
+   "password_hint": "default password is 'forcelet' (hashed at seed time)"
+  },
+  {
+   "id": "u_maya001",
+   "name": "Maya Manager",
+   "profile": "Standard User",
+   "role": "Sales Manager",
+   "username": "maya",
+   "password_hint": "default password is 'forcelet' (hashed at seed time)"
+  },
+  {
+   "id": "u_leo0001",
+   "name": "Leo Rep",
+   "profile": "Standard User",
+   "role": "Sales Rep",
+   "username": "leo",
+   "password_hint": "default password is 'forcelet' (hashed at seed time)"
+  },
+  {
+   "id": "u_ana0001",
+   "name": "Ana Agent",
+   "profile": "Read Only",
+   "role": "Support Agent",
+   "username": "ana",
+   "password_hint": "default password is 'forcelet' (hashed at seed time)"
+  }
+ ]
+}
