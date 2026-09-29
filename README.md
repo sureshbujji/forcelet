@@ -1,5 +1,7 @@
 # ⚡ Forcelet
 
+[![CI](https://github.com/sureshbujji/forcelet/actions/workflows/ci.yml/badge.svg)](https://github.com/sureshbujji/forcelet/actions)
+
 Built by **Suresh Itha**.
 
 A **metadata-driven, Salesforce-style CRM platform** in Python. Everything is
@@ -293,6 +295,23 @@ so quotes, line items, and totals work through the ordinary CRUD API with
 automatic related lists. Price book data is org-wide visible
 (`org_wide_visible` object flag); reps can create quotes and line items.
 
+**Automotive (Auto Cloud-style).** New standard objects: `VehicleDefinition`
+(model catalog: make, model year, trim, body style, MSRP), `Vehicle` (VIN,
+model lookup, account, status lifecycle, odometer), `Asset` (purchased
+product/vehicle instance with warranty dates), `Order` (auto-numbered
+`ORD-000001…` via trigger, status lifecycle, `TotalAmount` roll-up),
+`OrderItem` (order/product/vehicle lookups; trigger computes
+`LineTotal = Quantity × UnitPrice`), and `Delivery` (auto-numbered
+`DLV-000001…`, order/vehicle/account lookups, scheduled/delivered dates,
+driver). Seeded automation: VIN must be 17 characters, delivered date can't
+precede the scheduled date, duplicate-VIN detection, a Vehicle lifecycle Path
+and an Order fulfillment Path, a flow that auto-creates a `Scheduled`
+delivery when an order is Activated, and a flow that marks the vehicle
+`Delivered` when its delivery completes. Demo data ships two models, two
+vehicles, a fleet order, a delivery, and an asset. Records created by flows
+now run `before_insert`/`after_insert` triggers, just like API-created
+records.
+
 **Notifications.** In-app bell with an unread badge:
 `GET /api/notifications`, `GET /api/notifications/unread-count`,
 `POST /api/notifications/read` (`{"all": true}` or `{"ids": [...]}`).
@@ -366,7 +385,7 @@ exportable/importable via metadata packages (values stay encrypted).
 pytest -q
 ```
 
-107 tests covering metadata CRUD, validation rules, formula fields, flows,
+132 tests covering metadata CRUD, validation rules, formula fields, flows,
 approvals + record locking, record types, reports, field history,
 criteria-based sharing, duplicate rules, permission sets, webhooks,
 CSV import/export, triggers, roll-ups, list views, scheduled jobs, assignment
@@ -375,8 +394,34 @@ change data capture, OAuth2 tokens, API keys, field encryption, chatter,
 kanban + paths, lead conversion, external IDs + upsert, web-to-lead +
 auto-response rules, files, quote-to-cash totals, notifications, AI lead
 scoring, web-to-case + email-to-case, case SLA milestones + escalation rules,
-forecasting, screen flows, HTTP callouts + named credentials, permissions,
-role-hierarchy sharing, and API round-trips.
+forecasting, screen flows, HTTP callouts + named credentials, vehicle
+definitions / vehicles / assets / orders / order items / deliveries,
+work orders, service appointments, events, campaigns + members, contracts,
+knowledge articles, the recycle bin, duplicate find + merge, the assistant,
+and API round-trips.
+
+## What's new in 0.2.0
+
+**Seven new standard objects** — Work Orders (+ Service Appointments with a
+completion flow), Events, Campaigns (+ Members with response roll-ups),
+Contracts (date validation, auto-numbered `C-000001…`), and a Knowledge Base
+(auto-numbered `KA-000001…`).
+
+**New platform features** — a Recycle Bin (soft delete → restore → purge),
+duplicate find + **merge** (winner selection, child re-parenting), a generated
+**OpenAPI 3.0 spec** at `/api/openapi.json`, and a rule-based **Forcelet
+Assistant** (pipeline summaries, open cases, record lookup, task creation)
+floating in the UI.
+
+**UX refresh** — design tokens with light/dark mode, ⌘K/Ctrl+K command
+palette, tabbed record pages (Details / Related / Activity / Chatter / Files /
+History), dashboard charts with bar/donut toggle, toast notifications,
+skeleton loaders, and a mobile-responsive layout.
+
+**Repo & docs** — the 1,800-line `api.py` is now a `forcelet/api/` package
+(one module per domain), GitHub Actions CI, `pyproject.toml` packaging,
+CONTRIBUTING, changelog, issue templates, and a `docs/` folder (architecture,
+data model + ERDs, admin guide). See `docs/` for details.
 
 ## Notes
 
