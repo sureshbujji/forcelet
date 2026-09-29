@@ -29,6 +29,24 @@
      "edit": true,
      "read": true
     },
+    "Asset": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "Campaign": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "CampaignMember": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
     "Case": {
      "create": true,
      "delete": false,
@@ -38,6 +56,30 @@
     "Contact": {
      "create": true,
      "delete": true,
+     "edit": true,
+     "read": true
+    },
+    "Contract": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "Delivery": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "Event": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "KnowledgeArticle": {
+     "create": true,
+     "delete": false,
      "edit": true,
      "read": true
     },
@@ -53,16 +95,16 @@
      "edit": true,
      "read": true
     },
-    "Task": {
+    "Order": {
      "create": true,
-     "read": true,
-     "edit": true,
-     "delete": true
-    },
-    "Product": {
-     "create": false,
      "delete": false,
-     "edit": false,
+     "edit": true,
+     "read": true
+    },
+    "OrderItem": {
+     "create": true,
+     "delete": false,
+     "edit": true,
      "read": true
     },
     "PriceBook": {
@@ -77,6 +119,12 @@
      "edit": false,
      "read": true
     },
+    "Product": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
     "Quote": {
      "create": true,
      "delete": false,
@@ -86,6 +134,36 @@
     "QuoteLineItem": {
      "create": true,
      "delete": true,
+     "edit": true,
+     "read": true
+    },
+    "ServiceAppointment": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "Task": {
+     "create": true,
+     "delete": true,
+     "edit": true,
+     "read": true
+    },
+    "Vehicle": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "VehicleDefinition": {
+     "create": true,
+     "delete": false,
+     "edit": true,
+     "read": true
+    },
+    "WorkOrder": {
+     "create": true,
+     "delete": false,
      "edit": true,
      "read": true
     }
@@ -107,6 +185,24 @@
      "edit": false,
      "read": true
     },
+    "Asset": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Campaign": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "CampaignMember": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
     "Case": {
      "create": false,
      "delete": false,
@@ -114,6 +210,30 @@
      "read": true
     },
     "Contact": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Contract": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Delivery": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Event": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "KnowledgeArticle": {
      "create": false,
      "delete": false,
      "edit": false,
@@ -131,13 +251,13 @@
      "edit": false,
      "read": true
     },
-    "Task": {
+    "Order": {
      "create": false,
-     "read": true,
+     "delete": false,
      "edit": false,
-     "delete": false
+     "read": true
     },
-    "Product": {
+    "OrderItem": {
      "create": false,
      "delete": false,
      "edit": false,
@@ -155,6 +275,12 @@
      "edit": false,
      "read": true
     },
+    "Product": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
     "Quote": {
      "create": false,
      "delete": false,
@@ -162,6 +288,36 @@
      "read": true
     },
     "QuoteLineItem": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "ServiceAppointment": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Task": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "Vehicle": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "VehicleDefinition": {
+     "create": false,
+     "delete": false,
+     "edit": false,
+     "read": true
+    },
+    "WorkOrder": {
      "create": false,
      "delete": false,
      "edit": false,
@@ -200,34 +356,34 @@
   {
    "id": "u_admin01",
    "name": "Ava Admin",
+   "password_hint": "default password is 'forcelet' (hashed at seed time)",
    "profile": "System Administrator",
    "role": "CEO",
-   "username": "admin",
-   "password_hint": "default password is 'forcelet' (hashed at seed time)"
+   "username": "admin"
   },
   {
    "id": "u_maya001",
    "name": "Maya Manager",
+   "password_hint": "default password is 'forcelet' (hashed at seed time)",
    "profile": "Standard User",
    "role": "Sales Manager",
-   "username": "maya",
-   "password_hint": "default password is 'forcelet' (hashed at seed time)"
+   "username": "maya"
   },
   {
    "id": "u_leo0001",
    "name": "Leo Rep",
+   "password_hint": "default password is 'forcelet' (hashed at seed time)",
    "profile": "Standard User",
    "role": "Sales Rep",
-   "username": "leo",
-   "password_hint": "default password is 'forcelet' (hashed at seed time)"
+   "username": "leo"
   },
   {
    "id": "u_ana0001",
    "name": "Ana Agent",
+   "password_hint": "default password is 'forcelet' (hashed at seed time)",
    "profile": "Read Only",
    "role": "Support Agent",
-   "username": "ana",
-   "password_hint": "default password is 'forcelet' (hashed at seed time)"
+   "username": "ana"
   }
  ]
 }
