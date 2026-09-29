@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forcelet"
+version = "0.2.0"
+description = "Forcelet — a metadata-driven, Salesforce-style CRM platform"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Suresh Itha" }]
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.0",
+    "pytest>=8.0",
+    "cryptography>=40.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["forcelet*"]
