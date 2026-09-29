@@ -7,5 +7,5 @@ roles, sharing, and page layouts are all metadata, editable at runtime
 through the REST API or the web UI.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Suresh Itha"
