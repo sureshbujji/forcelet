@@ -149,8 +149,14 @@ def _run_flow_action(store, registry, security, action: dict, record: dict, user
         clean["owner_id"] = record.get("owner_id") or user["id"]
         clean["created_by"] = user["id"]
         clean.setdefault("record_type", default_record_type(store, obj["name"]))
+        errs = run_triggers(store, registry, security, obj["name"],
+                            "before_insert", clean, None, user, depth + 1)
+        if errs:
+            return
         new_id_ = store.insert(obj["name"], clean)
         new_rec = store.get(obj["name"], new_id_)
+        run_triggers(store, registry, security, obj["name"],
+                     "after_insert", new_rec, None, user, depth + 1)
         run_flows(store, registry, security, obj["name"], "create", new_rec, None, user, depth + 1)
     elif atype == "log":
         store._execute(
