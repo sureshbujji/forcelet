@@ -140,6 +140,26 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
 .stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow)}
 .stat .n{font-size:26px;font-weight:700}.stat .l{font-size:12px;color:var(--muted);text-transform:uppercase}
 .dashgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+/* ---- UI batch: flow canvas, dispatch, split view, dashboard builder, lightbox ---- */
+.fbwrap{display:grid;grid-template-columns:1fr 350px;gap:16px;align-items:start}
+.fbpanel{position:sticky;top:12px;max-height:82vh;overflow:auto}
+#lightbox{position:fixed;inset:0;z-index:950;display:flex;align-items:center;justify-content:center;padding:20px}
+.lb-back{position:absolute;inset:0;background:rgba(0,0,0,.5)}
+.lb-box{position:relative;max-width:min(880px,94vw);max-height:88vh;overflow:auto;padding:22px;margin:0}
+.lb-x{position:absolute;top:10px;right:10px}
+.split{display:grid;grid-template-columns:minmax(430px,1.35fr) 1fr;gap:16px;align-items:start}
+#splitlist tr[data-rid]{cursor:pointer}
+#splitlist tr.sel td{background:#e8f3fd}
+.dashbuild-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.dashw{border:2px dashed var(--line);border-radius:10px;padding:12px;background:var(--surface)}
+.dashw.dragging{opacity:.4}
+.disp-head{display:grid;grid-template-columns:150px 1fr;color:var(--muted);font-size:12px;margin-bottom:4px}
+.disp-scale{position:relative;height:20px}
+.disp-row{display:grid;grid-template-columns:150px 1fr;border-top:1px solid var(--line)}
+.disp-lane{position:relative;min-height:46px}
+.disp-bar{position:absolute;top:9px;height:28px;border-radius:6px;color:#fff;font-size:12px;line-height:20px;padding:4px 8px;overflow:hidden;white-space:nowrap;cursor:pointer;box-shadow:var(--shadow)}
+@media (max-width:900px){.fbwrap,.split,.dashbuild-grid{grid-template-columns:1fr}.fbpanel{position:static;max-height:none}}
+
 /* mobile */
 @media (max-width:760px){
   header{padding:10px 14px} header h1{font-size:17px}
@@ -152,6 +172,15 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
   #chatfab{left:16px;bottom:16px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+/* calendar */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.cal-dow{text-align:center;font-weight:600;color:var(--muted);font-size:12px;padding:4px}
+.cal-cell{min-height:96px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 6px}
+.cal-empty{background:transparent;border:none}
+.cal-today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.cal-date{font-weight:600;font-size:13px;margin-bottom:4px}
+.cal-chip{background:var(--bg);border-radius:4px;padding:2px 6px;font-size:12px;margin-bottom:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:720px){.cal-grid{grid-template-columns:1fr}.cal-empty{display:none}.cal-cell{min-height:auto}}
 </style>
 </head>
 <body>
@@ -171,7 +200,7 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
       <button class="iconbtn" id="bell" onclick="showNotifications()" title="Notifications">🔔<span id="bellcount" style="display:none"></span></button>
       <button class="iconbtn" onclick="showRecycleBin()" title="Recycle Bin">🗑</button>
       <button class="iconbtn" id="themebtn" onclick="toggleTheme()" title="Toggle dark mode">🌙</button>
-      <div class="userbox"><span id="whoami"></span><button class="btn secondary small" onclick="logout()">Switch user</button></div>
+      <div class="userbox"><span id="whoami"></span><button class="btn secondary small" onclick="totpManage()" title="Two-factor authentication">🔐 2FA</button><button class="btn secondary small" onclick="logout()">Switch user</button></div>
     </div>
   </header>
   <div id="palette"><div class="box"><input id="palinput" placeholder="Type to search records, objects, actions…" autocomplete="off"><div id="palresults"></div></div></div>
@@ -186,7 +215,7 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
 let token=null, me=null, objects=[], lookups={};
 const H=()=>({"Authorization":"Bearer "+token,"Content-Type":"application/json"});
 const api=(m,p,b)=>fetch(p,{method:m,headers:H(),body:b?JSON.stringify(b):undefined}).then(async r=>({ok:r.ok,status:r.status,data:await r.json().catch(()=>({}))}));
-const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // ------------------------------------------------------- theme + toasts + ui kit
 function toggleTheme(){
@@ -262,7 +291,27 @@ async function boot(){
 }
 async function login(username){
   const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password:"forcelet"})}).then(r=>r.json());
+  if(r.totp_required){ totpChallenge=r.challenge; totpUser=username; showTotpPrompt(); return; }
   if(!r.token){ toast("Login failed","error"); return; }
+  finishLogin(r);
+}
+let totpChallenge=null, totpUser=null;
+function showTotpPrompt(){
+  document.getElementById("loginbtns").innerHTML=`<div class="card" style="max-width:320px"><div class="section-title">🔐 Two-factor authentication</div>
+  <p class="muted">Enter the 6-digit code from your authenticator app for <b>${esc(totpUser)}</b>.</p>
+  <input id="totp_code" inputmode="numeric" maxlength="6" placeholder="000000" style="text-align:center;font-size:20px;letter-spacing:6px">
+  <div class="btnrow" style="margin-top:10px"><button class="btn" onclick="totpVerify()">Verify</button>
+  <button class="btn secondary" onclick="boot()">Back</button></div><div id="totperr"></div></div>`;
+  const inp=document.getElementById("totp_code"); inp.focus();
+  inp.onkeydown=e=>{ if(e.key==="Enter") totpVerify(); };
+}
+async function totpVerify(){
+  const code=document.getElementById("totp_code").value.trim();
+  const r=await fetch("/api/login/totp",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({challenge:totpChallenge,code})}).then(r=>r.json());
+  if(!r.token){ document.getElementById("totperr").innerHTML=`<div class="err">Invalid code — try again.</div>`; return; }
+  finishLogin(r);
+}
+async function finishLogin(r){
   token=r.token; me=r.user;
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
@@ -285,6 +334,9 @@ async function loadObjects(){
   html+=`<button data-obj="__approvals" onclick="showApprovals()">Approvals${pending?`<span class="badge">${pending}</span>`:""}</button>`;
   html+=`<button data-obj="__forecasts" onclick="showForecasts()">Forecasts</button>`;
   html+=`<button data-obj="__flows" onclick="showFlows()">Flows</button>`;
+  html+=`<button data-obj="__dispatch" onclick="showDispatch()">Dispatch</button>`;
+  html+=`<button data-obj="__calendar" onclick="showCalendar()">Calendar</button>`;
+  if(me.profile==="System Administrator") html+=`<button data-obj="__bulk" onclick="showBulk()">Bulk Jobs</button>`;
   if(me.profile==="System Administrator") html+=`<button data-obj="__admin" onclick="showAdmin()">Admin Setup</button>`;
   tabs.innerHTML=html;
   if(objects.length) showObject(objects[0].name);
@@ -292,11 +344,13 @@ async function loadObjects(){
 function setActive(name){ document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("active",b.dataset.obj===name)); }
 
 let curObj=null, curDesc=null, curLayout=null;
+let inlineEdit=false, splitMode=false, splitId=null;
 let curViews=[], curView=null, curSort=null, curDir="asc", curSearch="";
 async function showObject(name){
   document.getElementById("main").innerHTML=skel(4);
   setActive(name); curObj=name;
-  curView=null; curSort=null; curDir="asc"; curSearch="";
+  curView=null; curSort=null; curDir="asc"; curSearch=""; curQueue=null;
+  splitMode=false; splitId=null;
   const d=await api("GET",`/api/describe/${name}`); curDesc=d.data;
   const l=await api("GET",`/api/layout/${name}`); curLayout=l.data;
   const vw=await api("GET",`/api/list-views/${name}`); curViews=vw.data||[];
@@ -317,8 +371,10 @@ async function renderList(){
   if(curView) q+=`view=${curView.id}&`;
   if(curSort) q+=`sort=${curSort}&dir=${curDir}&`;
   if(curSearch) q+=`search=${encodeURIComponent(curSearch)}&`;
-  const r=await api("GET",q);
-  const rows=r.data||[];
+  if(curObj==="Case"&&!caseQueues.length){ const qr=await api("GET","/api/case-queues"); caseQueues=qr.ok&&Array.isArray(qr.data)?qr.data:[]; }
+  let rows;
+  if(curObj==="Case"&&curQueue){ const qr=await api("GET",`/api/case-queues/${curQueue}/cases`); rows=qr.ok&&Array.isArray(qr.data)?qr.data:[]; }
+  else{ const r=await api("GET",q); rows=r.data||[]; }
   let cols;
   if(curView&&curView.columns&&curView.columns.length){
     const fmap={}; curDesc.fields.forEach(f=>fmap[f.name]=f);
@@ -332,16 +388,26 @@ async function renderList(){
   html+=`<button class="btn secondary small" onclick="document.getElementById('saveview').style.display='flex'">Save view</button>`;
   html+=`<button class="btn secondary small" onclick="showKanban()">Kanban</button>`;
   html+=`<button class="btn secondary small" onclick="exportCsv()">Export CSV</button>`;
+  html+=`<button class="btn secondary small" onclick="toggleSplit()">${splitMode?"☰ List view":"◫ Split view"}</button>`;
+  if(curDesc.permissions.edit) html+=`<button class="btn secondary small" onclick="inlineEdit=!inlineEdit;renderList()">${inlineEdit?"✓ Inline edit":"✏️ Inline edit"}</button>`;
   if(curDesc.permissions.create) html+=`<button class="btn" onclick="showForm()">+ New ${esc(curDesc.label)}</button>`;
-  html+=`</div><div class="btnrow" id="saveview" style="display:none"><input id="sv_name" placeholder="View name" style="max-width:220px">`;
+  html+=`</div>`;
+  if(curObj==="Case"&&caseQueues.length){
+    html+=`<div class="btnrow" style="margin-top:8px"><span class="muted">Queues:</span>`
+      +`<button class="btn ${curQueue?"secondary":""} small" onclick="curQueue=null;renderList()">All cases</button>`
+      +caseQueues.filter(x=>x.active!==false).map(x=>`<button class="btn ${curQueue===x.id?"":"secondary"} small" onclick="curQueue='${x.id}';renderList()">${esc(x.name)}</button>`).join("")
+      +(me.profile==="System Administrator"?`<button class="btn secondary small" onclick="showQueueAdmin()">Manage</button>`:"")
+      +`</div>`;
+  }
+  html+=`<div class="btnrow" id="saveview" style="display:none"><input id="sv_name" placeholder="View name" style="max-width:220px">`;
   if(me.profile==="System Administrator") html+=`<label style="margin:0"><input type="checkbox" id="sv_shared" style="width:auto"> Shared</label>`;
   html+=`<button class="btn small" onclick="saveView()">Save</button></div>`;
-  html+=`<div class="card"><table><tr>${cols.map(c=>`<th onclick="toggleSort('${c.name}')" style="cursor:pointer;user-select:none">${esc(c.label)}${arrow(c.name)}</th>`).join("")}<th></th></tr>`;
-  for(const row of rows){
-    html+=`<tr>${cols.map(c=>`<td>${esc(fmtVal(c,row[c.name]))}</td>`).join("")}<td><button class="btn secondary small" onclick="showDetail('${row.Id}')">Open</button></td></tr>`;
-  }
-  html+=`</table>${rows.length?"":'<p class="muted">No records match. Sharing rules may be hiding records owned by others.</p>'}</div>`;
+  const listCard=`<div class="card"${splitMode?` id="splitlist" style="margin:0"`:``}><table><tr>${cols.map(c=>`<th onclick="toggleSort('${c.name}')" style="cursor:pointer;user-select:none">${esc(c.label)}${arrow(c.name)}</th>`).join("")}<th></th></tr>`+
+  rows.map(row=>`<tr${splitMode?` data-rid="${row.Id}" onclick="splitSelect('${row.Id}')" class="${splitId===row.Id?"sel":""}`:""}>${cols.map(c=>`<td>${inlineEdit&&canInline(c)?inlineCell(c,row):esc(fmtVal(c,row[c.name]))}</td>`).join("")}<td><button class="btn secondary small" onclick="event.stopPropagation();${splitMode?`splitSelect('${row.Id}')`:`showDetail('${row.Id}')`}">${splitMode?"Preview":"Open"}</button></td></tr>`).join("")+
+  `</table>${rows.length?"":'<p class="muted">No records match. Sharing rules may be hiding records owned by others.</p>'}</div>`;
+  html+=splitMode?`<div class="split">${listCard}<div id="splitdetail"><div class="card"><p class="muted">Select a record to preview it here.</p></div></div></div>`:listCard;
   document.getElementById("main").innerHTML=html;
+  if(splitMode&&splitId) splitSelect(splitId);
 }
 async function saveView(){
   const name=v("sv_name");
@@ -356,6 +422,7 @@ async function saveView(){
 }
 function exportCsv(){ window.open(`/api/sobjects/${curObj}/export`,"_blank"); }
 let curKanbanField=null;
+let caseQueues=[], curQueue=null;
 async function showKanban(){
   setActive(curObj);
   const r=await api("GET",`/api/kanban/${curObj}`);
@@ -411,6 +478,7 @@ async function showDetail(id){
   if(curDesc.permissions.edit) html+=`<button class="btn" onclick="showForm('${rec.Id}')">Edit</button>`;
   if(curDesc.permissions.edit) html+=`<button class="btn secondary" onclick="findDuplicates('${curObj}','${rec.Id}')">Find duplicates</button>`;
   if(curDesc.permissions.delete) html+=`<button class="btn danger" onclick="delRec('${rec.Id}')">Delete</button>`;
+  if(curObj==="Quote") html+=`<button class="btn secondary" onclick="dlQuotePdf('${rec.Id}')">⬇ PDF</button>`;
   html+=`</div>`;
   const tabs=[["details","Details"],["related","Related"],["activity","Activity"],["chatter","Chatter"],["files","Files"],["history","History"]];
   html+=`<div class="dtabs">${tabs.map((t,i)=>`<button data-t="${t[0]}" class="${i===0?"active":""}" onclick="detailTab('${t[0]}')">${t[1]}</button>`).join("")}</div>`;
@@ -426,6 +494,7 @@ async function showDetail(id){
   if(curObj==="Lead") details+=await scoreCard(rec.Id);
   if(curObj==="Quote") details+=await quoteLinesCard(rec.Id);
   if(curObj==="Case") details+=await milestonesCard(rec.Id);
+  if(curObj==="Case") details+=await macroBar(rec.Id);
   details+=`<div class="card"><div class="section-title">System</div><p class="muted">Id ${esc(rec.Id)} \u00b7 Record type ${esc(rec.RecordType)} \u00b7 Owner ${esc(rec.OwnerId)} \u00b7 Created ${esc(rec.CreatedDate||"")}</p></div>`;
   // other panels
   const related=await relatedLists(rec.Id);
@@ -600,7 +669,7 @@ async function recFollow(recId,following){
 async function filesCard(recId){
   const r=await api("GET",`/api/sobjects/${curObj}/${recId}/files`);
   const files=r.data||[];
-  const rows=files.map(f=>`<tr><td>📎 ${esc(f.filename)}</td><td class="muted">${(f.size/1024).toFixed(1)} KB</td><td><a href="#" onclick="dlFile('${f.id}','${esc(f.filename)}');return false">Download</a> · <a href="#" onclick="delFile('${recId}','${f.id}');return false">Delete</a></td></tr>`).join("");
+  const rows=files.map(f=>`<tr><td><a href="#" onclick="previewFile('${f.id}','${esc(f.filename)}','${esc(f.mime_type||"")}');return false" title="Preview">📎 ${esc(f.filename)}</a></td><td class="muted">${(f.size/1024).toFixed(1)} KB</td><td><a href="#" onclick="dlFile('${f.id}','${esc(f.filename)}');return false">Download</a> · <a href="#" onclick="delFile('${recId}','${f.id}');return false">Delete</a></td></tr>`).join("");
   return `<div class="card"><div class="section-title">Files (${files.length})</div>`
     +`<div class="btnrow"><input type="file" id="file_up"><button class="btn small" onclick="uploadFile('${recId}')">Upload</button></div>`
     +(files.length?`<table style="margin-top:8px">${rows}</table>`:`<p class="muted">No files attached.</p>`)+`</div>`;
@@ -752,7 +821,7 @@ async function showReports(){
   const reps=r.data||[];
   let html=`<div class="btnrow"><h2 style="margin:0">Reports</h2></div>`;
   for(const rep of reps){
-    html+=`<div class="card"><div class="btnrow"><b>${esc(rep.name)}</b><span class="muted">${esc(rep.object)}${rep.group_by?" · grouped by "+esc(rep.group_by):""}</span><span style="flex:1"></span><button class="btn small" onclick="runReport('${rep.id}')">Run</button></div><div id="rep_${rep.id}"></div></div>`;
+    html+=`<div class="card"><div class="btnrow"><b>${esc(rep.name)}</b><span class="muted">${esc(rep.object)}${rep.group_by?" · grouped by "+esc(rep.group_by):""}</span><span style="flex:1"></span><button class="btn small" onclick="runReport('${rep.id}')">Run</button> <button class="btn secondary small" onclick="subModal('report','${rep.id}','${esc(rep.name)}')">📧 Subscribe</button></div><div id="rep_${rep.id}"></div></div>`;
   }
   if(me.profile==="System Administrator"){
     html+=`<div class="card"><div class="section-title">Create report</div><div id="rerr"></div>
@@ -824,31 +893,18 @@ function svgDonut(groups){
 async function showDashboards(){
   setActive("__dashboards");
   document.getElementById("main").innerHTML=skel(3);
-  const r=await api("GET","/api/reports");
-  const reps=r.data||[];
-  let html=`<div class="btnrow"><h2 style="margin:0">Dashboards</h2><span class="muted">${reps.length} report(s)</span><span style="flex:1"></span><button class="btn secondary small" onclick="showReports()">Manage reports</button></div>`;
-  if(!reps.length) html+=`<div class="card"><p class="muted">No reports yet. Create one under Reports to see it charted here.</p></div>`;
-  const cards=[];
-  for(const rep of reps){
-    const d=await api("GET",`/api/reports/${rep.id}/run`);
-    if(d.ok) cards.push([rep,d.data]);
-  }
-  if(cards.length){
-    html+=`<div class="dashgrid">`;
-    for(const [rep,d] of cards){
-      const t=dashType[rep.id]||"bar";
-      html+=`<div class="card"><div class="btnrow"><b>${esc(rep.name)}</b><span style="flex:1"></span>`;
-      if((d.groups||[]).length) html+=`<button class="btn secondary small" onclick="dashType['${rep.id}']='${t==="bar"?"donut":"bar"}';showDashboards()">${t==="bar"?"Donut":"Bars"}</button>`;
-      html+=`</div><p class="muted">${d.row_count} row(s) \u00b7 ${esc(rep.object)}${rep.group_by?" \u00b7 by "+esc(rep.group_by):""}</p>`;
-      if((d.groups||[]).length) html+=t==="bar"?svgBars(d.groups):svgDonut(d.groups);
-      else html+=`<div class="stat"><div class="n">${d.row_count}</div><div class="l">records</div></div>`;
-      html+=`</div>`;
-    }
-    html+=`</div>`;
-  }
-  document.getElementById("main").innerHTML=html;
+  const r=await api("GET","/api/dashboards");
+  dashBoards=r.data||[];
+  if(!curDash||!dashBoards.find(d=>d.id===curDash.id)) curDash=dashBoards[0]||null;
+  renderDashboards();
 }
-
+async function dashSeed(){
+  const rp=await api("GET","/api/reports"); const reps=rp.data||[];
+  if(!reps.length){ toast("Create a report first.","error"); return; }
+  const seed=await api("POST","/api/dashboards",{name:"Main dashboard",widgets:reps.slice(0,4).map(x=>({report_id:x.id,type:"bar",w:1}))});
+  if(seed.ok){ dashBoards=[seed.data]; curDash=seed.data; renderDashboards(); }
+  else toast("Create failed: "+((seed.data||{}).error||seed.status),"error");
+}
 // ------------------------------------------------------- recycle bin
 async function showRecycleBin(){
   setActive(null);
@@ -1251,9 +1307,9 @@ const SETUP_KINDS={
  "triggers":{cardTitle:"Code trigger (Apex-style)",cardSection:"automation",listEl:"tr_list",errEl:"trerr",submit:"tr_submit",cancel:"tr_cancel",cols:[["Name","name"],["Object","object"],["Events","events"]],
    fields:[["name","tr_name"],["object","tr_obj"],["events","tr_events","csv"],["order","tr_order","int",10],["code","tr_code"],["active",null,"const",true]]},
  "flows":{cardTitle:"Flow (workflow automation)",cardSection:"automation",listEl:"fl_list",errEl:"flerr",submit:"fl_submit",cancel:"fl_cancel",cols:[["Name","name"],["Object","object"],["Trigger","trigger"]],filter:r=>!r.flow_type||r.flow_type==="record",
-   fields:[["name","fl_name"],["object","fl_obj"],["trigger","fl_trig"],["condition","fl_cond","json",{}],["actions","fl_act","json",[]],["active",null,"const",true]]},
+   fields:[["name","fl_name"],["object","fl_obj"],["trigger","fl_trig"],["condition","fl_cond","json",{}],["actions","fl_act","json",[]],["active",null,"const",true]],extra:"flowCanvas"},
  "screen-flows":{apiKind:"flows",cardTitle:"Screen flow",cardSection:"automation",listEl:"sfl_list",errEl:"sflerr",submit:"sfl_submit",cancel:"sfl_cancel",cols:[["Name","name"]],filter:r=>r.flow_type==="screen",
-   fields:[["name","sfl_name"],["screens","sfl_screens","json",[]],["finish_actions","sfl_fin","json",[]],["flow_type",null,"const","screen"],["active",null,"const",true]]},
+   fields:[["name","sfl_name"],["screens","sfl_screens","json",[]],["finish_actions","sfl_fin","json",[]],["flow_type",null,"const","screen"],["active",null,"const",true]],extra:"flowCanvas"},
  "approval-processes":{cardTitle:"Approval process",cardSection:"automation",listEl:"ap_list",errEl:"aperr",submit:"ap_submit",cancel:"ap_cancel",cols:[["Name","name"],["Object","object"]],
    fields:[["name","ap_name"],["object","ap_obj"],["entry_conditions","ap_entry","json",{}],["steps","ap_steps","json",[]],["active",null,"const",true]]},
  "sharing-rules":{cardTitle:"Sharing rule (criteria-based)",cardSection:"automation",listEl:"sr_list",errEl:"srerr",submit:"sr_submit",cancel:"sr_cancel",cols:[["Name","name"],["Object","object"]],
@@ -1368,7 +1424,7 @@ async function refreshSetupList(kind){
   if(!rows.length){ el.innerHTML=`<p class="muted">None yet.</p>`; return; }
   const acts=cfg.actions||{edit:!cfg.noEdit,toggle:!cfg.noActive,del:true};
   el.innerHTML=`<table style="margin-top:10px"><tr>${cfg.cols.map(c=>`<th>${c[0]}</th>`).join("")}${cfg.noActive?"":`<th>Status</th>`}<th></th></tr>`+
-   rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`;
+   rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> `:""}${cfg.extra==="flowCanvas"?`<button class="btn secondary small" onclick="openFlowBuilder('${kind}','${x.id}')">🎨 Canvas</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`;
 }
 // legacy shims
 async function listConfigs(kind,elId,withRun){ const map={"assignment-rules":"assignment-rules","email-templates":"email-templates","sla-policies":"sla-policies","escalation-rules":"escalation-rules"}; if(map[kind]) return refreshSetupList(kind); }
@@ -1599,6 +1655,681 @@ async function showDeliveries(){
   const r=await api("GET","/api/admin/webhook-deliveries");
   document.getElementById("wh_del").innerHTML=`<table style="margin-top:10px"><tr><th>When</th><th>Event</th><th>Status</th><th>Detail</th></tr>${(r.data||[]).slice(0,10).map(d=>`<tr><td>${esc((d.attempted_at||"").slice(0,19).replace("T"," "))}</td><td>${esc(d.event)}</td><td>${esc(d.status)}</td><td>${esc(d.detail||"")}</td></tr>`).join("")}</table>`;
 }
+/* ============ visual flow builder (node canvas) ============ */
+let FB=null;
+const FB_ACTION_TYPES=[["create_record","Create record"],["set_fields","Update fields"],["log","Log to history"],["http_callout","HTTP callout"]];
+function fbNodes(){
+  const f=FB.flow, isS=FB.isScreen, nodes=[{key:"start",kind:"start"}];
+  if(!isS&&f.condition&&Object.keys(f.condition).length) nodes.push({key:"cond",kind:"cond"});
+  if(isS){
+    (f.screens||[]).forEach((s,i)=>nodes.push({key:"s"+i,kind:"screen",idx:i}));
+    (f.finish_actions||[]).forEach((a,i)=>nodes.push({key:"f"+i,kind:"faction",idx:i}));
+  }else{
+    (f.actions||[]).forEach((a,i)=>nodes.push({key:"a"+i,kind:"action",idx:i}));
+  }
+  return nodes;
+}
+function fbPos(key,i){
+  const c=FB.flow.canvas||{};
+  return c[key]||{x:260,y:44+i*104};
+}
+function fbLabel(n){
+  const f=FB.flow;
+  if(n.kind==="start") return FB.isScreen?("▶ "+(f.name||"Screen flow")):("▶ "+String(f.trigger||"on_create").replace(/_/g," ")+" · "+(f.object||""));
+  if(n.kind==="cond") return "◆ Condition";
+  if(n.kind==="screen"){ const s=(f.screens||[])[n.idx]||{}; return "▤ "+(s.title||("Screen "+(n.idx+1))); }
+  const a=((n.kind==="faction"?f.finish_actions:f.actions)||[])[n.idx]||{};
+  const t=(FB_ACTION_TYPES.find(t=>t[0]===a.type)||[])[1]||a.type||"?";
+  const d=a.type==="create_record"&&a.object?(" → "+a.object):a.type==="http_callout"?(" "+(a.method||"POST")+" "+(a.path||"")):"";
+  return "⚙ "+t+d;
+}
+async function openFlowBuilder(kind,id){
+  const cfg=SETUP_KINDS[kind];
+  const r=await api("GET","/api/admin/"+(cfg.apiKind||kind));
+  const flow=(r.data||[]).find(x=>x.id===id);
+  if(!flow){ toast("Flow not found.","error"); return; }
+  FB={kind,id,flow:JSON.parse(JSON.stringify(flow)),isScreen:(kind==="screen-flows"||flow.flow_type==="screen"),sel:"start"};
+  renderFlowBuilder();
+  fbLoadVersions();
+}
+function renderFlowBuilder(){
+  const nodes=fbNodes(), H=Math.max(440,44+nodes.length*104+70);
+  const pos=nodes.map((n,i)=>fbPos(n.key,i));
+  let svg=`<svg id="fbsvg" viewBox="0 0 560 ${H}" style="width:100%;height:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;touch-action:none">`;
+  svg+=`<defs><marker id="fbarr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker></defs>`;
+  nodes.forEach((n,i)=>{
+    if(!i) return;
+    const a=pos[i-1],b=pos[i];
+    svg+=`<line id="fbl${i}" x1="${a.x}" y1="${a.y+32}" x2="${b.x}" y2="${b.y-32}" stroke="#94a3b8" stroke-width="2" marker-end="url(#fbarr)"/>`;
+  });
+  nodes.forEach((n,i)=>{
+    const p=pos[i], sel=FB.sel===n.key;
+    const fill=n.kind==="start"?"#e8f3fd":n.kind==="cond"?"#fef6e0":"var(--surface)";
+    svg+=`<g data-node="${n.key}" transform="translate(${p.x},${p.y})" style="cursor:grab"><rect x="-115" y="-32" width="230" height="64" rx="10" fill="${fill}" stroke="${sel?"#0176d3":"var(--line)"}" stroke-width="${sel?3:1.5}"/><text x="0" y="5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">${esc(fbLabel(n).slice(0,36))}</text></g>`;
+  });
+  svg+="</svg>";
+  document.getElementById("main").innerHTML=
+   `<div class="btnrow"><button class="btn secondary" onclick="showAdmin()">← Back to Setup</button>`
+   +`<h2 style="margin:0">🎨 ${esc(FB.flow.name||"Flow")}</h2><span style="flex:1"></span>`
+   +`<select id="fbvers" style="max-width:190px" title="Version history"><option value="">🕘 Versions…</option></select>`
+   +`<button class="btn secondary small" onclick="fbRollback()">Rollback</button>`
+   +(FB.isScreen?`<button class="btn secondary small" onclick="fbAddStep('screen')">+ Screen</button>`:`<button class="btn secondary small" onclick="fbAddStep('action')">+ Action</button>`)
+   +(FB.sel&&FB.sel!=="start"?` <button class="btn danger small" onclick="fbDelStep()">Delete step</button>`:"")
+   +` <button class="btn" onclick="fbSave()">Save flow</button></div>`
+   +`<div class="fbwrap"><div>${svg}</div><div class="fbpanel card" id="fbpanel"></div></div>`
+   +`<p class="muted">Drag steps to arrange · click a step to edit · positions save with the flow.</p>`;
+  renderFbPanel();
+  fbBindDrag();
+}
+function fbSvgPt(svg,e){
+  const pt=svg.createSVGPoint(); pt.x=e.clientX; pt.y=e.clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+function fbBindDrag(){
+  const svg=document.getElementById("fbsvg"); if(!svg) return;
+  let drag=null;
+  svg.querySelectorAll("[data-node]").forEach(g=>{
+    g.addEventListener("pointerdown",e=>{
+      const key=g.dataset.node, nodes=fbNodes(), i=nodes.findIndex(n=>n.key===key);
+      FB.sel=key; renderFbPanel();
+      svg.querySelectorAll("[data-node] rect").forEach(r=>{const on=r.parentElement.dataset.node===key; r.setAttribute("stroke",on?"#0176d3":"var(--line)"); r.setAttribute("stroke-width",on?"3":"1.5");});
+      const pt=fbSvgPt(svg,e), p=fbPos(key,i);
+      drag={key,i,dx:pt.x-p.x,dy:pt.y-p.y,g};
+      try{g.setPointerCapture(e.pointerId);}catch(err){}
+      e.preventDefault();
+    });
+  });
+  svg.addEventListener("pointermove",e=>{
+    if(!drag) return;
+    const pt=fbSvgPt(svg,e);
+    const x=Math.round(pt.x-drag.dx), y=Math.round(pt.y-drag.dy);
+    const c=FB.flow.canvas=FB.flow.canvas||{}; c[drag.key]={x,y};
+    drag.g.setAttribute("transform",`translate(${x},${y})`);
+    const nodes=fbNodes(), i=drag.i;
+    const setLine=(li,ax,ay,bx,by)=>{const l=document.getElementById("fbl"+li); if(l){l.setAttribute("x1",ax);l.setAttribute("y1",ay+32);l.setAttribute("x2",bx);l.setAttribute("y2",by-32);}};
+    if(i>0){const p=fbPos(nodes[i-1].key,i-1); setLine(i,p.x,p.y,x,y);}
+    if(i<nodes.length-1){const p=fbPos(nodes[i+1].key,i+1); setLine(i+1,x,y,p.x,p.y);}
+  });
+  svg.addEventListener("pointerup",()=>{drag=null;});
+}
+function renderFbPanel(){
+  const el=document.getElementById("fbpanel"); if(!el||!FB) return;
+  const n=fbNodes().find(x=>x.key===FB.sel);
+  if(!n){ el.innerHTML=`<p class="muted">Select a step on the canvas.</p>`; return; }
+  const f=FB.flow, objOpts=objects.map(o=>`<option value="${o.name}" ${f.object===o.name?"selected":""}>${esc(o.label||o.name)}</option>`).join("");
+  let h="";
+  if(n.kind==="start"){
+    h=`<div class="section-title">Start</div><label>Name</label><input id="fb_name" value="${esc(f.name||"")}">`;
+    if(!FB.isScreen) h+=`<label>Object</label><select id="fb_objsel">${objOpts}</select><label>Trigger</label><select id="fb_trig">${["on_create","on_update","on_create_or_update"].map(t=>`<option ${f.trigger===t?"selected":""}>${t}</option>`).join("")}</select>`;
+  }else if(n.kind==="cond"){
+    h=`<div class="section-title">Condition</div><label>Object</label><select id="fb_objsel">${objOpts}</select><div class="cb-host" id="cb_fb"></div><label>Condition JSON</label><textarea id="fb_cond" rows="4">${esc(JSON.stringify(f.condition||{}))}</textarea>`;
+  }else if(n.kind==="action"||n.kind==="faction"){
+    const a=((n.kind==="faction"?f.finish_actions:f.actions)||[])[n.idx]||{};
+    h=`<div class="section-title">${n.kind==="faction"?"Finish action":"Action"} ${n.idx+1}</div><label>Type</label><select id="fb_atype" onchange="fbActionParams()">${FB_ACTION_TYPES.map(t=>`<option value="${t[0]}" ${a.type===t[0]?"selected":""}>${t[1]}</option>`).join("")}</select><div id="fb_aparams" style="margin-top:8px"></div>`;
+  }else if(n.kind==="screen"){
+    const s=(f.screens||[])[n.idx]||{};
+    h=`<div class="section-title">Screen ${n.idx+1}</div><label>Title</label><input id="fb_stitle" value="${esc(s.title||"")}"><label>Fields</label><div id="fb_sfields">`
+      +(s.fields||[]).map((fld,i)=>`<div class="btnrow" style="margin-bottom:6px"><input data-sf="name" data-i="${i}" value="${esc(fld.name||"")}" placeholder="api name" style="max-width:100px"><input data-sf="label" data-i="${i}" value="${esc(fld.label||"")}" placeholder="Label" style="max-width:120px"><select data-sf="type" data-i="${i}" style="max-width:110px">${["text","textarea","picklist","checkbox","number","date","email"].map(t=>`<option ${fld.type===t?"selected":""}>${t}</option>`).join("")}</select><button class="btn danger small" onclick="fbDelScreenField(${n.idx},${i})">✕</button></div>`).join("")
+      +`</div><button class="btn secondary small" onclick="fbAddScreenField(${n.idx})">+ Field</button>`;
+  }
+  el.innerHTML=h+`<div class="btnrow" style="margin-top:12px"><button class="btn small" onclick="fbApplyPanel(true)">Apply</button></div><p class="muted">Apply stages edits in memory — <b>Save flow</b> persists them.</p>`;
+  if(n.kind==="cond") cbInit("cb_fb","fb_objsel","fb_cond");
+  if(n.kind==="action"||n.kind==="faction") fbActionParams();
+}
+async function fbActionParams(){
+  const box=document.getElementById("fb_aparams"); if(!box||!FB) return;
+  const n=fbNodes().find(x=>x.key===FB.sel); if(!n) return;
+  const f=FB.flow, a=((n.kind==="faction"?f.finish_actions:f.actions)||[])[n.idx]||{};
+  const type=(document.getElementById("fb_atype")||{}).value||a.type||"create_record";
+  const objOpts=objects.map(o=>`<option value="${o.name}" ${a.object===o.name?"selected":""}>${esc(o.label||o.name)}</option>`).join("");
+  let h="";
+  if(type==="create_record"||type==="set_fields"){
+    h=`<label>Object</label><select id="fb_aobj">${objOpts}</select>`
+      +(type==="set_fields"?`<label>Record ID (merge fields allowed)</label><input id="fb_arid" value="${esc(a.record_id||"{{Trigger.Id}}")}">`:"")
+      +`<label>Fields JSON <span class="muted">— {"Name":"{{Trigger.Name}}"}</span></label><textarea id="fb_afields" rows="4">${esc(JSON.stringify(a.fields||{}))}</textarea>`;
+  }else if(type==="log"){
+    h=`<label>Message <span class="muted">— merge fields allowed</span></label><input id="fb_amsg" value="${esc(a.message||"")}">`;
+  }else if(type==="http_callout"){
+    const nc=await api("GET","/api/admin/named-credentials"); const creds=(nc.data||[]);
+    h=`<label>Named credential</label><select id="fb_acred">${creds.map(c=>`<option ${a.credential===c.name?"selected":""}>${esc(c.name)}</option>`).join("")}</select>`
+      +`<div class="grid2"><div><label>Method</label><select id="fb_amethod">${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${a.method===m?"selected":""}>${m}</option>`).join("")}</select></div><div><label>Path</label><input id="fb_apath" value="${esc(a.path||"")}"></div></div>`
+      +`<label>Headers JSON</label><textarea id="fb_aheaders" rows="2">${esc(JSON.stringify(a.headers||{}))}</textarea><label>Body JSON</label><textarea id="fb_abody" rows="3">${esc(typeof a.body==="string"?a.body:JSON.stringify(a.body??""))}</textarea>`;
+  }
+  box.innerHTML=h;
+}
+let fbJsonOk=true;
+function fbJson(id,fb){
+  const el=document.getElementById(id); if(!el) return fb;
+  try{ const p=JSON.parse(el.value||"{}"); el.style.border=""; return p; }
+  catch(e){ el.style.border="2px solid #c0392b"; fbJsonOk=false; toast("Invalid JSON in "+id+" — fix it before saving.","error"); return fb; }
+}
+function fbApplyPanel(loud){
+  if(!FB) return;
+  fbJsonOk=true;
+  const n=fbNodes().find(x=>x.key===FB.sel); if(!n) return;
+  const f=FB.flow, gv=id=>(document.getElementById(id)||{}).value;
+  if(n.kind==="start"){
+    f.name=gv("fb_name")||f.name;
+    if(!FB.isScreen){ f.object=gv("fb_objsel")||f.object; f.trigger=gv("fb_trig")||f.trigger; }
+  }else if(n.kind==="cond"){
+    f.condition=fbJson("fb_cond",f.condition);
+  }else if(n.kind==="action"||n.kind==="faction"){
+    const list=n.kind==="faction"?(f.finish_actions=f.finish_actions||[]):(f.actions=f.actions||[]);
+    const type=gv("fb_atype")||"create_record", a={type};
+    if(type==="create_record"||type==="set_fields"){
+      a.object=gv("fb_aobj");
+      if(type==="set_fields") a.record_id=gv("fb_arid")||"{{Trigger.Id}}";
+      a.fields=fbJson("fb_afields",{});
+    }else if(type==="log"){ a.message=gv("fb_amsg")||""; }
+    else if(type==="http_callout"){
+      a.credential=gv("fb_acred"); a.method=gv("fb_amethod")||"POST"; a.path=gv("fb_apath")||"";
+      a.headers=fbJson("fb_aheaders",{}); a.body=fbJson("fb_abody","");
+    }
+    list[n.idx]=a;
+  }else if(n.kind==="screen"){
+    const s=(f.screens||[])[n.idx]; if(!s) return;
+    s.title=gv("fb_stitle")||s.title;
+    const oldFields=s.fields||[];
+    s.fields=[...document.querySelectorAll("#fb_sfields [data-sf='name']")].map(inp=>{
+      const i=inp.dataset.i;
+      const q=k=>document.querySelector(`#fb_sfields [data-sf='${k}'][data-i='${i}']`);
+      return {...(oldFields[+i]||{}),name:q("name").value,label:q("label").value||q("name").value,type:q("type").value};
+    }).filter(x=>x.name);
+  }
+  if(loud) toast("Applied — remember to Save flow.","info");
+  renderFlowBuilder();
+}
+function fbAddStep(kind){
+  const f=FB.flow;
+  if(kind==="screen"){ (f.screens=f.screens||[]).push({title:"Screen "+(f.screens.length+1),fields:[]}); FB.sel="s"+(f.screens.length-1); }
+  else{
+    if(FB.isScreen){ (f.finish_actions=f.finish_actions||[]).push({type:"create_record"}); FB.sel="f"+(f.finish_actions.length-1); }
+    else{ (f.actions=f.actions||[]).push({type:"create_record"}); FB.sel="a"+(f.actions.length-1); }
+  }
+  renderFlowBuilder();
+}
+function fbDelStep(){
+  const n=fbNodes().find(x=>x.key===FB.sel); if(!n||n.kind==="start") return;
+  if(!confirm("Delete this step?")) return;
+  const f=FB.flow;
+  if(n.kind==="cond") f.condition={};
+  else if(n.kind==="action") f.actions.splice(n.idx,1);
+  else if(n.kind==="faction") f.finish_actions.splice(n.idx,1);
+  else if(n.kind==="screen") f.screens.splice(n.idx,1);
+  FB.sel="start"; renderFlowBuilder();
+}
+function fbAddScreenField(si){
+  fbApplyPanel(false);
+  const s=FB.flow.screens[si]; s.fields=s.fields||[]; s.fields.push({name:"field"+(s.fields.length+1),label:"Field "+(s.fields.length+1),type:"text"});
+  FB.sel="s"+si; renderFlowBuilder();
+}
+function fbDelScreenField(si,fi){
+  fbApplyPanel(false);
+  FB.flow.screens[si].fields.splice(fi,1);
+  FB.sel="s"+si; renderFlowBuilder();
+}
+async function fbSave(){
+  fbApplyPanel(false);
+  if(!fbJsonOk){ toast("Fix the invalid JSON before saving.","error"); return; }
+  const f=FB.flow, payload={name:f.name,canvas:f.canvas||{}};
+  if(FB.isScreen){ payload.screens=f.screens||[]; payload.finish_actions=f.finish_actions||[]; }
+  else{ payload.object=f.object; payload.trigger=f.trigger; payload.condition=f.condition||{}; payload.actions=f.actions||[]; }
+  const cfg=SETUP_KINDS[FB.kind];
+  const r=await api("PATCH","/api/admin/"+(cfg.apiKind||FB.kind)+"/"+FB.id,payload);
+  if(r.ok){ toast("Flow saved.","ok"); fbLoadVersions(); }
+  else toast("Save failed: "+(r.data.error||r.status),"error");
+}
+
+/* ============ dispatch console (service timeline) ============ */
+let dispDate=null;
+async function showDispatch(){
+  setActive("__dispatch");
+  if(!dispDate) dispDate=new Date().toISOString().slice(0,10);
+  document.getElementById("main").innerHTML=skel(3);
+  const r=await api("GET","/api/sobjects/ServiceAppointment?sort=ScheduledStart&dir=asc");
+  if(!r.ok){ document.getElementById("main").innerHTML=`<div class="err">${esc((r.data||{}).error||"Failed to load")}</div>`; return; }
+  const day=(r.data||[]).filter(a=>(a.ScheduledStart||"").slice(0,10)===dispDate);
+  const techs={};
+  day.forEach(a=>{ const t=a.Technician||"(Unassigned)"; (techs[t]=techs[t]||[]).push(a); });
+  const names=Object.keys(techs).sort();
+  const H0=6,H1=22,SPAN=H1-H0;
+  const pct=dt=>{ const d=new Date(dt); return Math.min(100,Math.max(0,((d.getHours()+d.getMinutes()/60)-H0)/SPAN*100)); };
+  const col=s=>s==="Completed"?"#2e9e4f":s==="In Progress"?"#d98a1f":s==="Cancelled"?"#94a3b8":"#0176d3";
+  const today=new Date().toISOString().slice(0,10);
+  const nowPct=dispDate===today?pct(new Date().toISOString()):null;
+  let ticks=""; for(let h=H0;h<=H1;h+=2) ticks+=`<span style="position:absolute;left:${((h-H0)/SPAN*100).toFixed(1)}%;transform:translateX(-50%)">${h}:00</span>`;
+  let html=`<div class="btnrow"><h2 style="margin:0">🗺 Dispatch console</h2><span class="muted">${day.length} appointment(s) · ${names.length} technician(s)</span><span style="flex:1"></span>`
+    +`<input type="date" id="disp_date" value="${dispDate}" style="width:auto"> <button class="btn secondary small" onclick="dispDate=v('disp_date');showDispatch()">Go</button> `
+    +`<button class="btn secondary small" onclick="dispDate=new Date().toISOString().slice(0,10);showDispatch()">Today</button></div>`;
+  html+=`<div class="card"><div class="disp-head"><div></div><div class="disp-scale">${ticks}</div></div>`;
+  if(!names.length) html+=`<p class="muted">No appointments scheduled on this date.</p>`;
+  for(const t of names){
+    html+=`<div class="disp-row"><div style="padding:10px 8px"><b>${esc(t)}</b><div class="muted">${techs[t].length} appt(s)</div></div><div class="disp-lane">`;
+    for(const a of techs[t]){
+      const l=pct(a.ScheduledStart), w=Math.max(2.5,pct(a.ScheduledEnd||a.ScheduledStart)-l);
+      const tip=`${a.Name||"(no name)"} — ${(a.ScheduledStart||"").slice(11,16)}–${(a.ScheduledEnd||"").slice(11,16)} · ${a.Status||""}${a.Address?" · "+a.Address:""}`;
+      html+=`<div class="disp-bar" style="left:${l.toFixed(1)}%;width:${w.toFixed(1)}%;background:${col(a.Status)}" title="${esc(tip)}" onclick="jumpTo('ServiceAppointment','${a.Id}')">${esc(a.Name||"(no name)")}</div>`;
+    }
+    if(nowPct!=null&&nowPct>=0&&nowPct<=100) html+=`<div style="position:absolute;left:${nowPct.toFixed(1)}%;top:0;bottom:0;width:2px;background:#ef4444;opacity:.7" title="Now"></div>`;
+    html+=`</div></div>`;
+  }
+  html+=`</div><p class="muted">Click a block to open the appointment. Bars are colored by status.</p>`;
+  document.getElementById("main").innerHTML=html;
+}
+
+/* ============ inline editing in list views ============ */
+const INLINE_TYPES=["Text","TextArea","LongTextArea","Number","Currency","Percent","Email","Phone","URL","Date","DateTime","Picklist","Checkbox"];
+function canInline(f){
+  return curDesc&&curDesc.permissions.edit&&f.editable&&INLINE_TYPES.includes(f.type)&&f.name!=="Id";
+}
+function inlineCell(c,row){
+  const val=row[c.name], dis=`onchange="inlineSave(this,'${row.Id}','${c.name}','${c.type}')"`;
+  if(c.type==="Checkbox") return `<input type="checkbox" ${val?"checked":""} ${dis} style="width:auto">`;
+  if(c.type==="Picklist") return `<select ${dis} style="max-width:170px"><option value="">—</option>${(c.picklist_values||[]).map(p=>`<option ${String(val)===String(p)?"selected":""}>${esc(p)}</option>`).join("")}</select>`;
+  if(c.type==="Date") return `<input type="date" value="${esc(String(val||"").slice(0,10))}" ${dis}>`;
+  if(c.type==="DateTime") return `<input type="datetime-local" value="${esc(String(val||"").slice(0,16))}" ${dis}>`;
+  if(["Number","Currency","Percent"].includes(c.type)) return `<input type="number" step="any" value="${esc(val??"")}" ${dis} style="max-width:130px">`;
+  return `<input type="text" value="${esc(val??"")}" ${dis} style="max-width:200px">`;
+}
+async function inlineSave(el,id,field,ftype){
+  let v=el.type==="checkbox"?el.checked:el.value;
+  if(["Number","Currency","Percent"].includes(ftype)) v=v===""?null:parseFloat(v);
+  else if(v==="") v=null;
+  const r=await api("PATCH",`/api/sobjects/${curObj}/${id}`,{[field]:v});
+  if(r.ok){ el.style.outline="2px solid #2e9e4f"; setTimeout(()=>{el.style.outline="";},900); }
+  else{ toast("Save failed: "+((r.data||{}).error||r.status),"error"); renderList(); }
+}
+
+/* ============ split view (list + record preview) ============ */
+function toggleSplit(){ splitMode=!splitMode; splitId=null; renderList(); }
+async function splitSelect(id){
+  splitId=id;
+  document.querySelectorAll("#splitlist tr[data-rid]").forEach(tr=>tr.classList.toggle("sel",tr.dataset.rid===id));
+  const box=document.getElementById("splitdetail"); if(!box) return;
+  box.innerHTML=`<div class="card"><p class="muted">Loading…</p></div>`;
+  const r=await api("GET",`/api/sobjects/${curObj}/${id}`);
+  if(!r.ok){ box.innerHTML=`<div class="card"><div class="err">Record not found.</div></div>`; return; }
+  const rec=r.data, fmap={}; curDesc.fields.forEach(f=>fmap[f.name]=f);
+  const secs=(curLayout&&curLayout.sections)||[];
+  const fields=secs.length?secs.flatMap(s=>(s.columns||[]).flat()):curDesc.fields.slice(0,8).map(f=>f.name);
+  box.innerHTML=`<div class="card" style="margin:0"><div class="btnrow"><b>${esc(rec.Name||rec.Subject||rec.Title||id)}</b><span style="flex:1"></span>`
+    +`<button class="btn secondary small" onclick="showDetail('${id}')">Open full</button>`
+    +(curDesc.permissions.edit?` <button class="btn small" onclick="showForm('${id}')">Edit</button>`:"")
+    +`</div><table>${fields.map(fn=>{ const f=fmap[fn]; if(!f) return ""; return `<tr><td class="muted" style="width:42%">${esc(f.label||fn)}</td><td>${esc(fmtVal(f,rec[fn]))}</td></tr>`; }).join("")}</table></div>`;
+}
+
+/* ============ dashboard builder ============ */
+let dashBoards=[], curDash=null, dashBuild=false, dashWidgets=[];
+async function renderDashboards(){
+  const reps=(await api("GET","/api/reports")).data||[];
+  const isAdmin=me.profile==="System Administrator";
+  let html=`<div class="btnrow"><h2 style="margin:0">Dashboards</h2>`
+    +`<select id="dash_sel" onchange="curDash=dashBoards.find(d=>d.id===this.value);dashBuild=false;renderDashboards()" style="max-width:220px">${dashBoards.map(d=>`<option value="${d.id}" ${curDash&&curDash.id===d.id?"selected":""}>${esc(d.name)}</option>`).join("")}</select>`
+    +`<span style="flex:1"></span><button class="btn secondary small" onclick="showReports()">Manage reports</button> `
+    +(curDash?`<button class="btn secondary small" onclick="subModal('dashboard',curDash.id,curDash.name)">📧 Subscribe</button> `:"");
+  if(isAdmin){
+    html+=dashBuild
+      ?`<button class="btn secondary small" onclick="dashNew()">+ New</button> <button class="btn danger small" onclick="dashDel()">Delete</button> <button class="btn secondary small" onclick="dashBuild=false;renderDashboards()">Done</button>`
+      :`<button class="btn secondary small" onclick="dashBuild=true;dashWidgets=JSON.parse(JSON.stringify((curDash&&curDash.widgets)||[]));renderDashboards()">⚙ Customize</button>`;
+  }
+  html+=`</div>`;
+  if(!curDash){
+    html+=`<div class="card"><p class="muted">No dashboards yet.</p>${isAdmin?`<button class="btn" onclick="dashSeed()">Create starter dashboard</button> <button class="btn secondary" onclick="dashNew()">Blank dashboard</button>`:""}</div>`;
+  }else if(dashBuild){
+    html+=dashBuildHtml(reps);
+  }else{
+    html+=`<div class="dashgrid" id="dashview">${skel(2)}</div>`;
+  }
+  document.getElementById("main").innerHTML=html;
+  if(curDash&&!dashBuild) dashRenderView();
+  if(curDash&&dashBuild){ dashBindDnD(); dashRenderPreview(); }
+}
+function dashChart(dd,type){
+  if(!(dd.groups||[]).length) return `<div class="stat"><div class="n">${dd.row_count}</div><div class="l">records</div></div>`;
+  if(type==="donut") return svgDonut(dd.groups);
+  if(type==="stat") return `<div class="stat"><div class="n">${dd.row_count}</div><div class="l">records</div></div>`;
+  return svgBars(dd.groups);
+}
+async function dashRenderView(){
+  const box=document.getElementById("dashview"); if(!box||!curDash) return;
+  const reps=(await api("GET","/api/reports")).data||[];
+  let html="";
+  for(const w of (curDash.widgets||[])){
+    const rep=reps.find(x=>x.id===w.report_id); if(!rep) continue;
+    const d=await api("GET",`/api/reports/${rep.id}/run`); if(!d.ok) continue;
+    html+=`<div class="card"${w.w===2?` style="grid-column:span 2"`:""}><b>${esc(rep.name)}</b><p class="muted">${d.data.row_count} row(s) · ${esc(rep.object)}${rep.group_by?" · by "+esc(rep.group_by):""}</p>${dashChart(d.data,w.type)}</div>`;
+  }
+  box.innerHTML=html||`<div class="card"><p class="muted">No widgets yet — admins can add some via Customize.</p></div>`;
+}
+function dashBuildHtml(reps){
+  let html=`<div class="dashbuild-grid" id="dashblist">`;
+  dashWidgets.forEach((w,i)=>{
+    html+=`<div class="dashw" draggable="true" data-wi="${i}"><div class="btnrow"><span style="cursor:grab" title="Drag to reorder">⠿</span><b>Widget ${i+1}</b><span style="flex:1"></span><button class="btn danger small" onclick="dashWidgets.splice(${i},1);renderDashboards()">Remove</button></div>`
+      +`<label>Report</label><select onchange="dashWidgets[${i}].report_id=this.value;dashRenderPreview()"><option value="">— choose —</option>${reps.map(r=>`<option value="${r.id}" ${w.report_id===r.id?"selected":""}>${esc(r.name)}</option>`).join("")}</select>`
+      +`<div class="grid2"><div><label>Chart</label><select onchange="dashWidgets[${i}].type=this.value;dashRenderPreview()">${["bar","donut","stat"].map(t=>`<option ${w.type===t?"selected":""}>${t}</option>`).join("")}</select></div>`
+      +`<div><label>Width</label><select onchange="dashWidgets[${i}].w=parseInt(this.value);dashRenderPreview()">${[1,2].map(n=>`<option value="${n}" ${w.w===n?"selected":""}>${n===2?"Wide":"Normal"}</option>`).join("")}</select></div></div></div>`;
+  });
+  html+=`</div><div class="btnrow" style="margin-top:12px"><button class="btn secondary" onclick="dashWidgets.push({report_id:'',type:'bar',w:1});renderDashboards()">+ Add widget</button><span style="flex:1"></span><label style="margin:0">Name</label> <input id="dash_name" value="${esc(curDash.name)}" style="max-width:200px"> <button class="btn" onclick="dashSave()">Save dashboard</button></div>`;
+  html+=`<div class="card" style="margin-top:12px"><b>Live preview</b><div id="dashprev" class="dashgrid" style="margin-top:8px"><p class="muted">Loading…</p></div></div>`;
+  return html;
+}
+function dashBindDnD(){
+  const list=document.getElementById("dashblist"); if(!list) return;
+  let src=null;
+  list.querySelectorAll(".dashw").forEach(el=>{
+    el.addEventListener("dragstart",()=>{ src=parseInt(el.dataset.wi,10); el.classList.add("dragging"); });
+    el.addEventListener("dragend",()=>el.classList.remove("dragging"));
+    el.addEventListener("dragover",e=>e.preventDefault());
+    el.addEventListener("drop",e=>{
+      e.preventDefault();
+      const dst=parseInt(el.dataset.wi,10);
+      if(src==null||src===dst) return;
+      const m=dashWidgets.splice(src,1)[0]; dashWidgets.splice(dst,0,m); renderDashboards();
+    });
+  });
+}
+async function dashRenderPreview(){
+  const box=document.getElementById("dashprev"); if(!box) return;
+  const reps=(await api("GET","/api/reports")).data||[];
+  let html="";
+  for(const w of dashWidgets){
+    if(!w.report_id) continue;
+    const rep=reps.find(x=>x.id===w.report_id); if(!rep) continue;
+    const d=await api("GET",`/api/reports/${rep.id}/run`); if(!d.ok) continue;
+    html+=`<div class="card"${w.w===2?` style="grid-column:span 2"`:""}><b>${esc(rep.name)}</b>${dashChart(d.data,w.type)}</div>`;
+  }
+  box.innerHTML=html||`<p class="muted">Add a widget to preview it.</p>`;
+}
+async function dashSave(){
+  const name=(document.getElementById("dash_name")||{}).value||curDash.name;
+  const widgets=dashWidgets.filter(w=>w.report_id);
+  const r=await api("PUT","/api/dashboards/"+curDash.id,{name,widgets});
+  if(r.ok){ curDash=r.data; dashBoards=dashBoards.map(d=>d.id===curDash.id?curDash:d); dashBuild=false; renderDashboards(); toast("Dashboard saved.","ok"); }
+  else toast("Save failed: "+((r.data||{}).error||r.status),"error");
+}
+async function dashNew(){
+  const r=await api("POST","/api/dashboards",{name:"New dashboard",widgets:[]});
+  if(r.ok){ dashBoards.push(r.data); curDash=r.data; dashWidgets=[]; renderDashboards(); }
+  else toast("Create failed: "+((r.data||{}).error||r.status),"error");
+}
+async function dashDel(){
+  if(!confirm("Delete this dashboard?")) return;
+  const r=await api("DELETE","/api/dashboards/"+curDash.id);
+  if(r.ok){ dashBoards=dashBoards.filter(d=>d.id!==curDash.id); curDash=dashBoards[0]||null; dashBuild=false; renderDashboards(); }
+}
+
+/* ============ file preview lightbox ============ */
+let lbUrl=null;
+function openLightbox(html){
+  closeLightbox();
+  const d=document.createElement("div"); d.id="lightbox";
+  d.innerHTML=`<div class="lb-back" onclick="closeLightbox()"></div><div class="lb-box card">${html}<button class="btn secondary small lb-x" onclick="closeLightbox()">✕ Close</button></div>`;
+  document.body.appendChild(d);
+}
+function closeLightbox(){
+  if(lbUrl){ URL.revokeObjectURL(lbUrl); lbUrl=null; }
+  const d=document.getElementById("lightbox"); if(d) d.remove();
+}
+async function previewFile(fid,filename,mime){
+  openLightbox(`<div class="section-title">📎 ${esc(filename)}</div><div id="pvbody"><p class="muted">Loading preview…</p></div><div class="btnrow" style="margin-top:10px"><button class="btn small" onclick="dlFile('${fid}','${esc(filename)}')">Download</button></div>`);
+  let body;
+  try{
+    const r=await fetch(`/api/files/${fid}`,{headers:{"Authorization":"Bearer "+token}});
+    if(!r.ok) throw new Error("fetch");
+    const blob=await r.blob(), url=URL.createObjectURL(blob), m=mime||blob.type||"";
+    if(lbUrl) URL.revokeObjectURL(lbUrl);
+    lbUrl=url;
+    if(m.startsWith("image/")) body=`<img src="${url}" style="max-width:100%;max-height:68vh;border-radius:8px" alt="${esc(filename)}">`;
+    else if(m==="application/pdf") body=`<iframe src="${url}" style="width:100%;height:68vh;border:0;border-radius:8px" title="${esc(filename)}"></iframe>`;
+    else if(m.startsWith("text/")){ const t=await blob.text(); body=`<pre style="max-height:68vh;overflow:auto;text-align:left;white-space:pre-wrap">${esc(t.slice(0,20000))}</pre>`; }
+    else body=`<p class="muted">No inline preview for this file type — download to view.</p>`;
+  }catch(e){ body=`<p class="err">Preview failed.</p>`; }
+  const b=document.getElementById("pvbody"); if(b) b.innerHTML=body;
+}
+if(!window.__lbKey){ window.__lbKey=true; document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeLightbox(); }); }
+
+/* ============ calendar view (events / tasks / service appointments) ============ */
+let calCursor=null, calView="month";
+const CAL_SOURCES=[
+ {obj:"Event",start:"StartDateTime",color:"#0176d3",label:r=>r.Subject||"(event)"},
+ {obj:"Task",start:"DueDate",color:"#2e9e4f",label:r=>r.Subject||"(task)"},
+ {obj:"ServiceAppointment",start:"ScheduledStart",color:"#d98a1f",label:r=>r.Subject||r.Name||"(appt)"},
+];
+function calShift(dir){ const [y,m]=calCursor.split("-").map(Number); const d=new Date(y,m-1+dir,1); calCursor=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; showCalendar(); }
+async function showCalendar(){
+  setActive("__calendar");
+  if(!calCursor){ const d=new Date(); calCursor=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
+  document.getElementById("main").innerHTML=skel(3);
+  const [y,m]=calCursor.split("-").map(Number);
+  const dim=new Date(y,m,0).getDate(), from=`${calCursor}-01`, to=`${calCursor}-${String(dim).padStart(2,"0")}`;
+  const items=[];
+  for(const s of CAL_SOURCES){
+    const r=await api("GET",`/api/sobjects/${s.obj}?sort=${s.start}&dir=asc`);
+    if(!r.ok) continue;
+    for(const rec of (r.data||[])){
+      const day=(rec[s.start]||"").slice(0,10);
+      if(day>=from&&day<=to) items.push({...rec,_src:s,_day:day});
+    }
+  }
+  const monthName=new Date(y,m-1,1).toLocaleString("default",{month:"long",year:"numeric"});
+  let html=`<div class="btnrow"><h2 style="margin:0">📅 Calendar</h2><span class="muted">${items.length} item(s)</span><span style="flex:1"></span>`
+    +`<button class="btn secondary small" onclick="calView='month';showCalendar()">Month</button>`
+    +`<button class="btn secondary small" onclick="calView='agenda';showCalendar()">Agenda</button>`
+    +`<button class="btn secondary small" onclick="calShift(-1)">‹</button><b>${monthName}</b><button class="btn secondary small" onclick="calShift(1)">›</button>`
+    +`<button class="btn secondary small" onclick="calCursor=null;showCalendar()">Today</button></div>`;
+  if(calView==="agenda"){
+    items.sort((a,b)=>(a[a._src.start]||"").localeCompare(b[b._src.start]||""));
+    html+=`<div class="card">`+(items.length?items.map(it=>
+      `<div style="padding:8px 4px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center"><span class="muted" style="min-width:150px">${esc((it[it._src.start]||"").slice(0,16).replace("T"," "))}</span><span class="pill" style="background:${it._src.color}22;color:${it._src.color}">${esc(it._src.obj)}</span><a href="#" onclick="jumpTo('${it._src.obj}','${it.Id}');return false"><b>${esc(it._src.label(it))}</b></a></div>`
+    ).join(""):`<p class="muted">Nothing scheduled this month.</p>`)+`</div>`;
+  }else{
+    const lead=new Date(y,m-1,1).getDay();
+    const cells=[];
+    for(let i=0;i<lead;i++) cells.push(null);
+    for(let d=1;d<=dim;d++) cells.push(`${calCursor}-${String(d).padStart(2,"0")}`);
+    while(cells.length%7) cells.push(null);
+    const today=new Date().toISOString().slice(0,10);
+    html+=`<div class="cal-grid">`+["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div class="cal-dow">${d}</div>`).join("");
+    for(const day of cells){
+      if(!day){ html+=`<div class="cal-cell cal-empty"></div>`; continue; }
+      const its=items.filter(i=>i._day===day);
+      html+=`<div class="cal-cell${day===today?" cal-today":""}" ondragover="event.preventDefault()" ondrop="calDrop(event,'${day}')">`
+        +`<div class="cal-date">${parseInt(day.slice(8),10)}</div>`
+        +its.slice(0,4).map(it=>`<div class="cal-chip" draggable="true" ondragstart="calDrag(event,'${it._src.obj}','${it.Id}','${it._src.start}','${esc((it[it._src.start]||"").slice(0,10))}')" title="${esc(it._src.label(it))} — drag to reschedule" onclick="jumpTo('${it._src.obj}','${it.Id}')" style="border-left:3px solid ${it._src.color}">${esc(it._src.label(it).slice(0,22))}</div>`).join("")
+        +(its.length>4?`<div class="muted" style="font-size:11px">+${its.length-4} more</div>`:"")
+        +`</div>`;
+    }
+    html+=`</div><p class="muted">Drag an item onto another day to reschedule it. Click an item to open the record.</p>`;
+  }
+  document.getElementById("main").innerHTML=html;
+}
+function calDrag(e,obj,id,field,oldDay){ e.dataTransfer.setData("text/plain",JSON.stringify({obj,id,field,oldDay})); }
+function jumpTo(obj,id){ curObj=obj; showDetail(id); }
+async function calDrop(e,day){
+  e.preventDefault();
+  let d; try{ d=JSON.parse(e.dataTransfer.getData("text/plain")); }catch(_){ return; }
+  if(!d||d.oldDay===day) return;
+  // fetch current value to preserve the time portion on datetime fields
+  const r0=await api("GET",`/api/sobjects/${d.obj}/${d.id}`);
+  const cur=r0.ok?String((r0.data||{})[d.field]||""):"";
+  const val=cur.length>10?day+cur.slice(10):day;
+  const r=await api("PATCH",`/api/sobjects/${d.obj}/${d.id}`,{[d.field]:val});
+  if(r.ok){ toast("Rescheduled to "+day+".","ok"); showCalendar(); }
+  else toast("Reschedule failed: "+((r.data||{}).error||r.status),"error");
+}
+
+/* ============ quote PDF ============ */
+async function dlQuotePdf(id){
+  const r=await fetch(`/api/quotes/${id}/pdf`,{headers:{"Authorization":"Bearer "+token}});
+  if(!r.ok){ toast("PDF failed.","error"); return; }
+  const blob=await r.blob(), a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=`quote-${id}.pdf`;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+/* ============ case macros (record page) ============ */
+async function macroBar(id){
+  const r=await api("GET","/api/macros");
+  const macros=Array.isArray(r.data)?r.data.filter(m=>m.active!==false&&(!m.object||m.object==="Case")):[];
+  if(!macros.length) return "";
+  return `<div class="card"><div class="section-title">⚡ Agent macros</div><div class="btnrow">`
+    +`<select id="macro_sel" style="max-width:260px">${macros.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select>`
+    +`<button class="btn small" onclick="applyMacroCase('${id}')">Run macro</button>`
+    +(me.profile==="System Administrator"?`<button class="btn secondary small" onclick="showQueueAdmin()">Manage macros</button>`:"")
+    +`</div></div>`;
+}
+async function applyMacroCase(id){
+  const mid=document.getElementById("macro_sel").value;
+  const r=await api("POST",`/api/sobjects/Case/${id}/apply-macro`,{macro_id:mid});
+  if(r.ok){ toast("Macro applied: "+(r.data.applied||[]).join(", ")+".","ok"); showDetail(id); }
+  else toast("Macro failed: "+((r.data||{}).error||r.status),"error");
+}
+
+/* ============ case queues + macro management ============ */
+async function showQueueAdmin(){
+  setActive(null);
+  document.getElementById("main").innerHTML=skel(3);
+  const [qs,ms]=await Promise.all([api("GET","/api/case-queues"),api("GET","/api/macros")]);
+  const queues=Array.isArray(qs.data)?qs.data:[], macros=Array.isArray(ms.data)?ms.data:[];
+  let html=`<div class="btnrow"><button class="btn secondary" onclick="showObject('Case')">← Back to Cases</button><h2 style="margin:0">Queues &amp; Macros</h2></div>`;
+  html+=`<div class="card"><div class="section-title">Case queues (${queues.length})</div><div id="qerr"></div><table>`
+    +queues.map(q=>`<tr><td><b>${esc(q.name)}</b></td><td class="muted">${esc(JSON.stringify(q.filters||{}).slice(0,80))}</td><td>${q.active!==false?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="queueToggle('${q.id}',${q.active!==false})">${q.active!==false?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="queueDel('${q.id}')">Delete</button></td></tr>`).join("")
+    +`</table><div class="section-title" style="margin-top:12px">New queue</div><div class="grid2"><div><label>Name</label><input id="nq_name" placeholder="Urgent queue"></div><div><label>Filter JSON</label><input id="nq_filt" placeholder='{"==":[{"field":"Priority"},"High"]}'></div></div><div class="btnrow" style="margin-top:8px"><button class="btn" onclick="queueCreate()">Create queue</button></div></div>`;
+  html+=`<div class="card"><div class="section-title">Agent macros (${macros.length})</div><div id="merr"></div><table>`
+    +macros.map(m=>`<tr><td><b>${esc(m.name)}</b></td><td class="muted">${esc((m.actions||[]).map(a=>Object.keys(a)[0]).join(", "))}</td><td>${m.active!==false?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="macroToggle('${m.id}',${m.active!==false})">${m.active!==false?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="macroDel('${m.id}')">Delete</button></td></tr>`).join("")
+    +`</table><div class="section-title" style="margin-top:12px">New macro</div><div class="grid2"><div><label>Name</label><input id="nm_name" placeholder="Close as solved"></div><div><label>Actions JSON</label><input id="nm_act" placeholder='[{"set_fields":{"Status":"Closed"}},{"add_comment":"Done"}]'></div></div><p class="muted">Action types: <code>set_fields</code>, <code>add_comment</code>, <code>reassign</code> (user id).</p><div class="btnrow"><button class="btn" onclick="macroCreate()">Create macro</button></div></div>`;
+  document.getElementById("main").innerHTML=html;
+}
+function jparse(id,errEl){ try{ return JSON.parse(document.getElementById(id).value||"{}"); }catch(e){ document.getElementById(errEl).innerHTML=`<div class="err">Invalid JSON: ${esc(e.message)}</div>`; return null; } }
+async function queueCreate(){
+  const filt=jparse("nq_filt","qerr"); if(!filt) return;
+  const r=await api("POST","/api/case-queues",{name:v("nq_name"),filters:filt});
+  r.ok?(toast("Queue created.","ok"),showQueueAdmin()):toast("Failed: "+((r.data||{}).error||r.status),"error");
+}
+async function queueToggle(id,active){ const r=await api("PUT",`/api/case-queues/${id}`,{active:!active}); r.ok?showQueueAdmin():toast("Failed.","error"); }
+async function queueDel(id){ if(!confirm("Delete this queue?")) return; const r=await api("DELETE",`/api/case-queues/${id}`); r.ok?showQueueAdmin():toast("Failed.","error"); }
+async function macroCreate(){
+  let acts; try{ acts=JSON.parse(document.getElementById("nm_act").value||"[]"); }catch(e){ document.getElementById("merr").innerHTML=`<div class="err">Invalid JSON: ${esc(e.message)}</div>`; return; }
+  const r=await api("POST","/api/macros",{name:v("nm_name"),object:"Case",actions:acts});
+  r.ok?(toast("Macro created.","ok"),showQueueAdmin()):toast("Failed: "+((r.data||{}).error||r.status),"error");
+}
+async function macroToggle(id,active){ const r=await api("PUT",`/api/macros/${id}`,{active:!active}); r.ok?showQueueAdmin():toast("Failed.","error"); }
+async function macroDel(id){ if(!confirm("Delete this macro?")) return; const r=await api("DELETE",`/api/macros/${id}`); r.ok?showQueueAdmin():toast("Failed.","error"); }
+
+/* ============ bulk data jobs ============ */
+let bulkTimer=null;
+async function showBulk(){
+  setActive("__bulk");
+  if(bulkTimer){ clearInterval(bulkTimer); bulkTimer=null; }
+  document.getElementById("main").innerHTML=skel(3);
+  const objs=(objects||[]).map(o=>`<option>${o.name}</option>`).join("");
+  let html=`<div class="btnrow"><h2 style="margin:0">Bulk Data Jobs</h2><span class="muted">async insert / update / upsert</span></div>`;
+  html+=`<div class="card"><div class="section-title">New bulk job</div><div id="bjerr"></div><div class="grid2"><div>`
+    +`<label>Object</label><select id="bj_obj">${objs}</select><label>Operation</label><select id="bj_op"><option value="insert">Insert</option><option value="update">Update (needs Id per row)</option><option value="upsert">Upsert (needs external ID field)</option></select><label>External ID field (upsert only)</label><input id="bj_ext" placeholder="e.g. External_Id__c"></div><div>`
+    +`<label>Rows — JSON array, or CSV with a header row</label><textarea id="bj_rows" rows="8" placeholder='[{"Subject":"Call back","Status":"Not Started"}]'></textarea></div></div>`
+    +`<div class="btnrow" style="margin-top:8px"><button class="btn" onclick="bulkSubmit()">Run bulk job</button></div></div>`;
+  html+=`<div class="card"><div class="section-title">Jobs</div><div id="bjobs"></div></div>`;
+  document.getElementById("main").innerHTML=html;
+  await bulkRefresh();
+  bulkTimer=setInterval(async()=>{ if(!document.getElementById("bjobs")){ clearInterval(bulkTimer); bulkTimer=null; return; } await bulkRefresh(true); },4000);
+}
+function csvToRows(text){
+  const lines=text.trim().split(/\r?\n/).filter(l=>l.trim());
+  const heads=lines[0].split(",").map(h=>h.trim());
+  return lines.slice(1).map(l=>{ const cells=l.split(","); const o={}; heads.forEach((h,i)=>{ let c=(cells[i]||"").trim(); if(c!==""&&!isNaN(c)) c=Number(c); o[h]=c; }); return o; });
+}
+async function bulkSubmit(){
+  let rows; const raw=document.getElementById("bj_rows").value.trim();
+  if(!raw){ document.getElementById("bjerr").innerHTML=`<div class="err">Paste rows first.</div>`; return; }
+  try{ rows=raw.startsWith("[")?JSON.parse(raw):csvToRows(raw); }
+  catch(e){ document.getElementById("bjerr").innerHTML=`<div class="err">Could not parse rows: ${esc(e.message)}</div>`; return; }
+  if(!Array.isArray(rows)||!rows.length){ document.getElementById("bjerr").innerHTML=`<div class="err">No rows found.</div>`; return; }
+  const body={object:v("bj_obj"),operation:v("bj_op"),rows,external_id_field:v("bj_ext")||undefined};
+  const r=await api("POST","/api/bulk-jobs",body);
+  if(r.ok){ toast("Bulk job started.","ok"); bulkRefresh(); }
+  else toast("Failed: "+((r.data||{}).error||r.status),"error");
+}
+async function bulkRefresh(quiet){
+  const box=document.getElementById("bjobs"); if(!box) return;
+  const r=await api("GET","/api/bulk-jobs");
+  const jobs=Array.isArray(r.data)?r.data:[];
+  box.innerHTML=jobs.length?`<table><tr><th>Name</th><th>Object</th><th>Op</th><th>Status</th><th>Processed</th><th>OK</th><th>Failed</th><th></th></tr>`
+    +jobs.map(j=>`<tr><td><b>${esc(j.name)}</b><div class="muted">${esc(j.rows||"")}</div>${(j.errors||[]).length?`<div class="err" style="margin-top:4px">${esc(j.errors.slice(0,3).join(" · "))}${j.errors.length>3?" …":""}</div>`:""}</td><td>${esc(j.object)}</td><td>${esc(j.operation)}</td><td><span class="pill ${j.status==="completed"?"pill-on":"pill-off"}">${esc(j.status)}</span></td><td>${j.processed??0}</td><td>${j.succeeded??0}</td><td>${j.failed??0}</td><td><button class="btn secondary small" onclick="bulkRefresh()">Refresh</button></td></tr>`).join("")+`</table>`
+    :`<p class="muted">No bulk jobs yet.</p>`;
+}
+
+/* ============ report subscriptions ============ */
+function subModal(kind,id,name){
+  openLightbox(`<div class="section-title">📧 Subscribe — ${esc(name)}</div>
+  <p class="muted">A ${kind} digest is emailed on schedule. Delivery is logged under Admin Setup → Email Log${window.FORCELET_SMTP?"":" (demo mode: logged, not sent)"}.</p>
+  <label>Frequency</label><select id="sub_freq"><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
+  <label>Recipient emails (comma-separated)</label><input id="sub_rcpt" placeholder="you@company.com">
+  <div class="btnrow" style="margin-top:10px"><button class="btn" onclick="subSave('${kind}','${id}')">Subscribe</button>
+  <button class="btn secondary" onclick="closeLightbox()">Cancel</button></div><div id="suberr"></div>`);
+}
+async function subSave(kind,id){
+  const freq=document.getElementById("sub_freq").value;
+  const rcpt=document.getElementById("sub_rcpt").value.split(",").map(s=>s.trim()).filter(Boolean);
+  if(!rcpt.length){ document.getElementById("suberr").innerHTML=`<div class="err">Add at least one recipient.</div>`; return; }
+  const body={frequency:freq,recipients:rcpt};
+  body[kind==="report"?"report_id":"dashboard_id"]=id;
+  const r=await api("POST","/api/report-subscriptions",body);
+  if(r.ok){ closeLightbox(); toast(`Subscribed — ${freq} digest enabled.`,"ok"); }
+  else document.getElementById("suberr").innerHTML=`<div class="err">${esc((r.data||{}).error||r.status)}</div>`;
+}
+
+/* ============ flow version history ============ */
+async function fbLoadVersions(){
+  const sel=document.getElementById("fbvers"); if(!sel||!FB) return;
+  const cfg=SETUP_KINDS[FB.kind];
+  const r=await api("GET",`/api/admin/${cfg.apiKind||FB.kind}/${FB.id}/versions`);
+  const vers=r.ok&&Array.isArray(r.data)?r.data:[];
+  sel.innerHTML=`<option value="">🕘 Versions (${vers.length})…</option>`+vers.map(v=>`<option value="${v.id}">v${v.version} — ${esc((v.created_at||"").slice(0,16).replace("T"," "))}${v.note?" — "+esc(v.note.slice(0,30)):""}</option>`).join("");
+  FB.versions=vers;
+}
+async function fbRollback(){
+  const sel=document.getElementById("fbvers");
+  const vid=sel&&sel.value;
+  if(!vid){ toast("Pick a version from the history dropdown first.","info"); return; }
+  if(!confirm("Rollback this flow to the selected version? The current state will be snapshotted first.")) return;
+  const cfg=SETUP_KINDS[FB.kind];
+  const r=await api("POST",`/api/admin/${cfg.apiKind||FB.kind}/${FB.id}/rollback`,{version_id:vid});
+  if(r.ok){ toast("Rolled back.","ok"); openFlowBuilder(FB.kind,FB.id); }
+  else toast("Rollback failed: "+((r.data||{}).error||r.status),"error");
+}
+
+/* ============ TOTP two-factor management ============ */
+async function totpManage(){
+  const s=await api("GET","/api/me/totp/status");
+  if(s.ok&&s.data.enabled){
+    openLightbox(`<div class="section-title">🔐 Two-factor authentication</div><p>Two-factor is <b>enabled</b> for your account.</p>
+    <label>Confirm password to disable</label><input id="totp_pw" type="password">
+    <div class="btnrow" style="margin-top:10px"><button class="btn danger" onclick="totpDisable()">Disable 2FA</button>
+    <button class="btn secondary" onclick="closeLightbox()">Cancel</button></div><div id="totperr2"></div>`);
+  }else{
+    const r=await api("POST","/api/me/totp/setup");
+    if(!r.ok){ toast("Setup failed.","error"); return; }
+    openLightbox(`<div class="section-title">🔐 Set up two-factor authentication</div>
+    <p class="muted">1. Open your authenticator app (Google Authenticator, 1Password, …) and add this secret, or open the link below on your phone.</p>
+    <label>Secret (keep private)</label><input readonly value="${esc(r.data.secret)}" onclick="this.select()">
+    <p><a href="${esc(r.data.otpauth_url)}">otpauth link — open on your phone</a></p>
+    <p class="muted">2. Enter the 6-digit code to finish.</p>
+    <input id="totp_en_code" inputmode="numeric" maxlength="6" placeholder="000000" style="max-width:160px">
+    <div class="btnrow" style="margin-top:10px"><button class="btn" onclick="totpEnable()">Enable 2FA</button>
+    <button class="btn secondary" onclick="closeLightbox()">Cancel</button></div><div id="totperr2"></div>`);
+  }
+}
+async function totpEnable(){
+  const r=await api("POST","/api/me/totp/enable",{code:document.getElementById("totp_en_code").value.trim()});
+  if(r.ok){ closeLightbox(); toast("Two-factor enabled.","ok"); }
+  else document.getElementById("totperr2").innerHTML=`<div class="err">${esc((r.data||{}).error||r.status)}</div>`;
+}
+async function totpDisable(){
+  const r=await api("POST","/api/me/totp/disable",{password:document.getElementById("totp_pw").value});
+  if(r.ok){ closeLightbox(); toast("Two-factor disabled.","ok"); }
+  else document.getElementById("totperr2").innerHTML=`<div class="err">${esc((r.data||{}).error||r.status)}</div>`;
+}
+
 boot();
 </script>
 </body>

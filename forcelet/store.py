@@ -66,7 +66,9 @@ class Store:
                       "mf_scheduled_jobs", "mf_assignment_rules", "mf_email_templates",
                       "mf_auto_responses", "mf_paths", "mf_ml_models",
                       "mf_sla_policies", "mf_case_milestones", "mf_escalation_rules",
-                      "mf_named_credentials", "mf_forecast_quotas", "mf_flow_runs"):
+                      "mf_named_credentials", "mf_forecast_quotas", "mf_flow_runs",
+                      "mf_dashboards", "mf_case_queues", "mf_macros",
+                      "mf_bulk_jobs", "mf_report_subs", "mf_flow_versions"):
             c.execute(f"""CREATE TABLE IF NOT EXISTS {table}
                           (id TEXT PRIMARY KEY, definition TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS mf_history

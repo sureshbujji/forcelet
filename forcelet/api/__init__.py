@@ -13,7 +13,7 @@ from ..bootstrap import bootstrap
 
 from . import (
     admin, api_keys, approvals, audit, auth, callouts, cdc, chatter,
-    email, files, flows, forecasts, impexp, jobs, kanban, metadata,
+    email, enhancements, files, flows, forecasts, impexp, jobs, kanban, metadata,
     notifications, oauth, packaging, records, reports, scoring, search,
     sla, activities, web_to,
 )
@@ -25,7 +25,7 @@ def create_app(db_path: str) -> Flask:
     app = Flask(__name__)
     app.mf_store, app.mf_registry, app.mf_security = store, registry, security
     for mod in (admin, api_keys, approvals, audit, auth, callouts, cdc,
-                chatter, email, files, flows, forecasts, impexp, jobs,
+                chatter, email, enhancements, files, flows, forecasts, impexp, jobs,
                 kanban, metadata, notifications, oauth, packaging, records,
                 reports, scoring, search, sla, activities, web_to):
         mod.register(app)

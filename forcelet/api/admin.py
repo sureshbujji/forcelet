@@ -103,6 +103,10 @@ def register(app: Flask):
             return jsonify({"error": "Not found"}), 404
         body = request.json or {}
         body.pop("id", None)
+        if kind == "flows":
+            # snapshot the pre-change definition for version history
+            from .enhancements import _snapshot_flow_version
+            _snapshot_flow_version(store, rid, old, request.mf_user)
         merged = {**old, **body}
         store.config_put(table, {**merged, "id": rid})
         _audit("update", kind, merged.get("name") or rid)

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Functionality batch:** eight platform features, all with UI.
+  Calendar view (month/agenda) for Event, Task, and ServiceAppointment with
+  drag-to-reschedule; Quote PDF generation (`GET /api/quotes/<id>/pdf`,
+  pure-stdlib PDF 1.4); case queues with filter pills on the Case list and a
+  Queues & Macros admin page; agent macros (`set_fields`/`add_comment`/
+  `reassign`) runnable from the Case record page; async bulk insert/update/
+  upsert jobs with a monitor page (`/api/bulk-jobs`); scheduled report and
+  dashboard subscriptions with emailed digests (`/api/report-subscriptions`,
+  Subscribe buttons on Reports/Dashboards); flow version history with
+  one-click rollback in the visual flow builder (`/api/admin/flows/<id>/
+  versions`); TOTP two-factor auth (setup/enable/disable, challenge on
+  password login, 🔐 2FA in the header); live knowledge suggestions on the
+  public Web-to-Case form (`/api/public/knowledge-suggest`).
+- **UI batch:** visual flow builder (drag-to-arrange node canvas with
+  click-to-edit side panel, guided condition builder, canvas positions saved
+  per flow); dispatch console (ServiceAppointment timeline with technician
+  lanes, now-marker, date picker); inline list editing (text/number/
+  picklist/checkbox/date); dashboard builder (admin Customize mode,
+  add/remove/drag-reorder report widgets, live preview); file preview
+  lightbox (image/PDF/text); split view (list + record preview). New
+  `mf_dashboards` config table and `GET/POST/PUT/DELETE /api/dashboards`.
 - **Admin Setup overhaul:** Salesforce-style Setup Home with Quick Find search
   and 28 tiles grouped into Data Model, Automation, Security & Access,
   Integrations, and Monitoring, each tile showing a live configured count;

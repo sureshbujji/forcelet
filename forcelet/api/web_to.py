@@ -76,9 +76,23 @@ def register(app: Flask):
             "<style>body{font-family:sans-serif;max-width:480px;margin:40px auto;padding:0 16px}"
             "label{display:block;margin:12px 0 4px;font-weight:600}"
             "input{width:100%;padding:8px;box-sizing:border-box}"
-            "button{margin-top:16px;padding:10px 24px}</style></head><body>"
+            "button{margin-top:16px;padding:10px 24px}"
+            ".ksug{background:#f5f9ff;border:1px solid #cfe0f7;border-radius:8px;padding:10px 12px;margin:12px 0;display:none}"
+            ".ksug a{display:block;font-weight:600;color:#0176d3;margin:6px 0 2px}"
+            ".ksug p{margin:2px 0 8px;color:#444;font-size:14px}</style></head><body>"
             f"<h2>Open a support case</h2><form method='post' action='/api/public/web-to-case'>"
-            f"{fields}<button type='submit'>Submit</button></form></body></html>",
+            f"{fields}<button type='submit'>Submit</button></form>"
+            "<div class='ksug' id='ksug'><b>💡 These help articles might answer your question:</b><div id='ksug_list'></div></div>"
+            "<script>var t=null;function esc(s){return String(s||'').replace(/[&<>\"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]});}"
+            "function sug(){var q=(document.getElementsByName('Subject')[0].value+' '+document.getElementsByName('Description')[0].value).trim();"
+            "if(q.length<4){document.getElementById('ksug').style.display='none';return;}"
+            "fetch('/api/public/knowledge-suggest?q='+encodeURIComponent(q)).then(function(r){return r.json()}).then(function(j){"
+            "var arr=j.data||j,box=document.getElementById('ksug'),list=document.getElementById('ksug_list');"
+            "if(!arr||!arr.length){box.style.display='none';return;}"
+            "list.innerHTML=arr.map(function(a){return '<b>'+esc(a.title)+'</b><p>'+esc(a.summary)+'</p>'}).join('');"
+            "box.style.display='block';});}"
+            "['Subject','Description'].forEach(function(n){document.getElementsByName(n)[0].addEventListener('input',function(){clearTimeout(t);t=setTimeout(sug,600);});});"
+            "</script></body></html>",
             mimetype="text/html")
 
     @app.post("/api/public/web-to-case")

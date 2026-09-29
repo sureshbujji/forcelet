@@ -1274,3 +1274,69 @@ def advance_screen_flow(store, registry, security, flow: dict, run: dict,
     store.config_put("mf_flow_runs", run)
     return store.config_get("mf_flow_runs", run["id"]), None, \
         {"ok": True, "created": created}
+
+
+def send_report_digest(store, security, sub_id: str) -> dict:
+    """Scheduled-job entry point: email a report/dashboard digest.
+
+    Called from generated job code as
+    ``automation.send_report_digest(store, security, '<sub_id>')``.
+    Delivery follows the platform demo convention: the email is logged
+    (see email_log) and actually sent only when FORCELET_SMTP is set.
+    """
+    import os
+    sub = store.config_get("mf_report_subs", sub_id)
+    if not sub or not sub.get("active", True):
+        return {"ok": False, "detail": "subscription missing or inactive"}
+    admin = security.get_user_by_username("admin")
+    lines = [f"Report digest: {sub.get('name')}", ""]
+    rep = store.config_get("mf_reports", sub.get("report_id") or "")
+    if rep:
+        lines += _digest_report_lines(store, security, admin, rep)
+    dash = store.config_get("mf_dashboards", sub.get("dashboard_id") or "")
+    if dash:
+        for w in dash.get("widgets") or []:
+            rep = store.config_get("mf_reports", w.get("report_id") or "")
+            if rep:
+                lines += [f"--- {rep.get('name')} ({w.get('type', 'bar')}) ---"]
+                lines += _digest_report_lines(store, security, admin, rep)
+    body = "\n".join(lines)[:8000]
+    subject = f"[Forcelet digest] {sub.get('name')}"
+    for rcpt in sub.get("recipients") or []:
+        store.log_email("Report", sub.get("report_id") or sub.get("dashboard_id") or "",
+                        rcpt, subject, body, "report-digest", admin or {})
+    store.log_scheduled_run(sub.get("job_id") or sub_id, "ok",
+                            f"digest sent to {len(sub.get('recipients') or [])}")
+    return {"ok": True, "detail": f"sent to {len(sub.get('recipients') or [])}"}
+
+
+def _digest_report_lines(store, security, admin, rep: dict) -> list:
+    from .expressions import eval_expr as _eval, record_context as _rctx
+    obj_name = rep.get("object")
+    filt = rep.get("filters") or {}
+    rows = []
+    for r in store.query(obj_name, limit=10000):
+        try:
+            if filt and not _eval(filt, _rctx(r)):
+                continue
+        except Exception:
+            continue
+        rows.append(r)
+    lines = [f"Report: {rep.get('name')} — {len(rows)} record(s)"]
+    group_by = rep.get("group_by")
+    if group_by:
+        groups: dict = {}
+        for r in rows:
+            key = str(r.get(group_by) or "(blank)")
+            groups[key] = groups.get(key, 0) + 1
+        for key in sorted(groups)[:15]:
+            lines.append(f"  {key}: {groups[key]}")
+        if len(groups) > 15:
+            lines.append(f"  ... and {len(groups) - 15} more groups")
+    else:
+        for r in rows[:10]:
+            label = r.get("Name") or r.get("Subject") or r.get("Title") or r.get("id")
+            lines.append(f"  - {label}")
+        if len(rows) > 10:
+            lines.append(f"  ... and {len(rows) - 10} more")
+    return lines

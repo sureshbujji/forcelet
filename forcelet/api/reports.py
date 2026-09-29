@@ -81,3 +81,44 @@ def register(app: Flask):
             groups = sorted(groups.values(), key=lambda g: g["count"], reverse=True)
         return jsonify({"report": rep["name"], "row_count": len(rows),
                         "columns": rep.get("columns") or [], "rows": rows[:500], "groups": groups})
+
+    # ------------------------------------------------------------ dashboards
+    @app.get("/api/dashboards")
+    @require_auth
+    def list_dashboards():
+        return jsonify(store.config_all("mf_dashboards"))
+
+    @app.post("/api/dashboards")
+    @require_auth
+    @require_admin
+    def create_dashboard():
+        body = request.json or {}
+        rid = store.config_put("mf_dashboards", {
+            "name": body.get("name") or "Dashboard",
+            "widgets": body.get("widgets") or [],
+        })
+        _audit("create", "dashboards", body.get("name") or rid)
+        return jsonify(store.config_get("mf_dashboards", rid)), 201
+
+    @app.put("/api/dashboards/<did>")
+    @require_auth
+    @require_admin
+    def update_dashboard(did):
+        dash = store.config_get("mf_dashboards", did)
+        if not dash:
+            return jsonify({"error": "Unknown dashboard"}), 404
+        body = request.json or {}
+        dash["name"] = body.get("name", dash.get("name"))
+        dash["widgets"] = body.get("widgets", dash.get("widgets") or [])
+        store.config_put("mf_dashboards", dash)
+        _audit("update", "dashboards", dash["name"])
+        return jsonify(dash)
+
+    @app.delete("/api/dashboards/<did>")
+    @require_auth
+    @require_admin
+    def delete_dashboard(did):
+        if not store.config_delete("mf_dashboards", did):
+            return jsonify({"error": "Unknown dashboard"}), 404
+        _audit("delete", "dashboards", did)
+        return jsonify({"ok": True})

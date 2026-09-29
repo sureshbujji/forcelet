@@ -400,6 +400,26 @@ work orders, service appointments, events, campaigns + members, contracts,
 knowledge articles, the recycle bin, duplicate find + merge, the assistant,
 and API round-trips.
 
+## What's new in 0.3.0
+
+**Functionality batch** — eight platform features, each with UI: a Calendar
+view (month/agenda) for Events, Tasks, and Service Appointments with
+drag-to-reschedule; **Quote PDF** generation (Download PDF on Quote records);
+**case queues** with filter pills on the Case list and a Queues & Macros admin
+page; **agent macros** (`set_fields` / `add_comment` / `reassign`) runnable
+from the Case record page; **async bulk jobs** (insert/update/upsert with a
+monitor page); **scheduled report/dashboard subscriptions** with emailed
+digests (Subscribe buttons on Reports and Dashboards); **flow version history**
+with one-click rollback inside the visual flow builder; **TOTP two-factor
+auth** (setup/enable/disable, login challenge, 🔐 2FA in the header); and
+**live knowledge suggestions** on the public Web-to-Case form.
+
+**UI batch** — visual flow builder (drag-to-arrange node canvas, click-to-edit
+side panel, guided condition builder); dispatch console (technician-lane
+timeline with now-marker); inline list editing; dashboard builder (admin
+Customize mode with drag-reorder widgets and live preview); file preview
+lightbox; split view (list + record preview).
+
 ## What's new in 0.2.0
 
 **Seven new standard objects** — Work Orders (+ Service Appointments with a
