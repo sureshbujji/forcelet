@@ -1,12 +1,23 @@
+# Forcelet — production image (gunicorn + TLS-terminating proxy in front)
 FROM python:3.12-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    FORCELET_BEHIND_PROXY=1
+
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+COPY pyproject.toml ./
+COPY forcelet ./forcelet
+COPY web ./web
+COPY metadata ./metadata
+COPY wsgi.py gunicorn.conf.py ./
 
-ENV FORCELET_DB=/data/forcelet.db
-VOLUME /data
-EXPOSE 5000
+RUN pip install --no-cache-dir . gunicorn
 
-CMD ["python", "run.py", "--host", "0.0.0.0", "--port", "5000"]
+# Data lives outside the image: mount volumes for the DB and backups.
+VOLUME ["/data"]
+ENV FORCELET_DB=/data/forcelet.db \
+    FORCELET_BACKUP_DIR=/data/backups
+
+EXPOSE 8000
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "wsgi:app"]

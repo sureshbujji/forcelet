@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased — production hardening
+
+- **Record deep links**: opening a record now puts `/r/<object>/<id>` in the
+  address bar (Salesforce-style); links are bookmarkable and shareable, the
+  back/forward buttons work, and pasting a record URL loads the login screen
+  then lands on the record after sign-in. The SPA is served by the app itself
+  at `/` and `/r/*` in both dev (`run.py`) and production (`wsgi.py`/gunicorn)
+  — previously production served no UI at all.
+- **Secure sessions**: random `mf_sess_` bearer tokens (SHA-256 hashes stored
+  server-side) replace the old forgeable `mf-{user_id}` tokens; 12-hour
+  sliding idle expiry, 7-day absolute cap, server-side revocation,
+  `/api/logout`, `/api/session`, and password changes revoking all other
+  sessions. Old-format tokens are rejected.
+- **Login hardening**: 5-failures/15-min per-account lockout plus an IP-wide
+  threshold; in-process rate limits on login, OAuth token, and backup
+  endpoints; `Cache-Control: no-store` on token responses; query-string
+  `access_token` honored only on `/api/streaming`.
+- **Credential hygiene**: fresh installs mint random initial passwords (printed
+  once to the server console); seeded/admin-created accounts must change
+  their password before any other API call; existing demo-password accounts
+  are flagged the same way on upgrade. The login page no longer advertises
+  or pre-fills a demo password; a forced-change screen and API-backed logout
+  were added to the UI.
+- **Transport & observability**: security headers (CSP, HSTS, X-Frame-Options,
+  nosniff, Referrer-Policy), `/api/health` liveness check, structured
+  logging with 4xx/5xx request logging, 16 MB default request-body cap
+  (`FORCELET_MAX_UPLOAD_MB`).
+- **Data safety**: SQLite WAL + busy timeout + FK enforcement, numbered
+  migration framework (`mf_meta.schema_version`), and `VACUUM INTO` backups
+  via `GET/POST /api/admin/backups` with 14-copy retention
+  (`FORCELET_BACKUP_KEEP`, `FORCELET_BACKUP_DIR`).
+- **Scheduler**: single-runner DB heartbeat lock, catch-up of due jobs after
+  restart, expired-session pruning, `FORCELET_SCHEDULER=0` opt-out, and a
+  standalone `python -m forcelet.scheduler_run` entrypoint.
+- **Production runtime**: Gunicorn WSGI entrypoint (`wsgi.py`,
+  `gunicorn.conf.py`, 1 worker / 8 threads for SQLite), production
+  `Dockerfile` (Gunicorn on :8000), and `docs/DEPLOYMENT.md` covering
+  Docker, systemd, TLS, backups, and env vars.
+
 ## 0.7.0 — 2026-09-30
 
 - **App data-model batch** (`forcelet/datamodel.py`, `/api/admin/*`, Setup →

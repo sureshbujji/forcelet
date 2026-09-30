@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import os
+from datetime import datetime, timezone
 from functools import wraps
 
 from flask import Flask, jsonify, request, Response, send_file
@@ -19,8 +20,13 @@ from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
 from ._shared import (
     _audit, _do_create, _do_update, _visible_records,
-    current_user, require_admin, require_auth, serialize, ctx,
+    current_user, rate_limit, require_admin, require_auth, serialize, ctx,
 )
+
+
+def _backup_dir() -> str:
+    return os.environ.get("FORCELET_BACKUP_DIR") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backups")
 
 
 def register(app: Flask):
@@ -52,6 +58,42 @@ def register(app: Flask):
         if not table:
             return jsonify({"error": "Unknown config type"}), 404
         return jsonify(store.config_all(table))
+
+    # ------------------------------------------------------------ backups
+    @app.get("/api/admin/backups")
+    @require_auth
+    @require_admin
+    def backup_list():
+        bdir = _backup_dir()
+        files = []
+        if os.path.isdir(bdir):
+            for name in sorted(os.listdir(bdir), reverse=True):
+                if name.startswith("forcelet-") and name.endswith(".db"):
+                    p = os.path.join(bdir, name)
+                    files.append({"name": name,
+                                  "size_bytes": os.path.getsize(p),
+                                  "created": name[len("forcelet-"):-len(".db")]})
+        return jsonify(files)
+
+    @app.post("/api/admin/backups")
+    @require_auth
+    @require_admin
+    @rate_limit(max_requests=6, window_seconds=3600)
+    def backup_create():
+        bdir = _backup_dir()
+        os.makedirs(bdir, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        dest = os.path.join(bdir, f"forcelet-{stamp}.db")
+        # VACUUM INTO writes a consistent snapshot while the DB stays online.
+        store._execute("VACUUM INTO ?", (dest,))
+        # Retention: keep the newest N backups.
+        keep = int(os.environ.get("FORCELET_BACKUP_KEEP", "14"))
+        existing = sorted(f for f in os.listdir(bdir)
+                          if f.startswith("forcelet-") and f.endswith(".db"))
+        for old in existing[:-keep]:
+            os.remove(os.path.join(bdir, old))
+        _audit("backup_create", "Database", os.path.basename(dest))
+        return jsonify({"backup": os.path.basename(dest)}), 201
 
     @app.post("/api/admin/<kind>")
     @require_auth

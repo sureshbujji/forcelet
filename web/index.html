@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Forcelet — mini-CRM</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpolygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2' fill='%23e8a100'/%3E%3C/svg%3E">
 <style>
 :root{
   --blue:#0176d3; --blue-dark:#014486;
@@ -31,6 +32,11 @@ header input#gsearch{background:var(--input-bg);color:var(--text)}
 .userbox{font-size:13px;display:flex;gap:12px;align-items:center}
 .iconbtn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:var(--header-text);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:14px}
 .iconbtn:hover{background:rgba(255,255,255,.22)}
+.iconbtn svg{width:16px;height:16px;vertical-align:-3px}
+#chatfab svg{width:22px;height:22px;vertical-align:-5px}
+.logo-mark{display:inline-flex;vertical-align:-4px;margin-right:6px;color:#e8a100}
+.logo-mark svg{width:20px;height:20px}
+#login .logo-mark{vertical-align:-3px}
 #appname{color:var(--header-text);font-weight:700;font-size:14px;white-space:nowrap}
 #launcher{position:absolute;top:56px;left:12px;z-index:200;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.25);padding:8px;display:none;min-width:300px;max-height:70vh;overflow:auto}
 #launcher .lapp{display:flex;gap:10px;align-items:center;width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;color:var(--text)}
@@ -56,11 +62,9 @@ main{padding:20px 24px;max-width:1150px}
 .setup-search input{width:100%;max-width:520px;padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--text);font-size:14px}
 .setup-sec{margin-bottom:26px}
 .setup-sec-head{display:flex;gap:10px;align-items:center;margin-bottom:10px}
-.setup-sec-head .ticon{font-size:24px}
 .tile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:12px}
 .tile{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;cursor:pointer;box-shadow:var(--shadow);color:var(--text)}
 .tile:hover{border-color:var(--accent);transform:translateY(-1px)}
-.tile .ticon{font-size:22px}
 .tile .ttitle{font-weight:700;font-size:14px}
 .tile .tcount{font-size:12px;color:var(--accent);font-weight:700}
 .tile .tdesc{font-size:12px;color:var(--muted)}
@@ -78,6 +82,8 @@ main{padding:20px 24px;max-width:1150px}
 .pill-off{background:#fce8e6;color:#a50e0e}
 [data-theme="dark"] .pill-on{background:#1e3a2a;color:#7bd88f}
 [data-theme="dark"] .pill-off{background:#3d2320;color:#f28b82}
+.pill-custom{background:#e8f0fe;color:#1a56db;font-size:10px;padding:1px 8px;text-transform:uppercase;letter-spacing:.04em}
+[data-theme="dark"] .pill-custom{background:#1e2c4d;color:#8fb4ff}
 /* guided condition builder */
 .cb{margin-top:10px;border:1px dashed var(--line);border-radius:10px;padding:10px;background:var(--bg)}
 .cb-cap{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px}
@@ -194,14 +200,14 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
 <body>
 <div id="login">
   <div class="card">
-    <h2>⚡ Forcelet</h2>
-    <p class="muted">Metadata-driven mini-CRM. Built by Suresh Itha. Demo password for all users: <b>forcelet</b></p>
+    <h2><span class="logo-mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>Forcelet</h2>
+    <p class="muted">Metadata-driven mini-CRM. Built by Suresh Itha. Sign in with your Forcelet account.</p>
     <div id="loginbtns"></div>
   </div>
 </div>
 <div id="app" style="display:none">
   <header>
-    <h1>⚡ Forcelet</h1>
+    <h1><span class="logo-mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>Forcelet</h1>
     <button class="iconbtn" id="launcherbtn" onclick="toggleLauncher(event)" title="App Launcher" style="display:none">▦</button>
     <span id="appname"></span>
     <div id="launcher"></div>
@@ -209,16 +215,16 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
       <input id="gsearch" placeholder="Search all records…  (⌘K)" onkeydown="if(event.key==='Enter')showSearch()" style="width:200px;margin:0">
       <select id="gsearch_mode" title="Search mode" style="width:auto;margin:0;padding:4px"><option value="keyword">Keyword</option><option value="semantic">Semantic</option></select>
       <button class="iconbtn" onclick="openPalette()" title="Command palette (⌘K)">⌘K</button>
-      <button class="iconbtn" id="bell" onclick="showNotifications()" title="Notifications">🔔<span id="bellcount" style="display:none"></span></button>
-      <button class="iconbtn" onclick="showRecycleBin()" title="Recycle Bin">🗑</button>
-      <button class="iconbtn" id="themebtn" onclick="toggleTheme()" title="Toggle dark mode">🌙</button>
-      <div class="userbox"><span id="whoami"></span><button class="btn secondary small" onclick="totpManage()" title="Two-factor authentication">🔐 2FA</button><button class="btn secondary small" onclick="logout()">Switch user</button></div>
+      <button class="iconbtn" id="bell" onclick="showNotifications()" title="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span id="bellcount" style="display:none"></span></button>
+      <button class="iconbtn" onclick="showRecycleBin()" title="Recycle Bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+      <button class="iconbtn" id="themebtn" onclick="toggleTheme()" title="Toggle dark mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
+      <div class="userbox"><span id="whoami"></span><button class="btn secondary small" onclick="totpManage()" title="Two-factor authentication">2FA</button><button class="btn secondary small" onclick="logout()">Switch user</button></div>
     </div>
   </header>
   <div id="palette"><div class="box"><input id="palinput" placeholder="Type to search records, objects, actions…" autocomplete="off"><div id="palresults"></div></div></div>
   <div id="toasts"></div>
-  <button id="chatfab" onclick="toggleChat()" title="Ask Forcelet Assistant">✨</button>
-  <div id="chatpanel"><div class="section-title" style="padding:12px 12px 0">✨ Forcelet Assistant <span class="muted">· rule-based demo</span></div><div id="chatlog"></div><div class="cinput"><input id="chatinput" placeholder="Ask about your CRM…" onkeydown="if(event.key==='Enter')sendChat()"><button class="btn small" onclick="sendChat()">Send</button></div></div>
+  <button id="chatfab" onclick="toggleChat()" title="Ask Forcelet Assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
+  <div id="chatpanel"><div class="section-title" style="padding:12px 12px 0">Forcelet Assistant <span class="muted">· rule-based demo</span></div><div id="chatlog"></div><div class="cinput"><input id="chatinput" placeholder="Ask about your CRM…" onkeydown="if(event.key==='Enter')sendChat()"><button class="btn small" onclick="sendChat()">Send</button></div></div>
   <nav id="tabs"></nav>
   <main id="main"></main>
   <footer style="text-align:center;color:#999;font-size:12px;padding:16px">Built by Suresh Itha</footer>
@@ -305,18 +311,31 @@ async function sendChat(){
 }
 
 async function boot(){
-  const users=[["admin","Ava Admin — System Administrator"],["maya","Maya Manager — Standard User"],["leo","Leo Rep — Standard User"],["ana","Ana Agent — Read Only"]];
-  document.getElementById("loginbtns").innerHTML=users.map(u=>`<button class="btn loginbtn" onclick="login('${u[0]}')">${esc(u[1])}</button>`).join("");
+  totpPassword="";
+  document.getElementById("loginbtns").innerHTML=`<div class="card" style="max-width:320px">
+  <label>Username</label><input id="li_user" autocomplete="username" placeholder="admin">
+  <label>Password</label><input id="li_pass" type="password" autocomplete="current-password" placeholder="Password">
+  <div class="btnrow" style="margin-top:10px"><button class="btn" onclick="loginForm()">Sign in</button></div>
+  <div id="lierr"></div></div>`;
+  const u=document.getElementById("li_user"), p=document.getElementById("li_pass");
+  u.focus();
+  p.onkeydown=e=>{ if(e.key==="Enter") loginForm(); };
+  u.onkeydown=e=>{ if(e.key==="Enter") p.focus(); };
 }
-async function login(username){
-  const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password:"forcelet"})}).then(r=>r.json());
-  if(r.totp_required){ totpChallenge=r.challenge; totpUser=username; showTotpPrompt(); return; }
-  if(!r.token){ toast("Login failed","error"); return; }
-  finishLogin(r);
+async function loginForm(){
+  const username=document.getElementById("li_user").value.trim();
+  const password=document.getElementById("li_pass").value;
+  login(username,password);
 }
-let totpChallenge=null, totpUser=null;
+async function login(username,password){
+  const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password})}).then(r=>r.json());
+  if(r.totp_required){ totpChallenge=r.challenge; totpUser=username; totpPassword=password; showTotpPrompt(); return; }
+  if(!r.token){ document.getElementById("lierr").innerHTML=`<div class="err">${esc(r.error||"Login failed")}</div>`; return; }
+  finishLogin(r,password);
+}
+let totpChallenge=null, totpUser=null, totpPassword="";
 function showTotpPrompt(){
-  document.getElementById("loginbtns").innerHTML=`<div class="card" style="max-width:320px"><div class="section-title">🔐 Two-factor authentication</div>
+  document.getElementById("loginbtns").innerHTML=`<div class="card" style="max-width:320px"><div class="section-title">Two-factor authentication</div>
   <p class="muted">Enter the 6-digit code from your authenticator app for <b>${esc(totpUser)}</b>.</p>
   <input id="totp_code" inputmode="numeric" maxlength="6" placeholder="000000" style="text-align:center;font-size:20px;letter-spacing:6px">
   <div class="btnrow" style="margin-top:10px"><button class="btn" onclick="totpVerify()">Verify</button>
@@ -328,17 +347,50 @@ async function totpVerify(){
   const code=document.getElementById("totp_code").value.trim();
   const r=await fetch("/api/login/totp",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({challenge:totpChallenge,code})}).then(r=>r.json());
   if(!r.token){ document.getElementById("totperr").innerHTML=`<div class="err">Invalid code — try again.</div>`; return; }
-  finishLogin(r);
+  finishLogin(r,totpPassword); totpPassword="";
 }
-async function finishLogin(r){
+async function finishLogin(r,currentPassword){
+  if(r.must_change_password){ showForcedPasswordChange(r,currentPassword); return; }
   token=r.token; me=r.user;
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
   document.getElementById("whoami").textContent=`${me.name} · ${me.profile} · ${me.role||"no role"}`;
   await loadObjects();
   refreshBell();
+  await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
 }
-function logout(){ location.reload(); }
+let pendingCurrentPassword="";
+function showForcedPasswordChange(r,currentPassword){
+  token=r.token; me=r.user; pendingCurrentPassword=currentPassword||"";
+  document.getElementById("loginbtns").innerHTML=`<div class="card" style="max-width:320px">
+  <div class="section-title">Set a new password</div>
+  <p class="muted">This account still has its initial password. Choose a new one to continue.</p>
+  <label>New password</label><input id="pw_new" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+  <label>Confirm new password</label><input id="pw_new2" type="password" autocomplete="new-password" placeholder="Repeat new password">
+  <div class="btnrow" style="margin-top:10px"><button class="btn" onclick="forcedPasswordSubmit()">Set password</button></div>
+  <div id="pwerr"></div></div>`;
+  document.getElementById("pw_new").focus();
+}
+async function forcedPasswordSubmit(){
+  const n1=document.getElementById("pw_new").value, n2=document.getElementById("pw_new2").value;
+  const err=m=>{document.getElementById("pwerr").innerHTML=`<div class="err">${esc(m)}</div>`;};
+  if(n1.length<8) return err("New password must be at least 8 characters.");
+  if(n1!==n2) return err("Passwords do not match.");
+  const r=await fetch("/api/change-password",{method:"POST",headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify({current:pendingCurrentPassword,new:n1})}).then(r=>r.json());
+  if(!r.changed) return err(r.error||"Could not change password.");
+  pendingCurrentPassword="";
+  // The limited session is now fully trusted; enter the app.
+  document.getElementById("login").style.display="none";
+  document.getElementById("app").style.display="block";
+  document.getElementById("whoami").textContent=`${me.name} · ${me.profile} · ${me.role||"no role"}`;
+  await loadObjects();
+  refreshBell();
+  await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
+}
+async function logout(){
+  try{ await fetch("/api/logout",{method:"POST",headers:{"Authorization":"Bearer "+token}}); }catch(e){}
+  token=null; me=null; location.reload();
+}
 
 async function loadObjects(){
   const r=await api("GET","/api/objects");
@@ -361,7 +413,7 @@ async function loadObjects(){
 function renderLegacyTabs(pending){
   const tabs=document.getElementById("tabs");
   document.getElementById("appname").textContent="";
-  let html=objects.map(o=>`<button data-obj="${o.name}" onclick="showObject('${o.name}')">${esc(o.plural)}${o.is_custom?" ⚙":""}</button>`).join("");
+  let html=objects.map(o=>`<button data-obj="${o.name}" onclick="showObject('${o.name}')">${esc(o.plural)}${o.is_custom?' <span class="pill pill-custom">Custom</span>':""}</button>`).join("");
   html+=`<button data-obj="__reports" onclick="showReports()">Reports</button>`;
   html+=`<button data-obj="__dashboards" onclick="showDashboards()">Dashboards</button>`;
   html+=`<button data-obj="__chatter" onclick="showChatter()">Chatter</button>`;
@@ -386,7 +438,7 @@ function renderAppTabs(pending){
   for(const t of curApp.tabs){
     if(t.kind==="object"){
       const o=objects.find(x=>x.name===t.ref); if(!o) continue;
-      html+=`<button data-obj="${o.name}" onclick="showObject('${o.name}')">${esc(t.label||o.plural)}${o.is_custom?" ⚙":""}</button>`;
+      html+=`<button data-obj="${o.name}" onclick="showObject('${o.name}')">${esc(t.label||o.plural)}${o.is_custom?' <span class="pill pill-custom">Custom</span>':""}</button>`;
     }else{
       const u=APP_UTILS[t.ref]; if(!u) continue;
       if(u[3]&&me.profile!=="System Administrator") continue;
@@ -405,7 +457,7 @@ function renderAppTabs(pending){
 function renderLauncher(){
   document.getElementById("launcher").innerHTML=userApps.map(a=>
    `<button class="lapp${curApp&&a.id===curApp.id?" sel":""}" onclick="switchApp('${a.id}')">
-     <span class="lapp-ic" style="background:${esc(a.color)}">${esc(a.icon)}</span>
+     <span class="lapp-ic" style="background:${esc(a.color)}">${esc((a.label||"?").trim().charAt(0).toUpperCase())}</span>
      <span><b>${esc(a.label)}</b><small>${esc(a.description||"")}</small></span>
      ${a.default?'<span class="lapp-def">default</span>':""}</button>`).join("")
    ||'<p class="muted" style="padding:8px">No apps assigned.</p>';
@@ -471,12 +523,12 @@ async function renderList(){
   const arrow=c=>curSort===c?(curDir==="asc"?" ▲":" ▼"):"";
   let html=`<div class="btnrow"><h2 style="margin:0">${esc(curDesc.plural)}</h2><span style="flex:1"></span>`;
   html+=`<input id="lsearch" placeholder="Search records..." value="${esc(curSearch)}" style="max-width:170px" onkeydown="if(event.key==='Enter'){curSearch=this.value;renderList();}">`;
-  html+=`<select id="lview" onchange="setView(this.value)" style="max-width:200px"><option value="">— All records —</option>${curViews.map(vw=>`<option value="${vw.id}" ${curView&&curView.id===vw.id?"selected":""}>${esc(vw.name)}${vw.shared?" 🌐":""}</option>`).join("")}</select>`;
+  html+=`<select id="lview" onchange="setView(this.value)" style="max-width:200px"><option value="">— All records —</option>${curViews.map(vw=>`<option value="${vw.id}" ${curView&&curView.id===vw.id?"selected":""}>${esc(vw.name)}${vw.shared?" (shared)":""}</option>`).join("")}</select>`;
   html+=`<button class="btn secondary small" onclick="document.getElementById('saveview').style.display='flex'">Save view</button>`;
   html+=`<button class="btn secondary small" onclick="showKanban()">Kanban</button>`;
   html+=`<button class="btn secondary small" onclick="exportCsv()">Export CSV</button>`;
   html+=`<button class="btn secondary small" onclick="toggleSplit()">${splitMode?"☰ List view":"◫ Split view"}</button>`;
-  if(curDesc.permissions.edit&&!/__b$/.test(curObj)) html+=`<button class="btn secondary small" onclick="inlineEdit=!inlineEdit;renderList()">${inlineEdit?"✓ Inline edit":"✏️ Inline edit"}</button>`;
+  if(curDesc.permissions.edit&&!/__b$/.test(curObj)) html+=`<button class="btn secondary small" onclick="inlineEdit=!inlineEdit;renderList()">${inlineEdit?"✓ Inline edit":"Inline edit"}</button>`;
   if(curDesc.permissions.create) html+=`<button class="btn" onclick="showForm()">+ New ${esc(curDesc.label)}</button>`;
   html+=`</div>`;
   if(curObj==="Case"&&caseQueues.length){
@@ -535,7 +587,7 @@ async function kanbanMove(id,value){
   u.ok?showKanban():toast("Move failed: "+(u.data.error||u.status),"error");
 }
 function fmtVal(f,v){ if(v==null||v==="")return"—"; if(f.type==="Checkbox")return v?"✓":"—"; if(f.type==="Date"&&String(v).length>10)return String(v).slice(0,10); if(f.type==="Time")return String(v).slice(0,8); if(f.type==="Geolocation"){const p=String(v).split(";");return p.length===2?`${p[0]}, ${p[1]}`:String(v);} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.join(", "):"—";}catch(e){return String(v);}} if(typeof v==="number")return Math.round(v*100)/100; return v; }
-function fmtValHtml(f,v){ if(v==null||v==="")return"—"; if(f.type==="Geolocation"){const p=String(v).split(";"); if(p.length===2) return `${esc(p[0])}, ${esc(p[1])} <a href="https://www.google.com/maps?q=${encodeURIComponent(p[0]+","+p[1])}" target="_blank" rel="noopener" title="Open in map">🗺️</a>`; return esc(String(v));} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.map(esc).join("<br>"):"—";}catch(e){return esc(String(v));}} return esc(fmtVal(f,v)); }
+function fmtValHtml(f,v){ if(v==null||v==="")return"—"; if(f.type==="Geolocation"){const p=String(v).split(";"); if(p.length===2) return `${esc(p[0])}, ${esc(p[1])} <a href="https://www.google.com/maps?q=${encodeURIComponent(p[0]+","+p[1])}" target="_blank" rel="noopener" title="Open in map">Map</a>`; return esc(String(v));} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.map(esc).join("<br>"):"—";}catch(e){return esc(String(v));}} return esc(fmtVal(f,v)); }
 
 async function showSearch(){
   const q=document.getElementById("gsearch").value.trim();
@@ -588,9 +640,9 @@ async function showDetail(id){
   if(curDesc.permissions.edit&&!isBigObj) html+=`<button class="btn" onclick="showForm('${rec.Id}')">Edit</button>`;
   if(curDesc.permissions.edit) html+=`<button class="btn secondary" onclick="findDuplicates('${curObj}','${rec.Id}')">Find duplicates</button>`;
   if(curDesc.permissions.delete&&!isBigObj) html+=`<button class="btn danger" onclick="delRec('${rec.Id}')">Delete</button>`;
-  if(curObj==="Quote") html+=`<button class="btn secondary" onclick="dlQuotePdf('${rec.Id}')">⬇ PDF</button>`;
+  if(curObj==="Quote") html+=`<button class="btn secondary" onclick="dlQuotePdf('${rec.Id}')">Download PDF</button>`;
   html+=`</div>`;
-  html+=`<div class="btnrow" style="align-items:center;margin:2px 0 10px"><h2 style="margin:0">${esc(String(recTitle)).slice(0,80)}</h2>${curObj==="Account"&&rec.IsPersonAccount?' <span class="pill">👤 Person Account</span>':""}${isBigObj?' <span class="pill">Big Object · read-only</span>':""}</div>`;
+  html+=`<div class="btnrow" style="align-items:center;margin:2px 0 10px"><h2 style="margin:0">${esc(String(recTitle)).slice(0,80)}</h2>${curObj==="Account"&&rec.IsPersonAccount?' <span class="pill">Person Account</span>':""}${isBigObj?' <span class="pill">Big Object · read-only</span>':""}</div>`;
   const tabs=[["details","Details"],["related","Related"],["activity","Activity"],["chatter","Chatter"],["files","Files"],["history","History"]];
   html+=`<div class="dtabs">${tabs.map((t,i)=>`<button data-t="${t[0]}" class="${i===0?"active":""}" onclick="detailTab('${t[0]}')">${t[1]}</button>`).join("")}</div>`;
   // details panel
@@ -607,7 +659,7 @@ async function showDetail(id){
   }
   if(curObj==="Account"&&rec.IsPersonAccount){
     const personName=[rec.FirstName,rec.LastName].filter(Boolean).join(" ")||rec.Name||"—";
-    details=`<div class="card"><div class="section-title">👤 Person</div><div class="grid2"><div>`+
+    details=`<div class="card"><div class="section-title">Person</div><div class="grid2"><div>`+
       `<div class="field"><div class="fl">Name</div><div class="fv">${esc(personName)}</div></div>`+
       `<div class="field"><div class="fl">Email</div><div class="fv">${rec.PersonEmail?`<a href="mailto:${esc(rec.PersonEmail)}">${esc(rec.PersonEmail)}</a>`:"—"}</div></div></div><div>`+
       `<div class="field"><div class="fl">Phone</div><div class="fv">${esc(rec.PersonPhone||"—")}</div></div>`+
@@ -633,6 +685,10 @@ async function showDetail(id){
   html+=`<div id="dtab-details">${details}</div><div id="dtab-related" style="display:none">${related}</div><div id="dtab-activity" style="display:none">${activity}</div><div id="dtab-chatter" style="display:none">${chatter}</div><div id="dtab-files" style="display:none">${files}</div><div id="dtab-history" style="display:none">${history}</div>`;
   html+=`<div id="dupzone"></div>`;
   document.getElementById("main").innerHTML=html;
+  // Keep the address bar in sync so records are deep-linkable, bookmarkable,
+  // and the back button works. Guarded so popstate navigation doesn't dup.
+  const recUrl=`/r/${encodeURIComponent(curObj)}/${encodeURIComponent(id)}`;
+  if(location.pathname!==recUrl) window.history.pushState({obj:curObj,id},"",recUrl);
 }
 function detailTab(name){
   document.querySelectorAll(".dtabs button").forEach(b=>b.classList.toggle("active",b.dataset.t===name));
@@ -692,6 +748,25 @@ async function pathSet(id,field,value){
 let descCache={};
 async function getDesc(name){ if(!descCache[name]){ const r=await api("GET",`/api/describe/${name}`); descCache[name]=r.data; } return descCache[name]; }
 function jumpTo(obj,id){ showObject(obj).then(()=>showDetail(id)); }
+// ------------------------------------------------------- record URLs
+// The address bar mirrors the open record (/r/<object>/<id>). The server
+// serves the SPA for those paths; this router renders them, handles the
+// back/forward buttons, and lands deep links after sign-in.
+function parseRecordUrl(){
+  const m=location.pathname.match(/^\/r\/([^\/]+)\/([^\/]+)$/);
+  return m?{obj:decodeURIComponent(m[1]),id:decodeURIComponent(m[2])}:null;
+}
+async function routeFromUrl(){
+  if(!token) return; // login screen owns the page until authenticated
+  const r=parseRecordUrl();
+  if(r){
+    try{ await showObject(r.obj); await showDetail(r.id); }
+    catch(e){ window.history.replaceState(null,"","/"); routeFromUrl(); }
+  }else if(curObj){
+    await showObject(curObj); // back to the list we came from
+  }
+}
+window.addEventListener("popstate",()=>{ routeFromUrl(); });
 async function activityCard(recId){
   const r=await api("GET",`/api/sobjects/${curObj}/${recId}/activities`);
   const items=r.data||[];
@@ -733,7 +808,7 @@ async function notifOpen(nid,obj,rid){ await api("POST","/api/notifications/read
 let feedRefresh=()=>{};
 function feedHtml(posts){
   if(!posts.length) return `<p class="muted">Nothing here yet.</p>`;
-  return posts.map(p=>`<div class="card"><div class="fl"><b>${esc(p.user_name)}</b> <span class="muted">${esc((p.created_at||"").slice(0,16).replace("T"," "))}</span>${p.object_name?` · on <a href="#" onclick="jumpTo('${p.object_name}','${p.record_id}');return false">${esc(p.object_name)}</a>`:""}</div><div class="fv" style="margin:6px 0;white-space:pre-wrap">${esc(p.body)}</div><div class="btnrow"><button class="btn secondary small" onclick="chatterLike('${p.id}',${!!p.liked_by_me})">${p.liked_by_me?"♥":"♡"}${p.like_count?` ${p.like_count}`:""}</button><button class="btn secondary small" onclick="chatterComments('${p.id}')">💬${p.comment_count?` ${p.comment_count}`:""}</button></div><div id="ch_c_${p.id}"></div></div>`).join("");
+  return posts.map(p=>`<div class="card"><div class="fl"><b>${esc(p.user_name)}</b> <span class="muted">${esc((p.created_at||"").slice(0,16).replace("T"," "))}</span>${p.object_name?` · on <a href="#" onclick="jumpTo('${p.object_name}','${p.record_id}');return false">${esc(p.object_name)}</a>`:""}</div><div class="fv" style="margin:6px 0;white-space:pre-wrap">${esc(p.body)}</div><div class="btnrow"><button class="btn secondary small" onclick="chatterLike('${p.id}',${!!p.liked_by_me})">${p.liked_by_me?"♥":"♡"}${p.like_count?` ${p.like_count}`:""}</button><button class="btn secondary small" onclick="chatterComments('${p.id}')">Comments${p.comment_count?` (${p.comment_count})`:""}</button></div><div id="ch_c_${p.id}"></div></div>`).join("");
 }
 async function showChatter(){
   setActive("__chatter");
@@ -793,7 +868,7 @@ async function recFollow(recId,following){
 async function filesCard(recId){
   const r=await api("GET",`/api/sobjects/${curObj}/${recId}/files`);
   const files=r.data||[];
-  const rows=files.map(f=>`<tr><td><a href="#" onclick="previewFile('${f.id}','${esc(f.filename)}','${esc(f.mime_type||"")}');return false" title="Preview">📎 ${esc(f.filename)}</a></td><td class="muted">${(f.size/1024).toFixed(1)} KB</td><td><a href="#" onclick="dlFile('${f.id}','${esc(f.filename)}');return false">Download</a> · <a href="#" onclick="delFile('${recId}','${f.id}');return false">Delete</a></td></tr>`).join("");
+  const rows=files.map(f=>`<tr><td><a href="#" onclick="previewFile('${f.id}','${esc(f.filename)}','${esc(f.mime_type||"")}');return false" title="Preview">${esc(f.filename)}</a></td><td class="muted">${(f.size/1024).toFixed(1)} KB</td><td><a href="#" onclick="dlFile('${f.id}','${esc(f.filename)}');return false">Download</a> · <a href="#" onclick="delFile('${recId}','${f.id}');return false">Delete</a></td></tr>`).join("");
   return `<div class="card"><div class="section-title">Files (${files.length})</div>`
     +`<div class="btnrow"><input type="file" id="file_up"><button class="btn small" onclick="uploadFile('${recId}')">Upload</button></div>`
     +(files.length?`<table style="margin-top:8px">${rows}</table>`:`<p class="muted">No files attached.</p>`)+`</div>`;
@@ -917,7 +992,7 @@ async function territoryCard(rec){
   if(!aid) return "";
   const r=await api("GET",`/api/sobjects/Account/${aid}/territories`).catch(()=>({data:[]}));
   const ts=(r&&r.data)||[];
-  return `<div class="card"><div class="section-title">🗺️ Territories (${ts.length})</div>`+
+  return `<div class="card"><div class="section-title">Territories (${ts.length})</div>`+
     (ts.length?`<table><tr><th>Name</th></tr>${ts.map(t=>`<tr><td>${esc(t.name)}</td></tr>`).join("")}</table>`:`<p class="muted">No territories assigned yet. Run assignment rules from Setup → Data Model → Territory Assignment.</p>`)+`</div>`;
 }
 
@@ -983,7 +1058,7 @@ async function showReports(){
   const reps=r.data||[];
   let html=`<div class="btnrow"><h2 style="margin:0">Reports</h2></div>`;
   for(const rep of reps){
-    html+=`<div class="card"><div class="btnrow"><b>${esc(rep.name)}</b><span class="muted">${esc(rep.object)}${rep.group_by?" · grouped by "+esc(rep.group_by):""}</span><span style="flex:1"></span><button class="btn small" onclick="runReport('${rep.id}')">Run</button> <button class="btn secondary small" onclick="subModal('report','${rep.id}','${esc(rep.name)}')">📧 Subscribe</button></div><div id="rep_${rep.id}"></div></div>`;
+    html+=`<div class="card"><div class="btnrow"><b>${esc(rep.name)}</b><span class="muted">${esc(rep.object)}${rep.group_by?" · grouped by "+esc(rep.group_by):""}</span><span style="flex:1"></span><button class="btn small" onclick="runReport('${rep.id}')">Run</button> <button class="btn secondary small" onclick="subModal('report','${rep.id}','${esc(rep.name)}')">Subscribe</button></div><div id="rep_${rep.id}"></div></div>`;
   }
   if(me.profile==="System Administrator"){
     html+=`<div class="card"><div class="section-title">Create report</div><div id="rerr"></div>
@@ -1373,7 +1448,7 @@ async function showAdmin(section, highlight){
     <div class="grid2"><div><label>Object</label><select id="im_obj">${objs}</select><label>Mode</label><select id="im_mode"><option value="insert">Insert</option><option value="upsert">Upsert (match by external ID)</option></select></div><div><label>CSV file (headers = field names)</label><input type="file" id="im_file" accept=".csv"><label>External ID field (upsert mode)</label><input id="im_ext" placeholder="External_Id"></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="importCsv()">Import</button></div></div>
   <div class="card"><div class="section-title">Create user</div><div id="auerr"></div>
-    <div class="grid2"><div><label>Username</label><input id="au_user"><label>Full name</label><input id="au_name"><label>Password</label><input id="au_pass" type="password" value="forcelet"></div>
+    <div class="grid2"><div><label>Username</label><input id="au_user"><label>Full name</label><input id="au_name"><label>Temporary password</label><input id="au_pass" type="password" placeholder="User must change at first login"></div>
     <div><label>Profile</label><select id="au_prof">${profiles.data.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select>
     <label>Role</label><select id="au_role"><option value="">— none —</option>${roles.data.map(r=>`<option>${esc(r.name)}</option>`).join("")}</select></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createUser()">Create user</button></div><div id="au_list"></div></div>
@@ -1425,13 +1500,13 @@ async function showAdmin(section, highlight){
 }
 /* ================= Admin Setup: organized home + sections ================= */
 const SETUP_SECTIONS=[
- {id:"datamodel",icon:"🧱",title:"Data Model",desc:"Objects, fields, record types, layouts, paths"},
- {id:"apps",icon:"📱",title:"Apps",desc:"Custom applications, tabs & navigation"},
- {id:"automation",icon:"⚙️",title:"Automation",desc:"Flows, triggers, approvals, assignment, SLA"},
- {id:"security",icon:"🔐",title:"Security & Access",desc:"Users, roles, sharing, API keys"},
- {id:"integrations",icon:"🔌",title:"Integrations",desc:"Webhooks, email, callouts, import / export"},
- {id:"devops",icon:"🚀",title:"DevOps",desc:"Bulk API, streaming, sandboxes, source tracking, packages"},
- {id:"monitoring",icon:"📊",title:"Monitoring",desc:"Jobs, audit trail, AI scoring"},
+ {id:"datamodel",title:"Data Model",desc:"Objects, fields, record types, layouts, paths"},
+ {id:"apps",title:"Apps",desc:"Custom applications, tabs & navigation"},
+ {id:"automation",title:"Automation",desc:"Flows, triggers, approvals, assignment, SLA"},
+ {id:"security",title:"Security & Access",desc:"Users, roles, sharing, API keys"},
+ {id:"integrations",title:"Integrations",desc:"Webhooks, email, callouts, import / export"},
+ {id:"devops",title:"DevOps",desc:"Bulk API, streaming, sandboxes, source tracking, packages"},
+ {id:"monitoring",title:"Monitoring",desc:"Jobs, audit trail, AI scoring"},
 ];
 const CARD_SECTION={
  "Create custom object":"datamodel","Add field to object":"datamodel","Record type":"datamodel","Page layout (JSON)":"datamodel","Sales path":"datamodel",
@@ -1444,55 +1519,55 @@ const CARD_SECTION={
  "Scheduled job":"monitoring","Field history tracking":"monitoring","Audit trail & change events":"monitoring","AI lead scoring":"monitoring",
 };
 const SETUP_TILES=[
- {section:"datamodel",card:"Create custom object",icon:"🧱",desc:"Define custom objects",url:"/api/objects"},
- {section:"datamodel",card:"Add field to object",icon:"➕",desc:"Custom, formula & roll-up fields"},
- {section:"datamodel",card:"Record type",icon:"🗂️",desc:"Per-type picklists & defaults",kind:"record-types"},
- {section:"datamodel",card:"Page layout (JSON)",icon:"🖼️",desc:"Per-profile page layouts"},
- {section:"datamodel",card:"Sales path",icon:"🛤️",desc:"Stage guidance paths"},
- {section:"datamodel",card:"Relationships",icon:"🔗",desc:"Lookup & master-detail, cascade delete"},
- {section:"datamodel",card:"Person Accounts",icon:"👤",desc:"B2C person records on Account"},
- {section:"datamodel",card:"Territories",icon:"🗺️",desc:"Hierarchy, assignment rules, sharing"},
- {section:"datamodel",card:"Big Objects & Archival",icon:"📦",desc:"Append-only __b stores & archive rules"},
- {section:"apps",card:"App Manager",icon:"📱",desc:"Custom apps: tabs, layouts, related lists, profile access",url:"/api/admin/apps"},
- {section:"automation",card:"Flow (workflow automation)",icon:"🌊",desc:"Record-triggered automation",kind:"flows",flowFilter:"record"},
- {section:"automation",card:"Screen flow",icon:"🖥️",desc:"Guided multi-step wizards",kind:"flows",flowFilter:"screen"},
- {section:"automation",card:"Code trigger (Apex-style)",icon:"⚡",desc:"Sandboxed Python triggers",kind:"triggers"},
- {section:"automation",card:"Validation rule",icon:"✅",desc:"Save-time validation",kind:"validation-rules"},
- {section:"automation",card:"Approval process",icon:"✔️",desc:"Multi-step approvals",kind:"approval-processes"},
- {section:"automation",card:"Assignment rule",icon:"🎯",desc:"Round-robin & rule assignment",kind:"assignment-rules"},
- {section:"automation",card:"Case SLA policy",icon:"⏱️",desc:"Milestones & breach tracking",kind:"sla-policies"},
- {section:"automation",card:"Escalation rule",icon:"🚨",desc:"Save & breach escalations",kind:"escalation-rules"},
- {section:"automation",card:"Auto-response rule",icon:"📨",desc:"Instant email replies",kind:"auto-response-rules"},
- {section:"security",card:"Create user",icon:"👤",desc:"Manage users",url:"/api/admin/users"},
- {section:"security",card:"Create role",icon:"👥",desc:"Role hierarchy",url:"/api/admin/roles"},
- {section:"security",card:"Permission set",icon:"🔑",desc:"Additive grants",kind:"permission-sets"},
- {section:"security",card:"Sharing rule (criteria-based)",icon:"🤝",desc:"Criteria sharing",kind:"sharing-rules"},
- {section:"security",card:"Duplicate matching rule",icon:"👯",desc:"Duplicate detection",kind:"matching-rules"},
- {section:"security",card:"API keys",icon:"🗝️",desc:"Integration keys",url:"/api/api-keys"},
- {section:"integrations",card:"Webhook",icon:"🪝",desc:"Signed HTTP callbacks",kind:"webhooks"},
- {section:"integrations",card:"Named credential (HTTP callouts)",icon:"🔒",desc:"Callout auth & secrets",url:"/api/admin/named-credentials"},
- {section:"integrations",card:"Email template",icon:"✉️",desc:"Merge-field templates",kind:"email-templates"},
- {section:"integrations",card:"CSV import",icon:"📥",desc:"Bulk insert / upsert"},
- {section:"integrations",card:"Metadata package",icon:"📦",desc:"Export / import org config"},
- {section:"integrations",card:"Change sets",icon:"🚚",desc:"Deploy selected metadata"},
- {section:"devops",card:"Bulk API 2.0",icon:"📦",desc:"CSV ingest jobs with per-row results"},
- {section:"devops",card:"Streaming events",icon:"📡",desc:"Live CDC & platform events (SSE)"},
- {section:"devops",card:"Sandboxes",icon:"🏖️",desc:"Full DB copies; scratch orgs"},
- {section:"devops",card:"Source tracking",icon:"🧬",desc:"Metadata changes since a timestamp"},
- {section:"devops",card:"Custom metadata types",icon:"🗄️",desc:"Deployable typed config (__mdt)"},
- {section:"devops",card:"Custom settings",icon:"🎛️",desc:"Org-wide key/value config"},
- {section:"devops",card:"External objects",icon:"🌐",desc:"OData-backed virtual objects (__x)"},
- {section:"monitoring",card:"Scheduled job",icon:"🕐",desc:"Python on a schedule",kind:"scheduled-jobs"},
- {section:"monitoring",card:"Field history tracking",icon:"📜",desc:"Per-object change log control"},
- {section:"monitoring",card:"Audit trail & change events",icon:"📋",desc:"Who changed what"},
- {section:"monitoring",card:"AI lead scoring",icon:"🤖",desc:"Train the scoring model"},
+ {section:"datamodel",card:"Create custom object",desc:"Define custom objects",url:"/api/objects"},
+ {section:"datamodel",card:"Add field to object",desc:"Custom, formula & roll-up fields"},
+ {section:"datamodel",card:"Record type",desc:"Per-type picklists & defaults",kind:"record-types"},
+ {section:"datamodel",card:"Page layout (JSON)",desc:"Per-profile page layouts"},
+ {section:"datamodel",card:"Sales path",desc:"Stage guidance paths"},
+ {section:"datamodel",card:"Relationships",desc:"Lookup & master-detail, cascade delete"},
+ {section:"datamodel",card:"Person Accounts",desc:"B2C person records on Account"},
+ {section:"datamodel",card:"Territories",desc:"Hierarchy, assignment rules, sharing"},
+ {section:"datamodel",card:"Big Objects & Archival",desc:"Append-only __b stores & archive rules"},
+ {section:"apps",card:"App Manager",desc:"Custom apps: tabs, layouts, related lists, profile access",url:"/api/admin/apps"},
+ {section:"automation",card:"Flow (workflow automation)",desc:"Record-triggered automation",kind:"flows",flowFilter:"record"},
+ {section:"automation",card:"Screen flow",desc:"Guided multi-step wizards",kind:"flows",flowFilter:"screen"},
+ {section:"automation",card:"Code trigger (Apex-style)",desc:"Sandboxed Python triggers",kind:"triggers"},
+ {section:"automation",card:"Validation rule",desc:"Save-time validation",kind:"validation-rules"},
+ {section:"automation",card:"Approval process",desc:"Multi-step approvals",kind:"approval-processes"},
+ {section:"automation",card:"Assignment rule",desc:"Round-robin & rule assignment",kind:"assignment-rules"},
+ {section:"automation",card:"Case SLA policy",desc:"Milestones & breach tracking",kind:"sla-policies"},
+ {section:"automation",card:"Escalation rule",desc:"Save & breach escalations",kind:"escalation-rules"},
+ {section:"automation",card:"Auto-response rule",desc:"Instant email replies",kind:"auto-response-rules"},
+ {section:"security",card:"Create user",desc:"Manage users",url:"/api/admin/users"},
+ {section:"security",card:"Create role",desc:"Role hierarchy",url:"/api/admin/roles"},
+ {section:"security",card:"Permission set",desc:"Additive grants",kind:"permission-sets"},
+ {section:"security",card:"Sharing rule (criteria-based)",desc:"Criteria sharing",kind:"sharing-rules"},
+ {section:"security",card:"Duplicate matching rule",desc:"Duplicate detection",kind:"matching-rules"},
+ {section:"security",card:"API keys",desc:"Integration keys",url:"/api/api-keys"},
+ {section:"integrations",card:"Webhook",desc:"Signed HTTP callbacks",kind:"webhooks"},
+ {section:"integrations",card:"Named credential (HTTP callouts)",desc:"Callout auth & secrets",url:"/api/admin/named-credentials"},
+ {section:"integrations",card:"Email template",desc:"Merge-field templates",kind:"email-templates"},
+ {section:"integrations",card:"CSV import",desc:"Bulk insert / upsert"},
+ {section:"integrations",card:"Metadata package",desc:"Export / import org config"},
+ {section:"integrations",card:"Change sets",desc:"Deploy selected metadata"},
+ {section:"devops",card:"Bulk API 2.0",desc:"CSV ingest jobs with per-row results"},
+ {section:"devops",card:"Streaming events",desc:"Live CDC & platform events (SSE)"},
+ {section:"devops",card:"Sandboxes",desc:"Full DB copies; scratch orgs"},
+ {section:"devops",card:"Source tracking",desc:"Metadata changes since a timestamp"},
+ {section:"devops",card:"Custom metadata types",desc:"Deployable typed config (__mdt)"},
+ {section:"devops",card:"Custom settings",desc:"Org-wide key/value config"},
+ {section:"devops",card:"External objects",desc:"OData-backed virtual objects (__x)"},
+ {section:"monitoring",card:"Scheduled job",desc:"Python on a schedule",kind:"scheduled-jobs"},
+ {section:"monitoring",card:"Field history tracking",desc:"Per-object change log control"},
+ {section:"monitoring",card:"Audit trail & change events",desc:"Who changed what"},
+ {section:"monitoring",card:"AI lead scoring",desc:"Train the scoring model"},
 ];
 async function renderSetupHome(){
   let html=`<h2>Admin Setup</h2>
-  <div class="setup-search"><input id="setup_home_q" placeholder="🔍 Quick find — type a setting name…" oninput="filterHomeTiles(this.value)"></div>`;
+  <div class="setup-search"><input id="setup_home_q" placeholder="Quick find — type a setting name…" oninput="filterHomeTiles(this.value)"></div>`;
   for(const sec of SETUP_SECTIONS){
-    html+=`<div class="setup-sec"><div class="setup-sec-head"><span class="ticon">${sec.icon}</span><div><b style="font-size:15px">${sec.title}</b><div class="muted" style="font-size:12px">${sec.desc}</div></div></div><div class="tile-grid">`;
-    html+=SETUP_TILES.filter(t=>t.section===sec.id).map(t=>`<button class="tile" data-tile="${esc(t.card.toLowerCase())}" onclick="showAdmin('${t.section}','${t.card.replace(/'/g,"\\'")}')"><span class="ticon">${t.icon}</span><span class="ttitle">${esc(t.card)}</span><span class="tcount" data-tile-count="${esc(t.card)}"></span><span class="tdesc">${esc(t.desc)}</span></button>`).join("");
+    html+=`<div class="setup-sec"><div class="setup-sec-head"><div><b style="font-size:15px">${sec.title}</b><div class="muted" style="font-size:12px">${sec.desc}</div></div></div><div class="tile-grid">`;
+    html+=SETUP_TILES.filter(t=>t.section===sec.id).map(t=>`<button class="tile" data-tile="${esc(t.card.toLowerCase())}" onclick="showAdmin('${t.section}','${t.card.replace(/'/g,"\\'")}')"><span class="ttitle">${esc(t.card)}</span><span class="tcount" data-tile-count="${esc(t.card)}"></span><span class="tdesc">${esc(t.desc)}</span></button>`).join("");
     html+=`</div></div>`;
   }
   document.getElementById("main").innerHTML=html;
@@ -1521,9 +1596,9 @@ function setupAfterRender(section, highlight){
   const sec=SETUP_SECTIONS.find(s=>s.id===section)||SETUP_SECTIONS[0];
   const cards=[...main.querySelectorAll(":scope > .card")];
   main.insertAdjacentHTML("afterbegin",
-   `<div class="setup-breadcrumb"><a onclick="showAdmin()">← Setup Home</a><span>›</span><b>${sec.icon} ${sec.title}</b></div>
-    <div class="setup-nav">${SETUP_SECTIONS.map(s=>`<button class="${s.id===sec.id?"on":""}" onclick="showAdmin('${s.id}')">${s.icon} ${s.title}</button>`).join("")}</div>
-    <div class="setup-search"><input id="setup_q" placeholder="🔍 Filter settings in ${esc(sec.title)}…" oninput="filterSetupCards(this.value)"></div>
+   `<div class="setup-breadcrumb"><a onclick="showAdmin()">← Setup Home</a><span>›</span><b>${sec.title}</b></div>
+    <div class="setup-nav">${SETUP_SECTIONS.map(s=>`<button class="${s.id===sec.id?"on":""}" onclick="showAdmin('${s.id}')">${s.title}</button>`).join("")}</div>
+    <div class="setup-search"><input id="setup_q" placeholder="Filter settings in ${esc(sec.title)}…" oninput="filterSetupCards(this.value)"></div>
     <div id="setup_cards"></div>`);
   const host=document.getElementById("setup_cards");
   for(const card of cards){
@@ -1686,7 +1761,7 @@ async function refreshSetupList(kind){
   if(!rows.length){ el.innerHTML=`<p class="muted">None yet.</p>`; return; }
   const acts=cfg.actions||{edit:!cfg.noEdit,toggle:!cfg.noActive,del:true};
   el.innerHTML=`<table style="margin-top:10px"><tr>${cfg.cols.map(c=>`<th>${c[0]}</th>`).join("")}${cfg.noActive?"":`<th>Status</th>`}<th></th></tr>`+
-   rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> <button class=\"btn secondary small\" onclick=\"viewJobRuns(\'${x.id}\')\">Runs</button> `:""}${cfg.extra==="flowCanvas"?`<button class="btn secondary small" onclick="openFlowBuilder('${kind}','${x.id}')">🎨 Canvas</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`;
+   rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> <button class=\"btn secondary small\" onclick=\"viewJobRuns(\'${x.id}\')\">Runs</button> `:""}${cfg.extra==="flowCanvas"?`<button class="btn secondary small" onclick="openFlowBuilder('${kind}','${x.id}')">Canvas</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`;
 }
 // legacy shims
 async function listConfigs(kind,elId,withRun){ const map={"assignment-rules":"assignment-rules","email-templates":"email-templates","sla-policies":"sla-policies","escalation-rules":"escalation-rules"}; if(map[kind]) return refreshSetupList(kind); }
@@ -1705,7 +1780,7 @@ const COND_BUILDERS=[
 function cbInit(bid,objSelId,targetId){
   const host=document.getElementById(bid); if(!host) return;
   CB_STATE[bid]={objSel:objSelId,target:targetId,fields:[]};
-  host.innerHTML=`<div class="cb"><div class="cb-cap">🧩 Condition builder — no JSON needed</div><div class="cb-rows"></div>
+  host.innerHTML=`<div class="cb"><div class="cb-cap">Condition builder — no JSON needed</div><div class="cb-rows"></div>
    <div class="btnrow"><button class="btn secondary small" onclick="cbAddRow('${bid}')">+ Condition</button>
    <select id="${bid}_logic" style="max-width:150px"><option value="and">Match all</option><option value="or">Match any</option></select>
    <button class="btn secondary small" onclick="cbInsert('${bid}')">Insert into field ↓</button></div></div>`;
@@ -2106,14 +2181,14 @@ let APPMGR={apps:[],profiles:[],editing:null};
 async function renderAppManager(){
   setActive("__admin");
   document.getElementById("main").innerHTML=
-   `<div class="setup-breadcrumb"><a onclick="showAdmin()">← Setup Home</a><span>›</span><b>📱 Apps</b></div><div id="appmgr"></div>`;
+   `<div class="setup-breadcrumb"><a onclick="showAdmin()">← Setup Home</a><span>›</span><b>Apps</b></div><div id="appmgr"></div>`;
   await refreshAppMgr();
 }
 async function refreshAppMgr(){
   const [ar,pr]=await Promise.all([api("GET","/api/admin/apps"),api("GET","/api/admin/profiles")]);
   APPMGR.apps=ar.data||[]; APPMGR.profiles=(pr.data||[]).map(p=>p.name||p);
   document.getElementById("appmgr").innerHTML=
-   `<div class="card"><div class="section-title">📱 App Manager <span class="muted" style="font-weight:400">— custom applications: tabs, layouts, related lists, profile access</span></div>
+   `<div class="card"><div class="section-title">App Manager <span class="muted" style="font-weight:400">— custom applications: tabs, layouts, related lists, profile access</span></div>
     <p class="muted">Apps group navigation tabs per team. Users switch apps from the ▦ launcher in the header. Leave profile access empty to show an app to everyone.</p>
     <div class="btnrow"><button class="btn" onclick="editApp(null)">+ New app</button>
     <button class="btn secondary" onclick="seedApps()">Seed Sales &amp; Service apps</button></div>
@@ -2126,18 +2201,18 @@ function renderAppList(){
    APPMGR.apps.map(a=>{
      const pa=a.profile_access||{}, vis=Object.keys(pa).filter(p=>pa[p].visible);
      const def=Object.keys(pa).filter(p=>pa[p].default);
-     return `<tr><td><span class="lapp-ic" style="background:${esc(a.color)};width:28px;height:28px;font-size:15px">${esc(a.icon)}</span></td>
+     return `<tr><td><span class="lapp-ic" style="background:${esc(a.color)};width:28px;height:28px;font-size:15px">${esc((a.label||"?").trim().charAt(0).toUpperCase())}</span></td>
       <td><b>${esc(a.label)}</b>${def.length?` <span class="muted" style="font-size:11px">default: ${esc(def.join(", "))}</span>`:""}</td>
       <td>${esc(a.name)}</td><td>${(a.tabs||[]).length}</td>
       <td>${Object.keys(pa).length?esc(vis.join(", ")||"none"):"All profiles"}</td>
-      <td>${a.active?"✅":"—"}</td>
+      <td>${a.active?'<span class="pill pill-on">Active</span>':"—"}</td>
       <td style="white-space:nowrap"><button class="btn secondary small" onclick="editApp('${a.id}')">Edit</button>
       <button class="btn secondary small" onclick="delApp('${a.id}')">Delete</button></td></tr>`;
    }).join("")+`</table>`||"";
   if(!APPMGR.apps.length) document.getElementById("appmgr_list").innerHTML='<p class="muted">No apps yet — create one or seed the standard Sales &amp; Service apps.</p>';
 }
 function editApp(id){
-  const a=id?APPMGR.apps.find(x=>x.id===id):{name:"",label:"",description:"",icon:"📱",color:"#1f6feb",active:true,sort_order:0,tabs:[],profile_access:{}};
+  const a=id?APPMGR.apps.find(x=>x.id===id):{name:"",label:"",description:"",color:"#1f6feb",active:true,sort_order:0,tabs:[],profile_access:{}};
   if(id&&!a) return;
   APPMGR.editing={id,app:JSON.parse(JSON.stringify(a))};
   const e=APPMGR.editing.app;
@@ -2151,7 +2226,6 @@ function editApp(id){
      <label>API name</label><input id="ae_name" value="${esc(e.name)}" ${id?"disabled":""}>
      <label>Description</label><input id="ae_desc" value="${esc(e.description)}">
    </div><div>
-     <label>Icon (emoji)</label><input id="ae_icon" value="${esc(e.icon)}">
      <label>Color</label><input id="ae_color" type="color" value="${esc(e.color||"#1f6feb")}">
      <label>Sort order</label><input id="ae_sort" type="number" value="${e.sort_order||0}">
      <label><input type="checkbox" id="ae_active" style="width:auto" ${e.active?"checked":""}> Active</label>
@@ -2217,7 +2291,7 @@ async function saveApp(){
   collectAppTabEdits();
   const e=APPMGR.editing.app, err=document.getElementById("ae_err");
   const body={name:document.getElementById("ae_name").value.trim(), label:document.getElementById("ae_label").value.trim(),
-    description:document.getElementById("ae_desc").value.trim(), icon:document.getElementById("ae_icon").value.trim()||"📱",
+    description:document.getElementById("ae_desc").value.trim(),
     color:document.getElementById("ae_color").value, sort_order:+document.getElementById("ae_sort").value||0,
     active:document.getElementById("ae_active").checked, tabs:e.tabs, profile_access:e.profile_access};
   const id=APPMGR.editing.id;
@@ -2565,8 +2639,8 @@ function renderFlowBuilder(){
   svg+="</svg>";
   document.getElementById("main").innerHTML=
    `<div class="btnrow"><button class="btn secondary" onclick="showAdmin()">← Back to Setup</button>`
-   +`<h2 style="margin:0">🎨 ${esc(FB.flow.name||"Flow")}</h2><span style="flex:1"></span>`
-   +`<select id="fbvers" style="max-width:190px" title="Version history"><option value="">🕘 Versions…</option></select>`
+   +`<h2 style="margin:0">${esc(FB.flow.name||"Flow")}</h2><span style="flex:1"></span>`
+   +`<select id="fbvers" style="max-width:190px" title="Version history"><option value="">Versions…</option></select>`
    +`<button class="btn secondary small" onclick="fbRollback()">Rollback</button>`
    +(FB.isScreen?`<button class="btn secondary small" onclick="fbAddStep('screen')">+ Screen</button>`:`<button class="btn secondary small" onclick="fbAddStep('action')">+ Action</button>`)
    +(FB.sel&&FB.sel!=="start"?` <button class="btn danger small" onclick="fbDelStep()">Delete step</button>`:"")
@@ -2753,7 +2827,7 @@ async function showDispatch(){
   const today=new Date().toISOString().slice(0,10);
   const nowPct=dispDate===today?pct(new Date().toISOString()):null;
   let ticks=""; for(let h=H0;h<=H1;h+=2) ticks+=`<span style="position:absolute;left:${((h-H0)/SPAN*100).toFixed(1)}%;transform:translateX(-50%)">${h}:00</span>`;
-  let html=`<div class="btnrow"><h2 style="margin:0">🗺 Dispatch console</h2><span class="muted">${day.length} appointment(s) · ${names.length} technician(s)</span><span style="flex:1"></span>`
+  let html=`<div class="btnrow"><h2 style="margin:0">Dispatch console</h2><span class="muted">${day.length} appointment(s) · ${names.length} technician(s)</span><span style="flex:1"></span>`
     +`<input type="date" id="disp_date" value="${dispDate}" style="width:auto"> <button class="btn secondary small" onclick="dispDate=v('disp_date');showDispatch()">Go</button> `
     +`<button class="btn secondary small" onclick="dispDate=new Date().toISOString().slice(0,10);showDispatch()">Today</button></div>`;
   html+=`<div class="card"><div class="disp-head"><div></div><div class="disp-scale">${ticks}</div></div>`;
@@ -2821,7 +2895,7 @@ async function renderDashboards(){
   let html=`<div class="btnrow"><h2 style="margin:0">Dashboards</h2>`
     +`<select id="dash_sel" onchange="curDash=dashBoards.find(d=>d.id===this.value);dashBuild=false;renderDashboards()" style="max-width:220px">${dashBoards.map(d=>`<option value="${d.id}" ${curDash&&curDash.id===d.id?"selected":""}>${esc(d.name)}</option>`).join("")}</select>`
     +`<span style="flex:1"></span><button class="btn secondary small" onclick="showReports()">Manage reports</button> `
-    +(curDash?`<button class="btn secondary small" onclick="subModal('dashboard',curDash.id,curDash.name)">📧 Subscribe</button> `:"");
+    +(curDash?`<button class="btn secondary small" onclick="subModal('dashboard',curDash.id,curDash.name)">Subscribe</button> `:"");
   if(isAdmin){
     html+=dashBuild
       ?`<button class="btn secondary small" onclick="dashNew()">+ New</button> <button class="btn danger small" onclick="dashDel()">Delete</button> <button class="btn secondary small" onclick="dashBuild=false;renderDashboards()">Done</button>`
@@ -2926,7 +3000,7 @@ function closeLightbox(){
   const d=document.getElementById("lightbox"); if(d) d.remove();
 }
 async function previewFile(fid,filename,mime){
-  openLightbox(`<div class="section-title">📎 ${esc(filename)}</div><div id="pvbody"><p class="muted">Loading preview…</p></div><div class="btnrow" style="margin-top:10px"><button class="btn small" onclick="dlFile('${fid}','${esc(filename)}')">Download</button></div>`);
+  openLightbox(`<div class="section-title">${esc(filename)}</div><div id="pvbody"><p class="muted">Loading preview…</p></div><div class="btnrow" style="margin-top:10px"><button class="btn small" onclick="dlFile('${fid}','${esc(filename)}')">Download</button></div>`);
   let body;
   try{
     const r=await fetch(`/api/files/${fid}`,{headers:{"Authorization":"Bearer "+token}});
@@ -2967,7 +3041,7 @@ async function showCalendar(){
     }
   }
   const monthName=new Date(y,m-1,1).toLocaleString("default",{month:"long",year:"numeric"});
-  let html=`<div class="btnrow"><h2 style="margin:0">📅 Calendar</h2><span class="muted">${items.length} item(s)</span><span style="flex:1"></span>`
+  let html=`<div class="btnrow"><h2 style="margin:0">Calendar</h2><span class="muted">${items.length} item(s)</span><span style="flex:1"></span>`
     +`<button class="btn secondary small" onclick="calView='month';showCalendar()">Month</button>`
     +`<button class="btn secondary small" onclick="calView='agenda';showCalendar()">Agenda</button>`
     +`<button class="btn secondary small" onclick="calShift(-1)">‹</button><b>${monthName}</b><button class="btn secondary small" onclick="calShift(1)">›</button>`
@@ -3027,7 +3101,7 @@ async function macroBar(id){
   const r=await api("GET","/api/macros");
   const macros=Array.isArray(r.data)?r.data.filter(m=>m.active!==false&&(!m.object||m.object==="Case")):[];
   if(!macros.length) return "";
-  return `<div class="card"><div class="section-title">⚡ Agent macros</div><div class="btnrow">`
+  return `<div class="card"><div class="section-title">Agent macros</div><div class="btnrow">`
     +`<select id="macro_sel" style="max-width:260px">${macros.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select>`
     +`<button class="btn small" onclick="applyMacroCase('${id}')">Run macro</button>`
     +(me.profile==="System Administrator"?`<button class="btn secondary small" onclick="showQueueAdmin()">Manage macros</button>`:"")
@@ -3115,7 +3189,7 @@ async function bulkRefresh(quiet){
 
 /* ============ report subscriptions ============ */
 function subModal(kind,id,name){
-  openLightbox(`<div class="section-title">📧 Subscribe — ${esc(name)}</div>
+  openLightbox(`<div class="section-title">Subscribe — ${esc(name)}</div>
   <p class="muted">A ${kind} digest is emailed on schedule. Delivery is logged under Admin Setup → Email Log${window.FORCELET_SMTP?"":" (demo mode: logged, not sent)"}.</p>
   <label>Frequency</label><select id="sub_freq"><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
   <label>Recipient emails (comma-separated)</label><input id="sub_rcpt" placeholder="you@company.com">
@@ -3139,7 +3213,7 @@ async function fbLoadVersions(){
   const cfg=SETUP_KINDS[FB.kind];
   const r=await api("GET",`/api/admin/${cfg.apiKind||FB.kind}/${FB.id}/versions`);
   const vers=r.ok&&Array.isArray(r.data)?r.data:[];
-  sel.innerHTML=`<option value="">🕘 Versions (${vers.length})…</option>`+vers.map(v=>`<option value="${v.id}">v${v.version} — ${esc((v.created_at||"").slice(0,16).replace("T"," "))}${v.note?" — "+esc(v.note.slice(0,30)):""}</option>`).join("");
+  sel.innerHTML=`<option value="">Versions (${vers.length})…</option>`+vers.map(v=>`<option value="${v.id}">v${v.version} — ${esc((v.created_at||"").slice(0,16).replace("T"," "))}${v.note?" — "+esc(v.note.slice(0,30)):""}</option>`).join("");
   FB.versions=vers;
 }
 async function fbRollback(){
@@ -3157,14 +3231,14 @@ async function fbRollback(){
 async function totpManage(){
   const s=await api("GET","/api/me/totp/status");
   if(s.ok&&s.data.enabled){
-    openLightbox(`<div class="section-title">🔐 Two-factor authentication</div><p>Two-factor is <b>enabled</b> for your account.</p>
+    openLightbox(`<div class="section-title">Two-factor authentication</div><p>Two-factor is <b>enabled</b> for your account.</p>
     <label>Confirm password to disable</label><input id="totp_pw" type="password">
     <div class="btnrow" style="margin-top:10px"><button class="btn danger" onclick="totpDisable()">Disable 2FA</button>
     <button class="btn secondary" onclick="closeLightbox()">Cancel</button></div><div id="totperr2"></div>`);
   }else{
     const r=await api("POST","/api/me/totp/setup");
     if(!r.ok){ toast("Setup failed.","error"); return; }
-    openLightbox(`<div class="section-title">🔐 Set up two-factor authentication</div>
+    openLightbox(`<div class="section-title">Set up two-factor authentication</div>
     <p class="muted">1. Open your authenticator app (Google Authenticator, 1Password, …) and add this secret, or open the link below on your phone.</p>
     <label>Secret (keep private)</label><input readonly value="${esc(r.data.secret)}" onclick="this.select()">
     <p><a href="${esc(r.data.otpauth_url)}">otpauth link — open on your phone</a></p>

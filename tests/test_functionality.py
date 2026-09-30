@@ -6,6 +6,7 @@ import pytest
 
 from forcelet import totp_util
 from forcelet.api import create_app
+from helpers import login
 
 
 @pytest.fixture()
@@ -13,12 +14,6 @@ def client(tmp_path):
     app = create_app(str(tmp_path / "t.db"))
     app.config["TESTING"] = True
     return app.test_client()
-
-
-def login(client, username, password="forcelet"):
-    r = client.post("/api/login", json={"username": username, "password": password})
-    assert r.status_code == 200, r.get_json()
-    return {"Authorization": "Bearer " + r.get_json()["token"]}
 
 
 def test_case_queues(client):
@@ -165,7 +160,8 @@ def test_totp_flow(client):
     assert client.post("/api/me/totp/enable", headers=h,
                        json={"code": code}).get_json() == {"enabled": True}
     assert client.get("/api/me/totp/status", headers=h).get_json() == {"enabled": True}
-    r = client.post("/api/login", json={"username": "admin", "password": "forcelet"})
+    # the shared login() helper already rotated the seeded password
+    r = client.post("/api/login", json={"username": "admin", "password": "TestPass123!"})
     assert r.get_json()["totp_required"] is True
     chal = r.get_json()["challenge"]
     assert "token" not in r.get_json()
@@ -181,8 +177,8 @@ def test_totp_flow(client):
     assert client.post("/api/me/totp/disable", headers=h2,
                        json={"password": "wrong"}).status_code == 403
     assert client.post("/api/me/totp/disable", headers=h2,
-                       json={"password": "forcelet"}).get_json() == {"enabled": False}
-    r = client.post("/api/login", json={"username": "admin", "password": "forcelet"})
+                       json={"password": "TestPass123!"}).get_json() == {"enabled": False}
+    r = client.post("/api/login", json={"username": "admin", "password": "TestPass123!"})
     assert "token" in r.get_json()
 
 

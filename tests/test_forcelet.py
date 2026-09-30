@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from forcelet.api import create_app
+from helpers import login
 
 
 @pytest.fixture()
@@ -18,13 +19,6 @@ def client():
     with app.test_client() as c:
         yield c
     os.unlink(db)
-
-
-def login(client, username, password="forcelet"):
-    r = client.post("/api/login", json={"username": username, "password": password})
-    assert r.status_code == 200, r.get_json()
-    body = r.get_json()
-    return {"Authorization": f"Bearer {body['token']}"}
 
 
 def test_login_rejects_bad_password(client):

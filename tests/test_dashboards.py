@@ -2,6 +2,7 @@
 import pytest
 
 from forcelet.api import create_app
+from helpers import login
 
 
 @pytest.fixture()
@@ -9,12 +10,6 @@ def client(tmp_path):
     app = create_app(str(tmp_path / "t.db"))
     app.config["TESTING"] = True
     return app.test_client()
-
-
-def login(client, username, password="forcelet"):
-    r = client.post("/api/login", json={"username": username, "password": password})
-    assert r.status_code == 200, r.get_json()
-    return {"Authorization": "Bearer " + r.get_json()["token"]}
 
 
 def test_dashboard_crud(client):
@@ -39,8 +34,6 @@ def test_dashboard_404_and_forbidden(client):
     assert client.put("/api/dashboards/nope", headers=admin, json={}).status_code == 404
     assert client.delete("/api/dashboards/nope", headers=admin).status_code == 404
     # standard user can read but not write
-    r = client.post("/api/login", json={"username": "leo", "password": "forcelet"})
-    assert r.status_code == 200, r.get_json()
-    uh = {"Authorization": "Bearer " + r.get_json()["token"]}
+    uh = login(client, "leo")
     assert client.get("/api/dashboards", headers=uh).status_code == 200
     assert client.post("/api/dashboards", headers=uh, json={"name": "x"}).status_code in (401, 403)

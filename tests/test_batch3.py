@@ -307,6 +307,17 @@ def test_oauth_password_and_refresh_rotation(client):
     assert r.status_code == 200
     body = r.get_json()
     assert body["token_type"] == "Bearer" and body["refresh_token"]
+    if body.get("must_change_password"):
+        # seeded credentials: complete the forced password change, then re-run
+        lim = {"Authorization": f"Bearer {body['access_token']}"}
+        rc = client.post("/api/change-password", headers=lim,
+                         json={"current": "forcelet", "new": "TestPass123!"})
+        assert rc.status_code == 200, rc.get_json()
+        r = client.post("/api/oauth/token",
+                        json={"grant_type": "password", "username": "leo",
+                              "password": "TestPass123!"})
+        assert r.status_code == 200
+        body = r.get_json()
     hdr = {"Authorization": f"Bearer {body['access_token']}"}
     assert client.get("/api/sobjects/Account", headers=hdr).status_code == 200
     r = client.post("/api/oauth/token",

@@ -13,6 +13,7 @@ import pytest
 from forcelet import automation, devops
 from forcelet.api import create_app
 from forcelet.expressions import eval_expr
+from helpers import login
 
 
 @pytest.fixture()
@@ -25,12 +26,6 @@ def app(tmp_path):
 @pytest.fixture()
 def client(app):
     return app.test_client()
-
-
-def login(client, username="admin", password="forcelet"):
-    r = client.post("/api/login", json={"username": username, "password": password})
-    assert r.status_code == 200, r.get_json()
-    return {"Authorization": "Bearer " + r.get_json()["token"]}
 
 
 def make_bulk_job(client, h, obj="Account", op="insert", csv_text=None, **kw):

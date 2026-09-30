@@ -11,10 +11,76 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
+import threading
+import time
 
 from .expressions import eval_expr, record_context
 
 ACTIONS = ("create", "read", "edit", "delete")
+
+# ---------------------------------------------------------------------------
+# Session tokens
+# ---------------------------------------------------------------------------
+SESSION_PREFIX = "mf_sess_"
+SESSION_TTL_SECONDS = 12 * 3600        # sliding idle window
+SESSION_MAX_SECONDS = 7 * 24 * 3600   # absolute cap from creation
+
+
+def new_session_token() -> str:
+    """Return an unguessable session token. Only its SHA-256 hash is stored."""
+    return SESSION_PREFIX + secrets.token_urlsafe(32)
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Login brute-force protection (in-process; use a shared store for multi-worker)
+# ---------------------------------------------------------------------------
+_LOGIN_ATTEMPTS: dict[tuple[str, str], list[float]] = {}
+_LOGIN_LOCK = threading.Lock()
+_BRUTE_FORCE_MAX = 5          # failed attempts …
+_BRUTE_FORCE_WINDOW = 900     # … per 15 minutes …
+_BRUTE_FORCE_LOCKOUT = 900    # … then locked out for 15 minutes
+
+
+def _prune_attempts(now: float) -> None:
+    cutoff = now - _BRUTE_FORCE_WINDOW
+    for key in list(_LOGIN_ATTEMPTS):
+        tries = [t for t in _LOGIN_ATTEMPTS[key] if t > cutoff]
+        if tries:
+            _LOGIN_ATTEMPTS[key] = tries
+        else:
+            del _LOGIN_ATTEMPTS[key]
+
+
+def login_locked_out(ip: str, username: str) -> bool:
+    """True if this (ip, username) or this ip alone is currently locked out."""
+    now = time.time()
+    with _LOGIN_LOCK:
+        _prune_attempts(now)
+        pair = _LOGIN_ATTEMPTS.get((ip, username), [])
+        if len(pair) >= _BRUTE_FORCE_MAX and now - pair[-1] < _BRUTE_FORCE_LOCKOUT:
+            return True
+        ip_tries = [t for (i, _u), tries in _LOGIN_ATTEMPTS.items()
+                    if i == ip for t in tries]
+        if len(ip_tries) >= _BRUTE_FORCE_MAX * 4 and \
+                now - max(ip_tries) < _BRUTE_FORCE_LOCKOUT:
+            return True
+        return False
+
+
+def record_failed_login(ip: str, username: str) -> None:
+    with _LOGIN_LOCK:
+        _prune_attempts(time.time())
+        _LOGIN_ATTEMPTS.setdefault((ip, username), []).append(time.time())
+
+
+def reset_login_attempts(ip: str, username: str) -> None:
+    with _LOGIN_LOCK:
+        _LOGIN_ATTEMPTS.pop((ip, username), None)
 
 
 def hash_password(password: str) -> str:
@@ -227,7 +293,9 @@ class Security:
             raise ValueError(f"Unknown role '{role}'")
         user = {"id": "u_" + new_id()[:8], "username": username, "name": name,
                 "profile": profile, "role": role, "permission_sets": [],
-                "password_hash": hash_password(password)}
+                "password_hash": hash_password(password),
+                # Admin-set initial passwords must be changed at first login.
+                "must_change_password": True}
         self.store.meta_put("mf_users", user["id"], user)
         return user
 

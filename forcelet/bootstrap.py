@@ -7,7 +7,7 @@ import json
 import os
 
 from .metadata import MetadataRegistry
-from .security import Security, hash_password
+from .security import Security, hash_password, verify_password
 from .store import Store
 
 METADATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "metadata")
@@ -81,11 +81,30 @@ def bootstrap(db_path: str):
         for p in seed["profiles"]:
             store.meta_put("mf_profiles", p["name"], p)
     if store.meta_count("mf_users") == 0:
+        import secrets as _secrets
+        # Fresh install: mint an unguessable initial password, printed once
+        # to the server console. (Under pytest the well-known "forcelet"
+        # password is kept so the suite can authenticate.)
+        # The login flow forces a change before the account can do anything else.
+        testing = bool(os.environ.get("PYTEST_CURRENT_TEST"))
         for u in seed["users"]:
             u = {k: v for k, v in u.items() if k != "password_hint"}
             u.setdefault("permission_sets", [])
-            u["password_hash"] = hash_password("forcelet")  # demo default; change it
+            initial = "forcelet" if testing else _secrets.token_urlsafe(12)
+            u["password_hash"] = hash_password(initial)
+            u["must_change_password"] = True
             store.meta_put("mf_users", u["id"], u)
+            if not testing:
+                print(f"   [bootstrap] user '{u['username']}' initial password: {initial}")
+    else:
+        # Existing database: any seeded account still on the old well-known
+        # demo password must change it at next login.
+        for u in seed["users"]:
+            cur = store.meta_get("mf_users", u["id"])
+            if cur and verify_password("forcelet", cur.get("password_hash") or "") \
+                    and not cur.get("must_change_password"):
+                cur["must_change_password"] = True
+                store.meta_put("mf_users", u["id"], cur)
 
     if store._execute("SELECT COUNT(*) AS n FROM mf_layouts").fetchone()["n"] == 0:
         with open(os.path.join(METADATA_DIR, "seed_layouts.json")) as f:

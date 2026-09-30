@@ -5,6 +5,7 @@ import tempfile
 import pytest
 
 from forcelet.api import create_app
+from helpers import login
 
 
 @pytest.fixture()
@@ -16,12 +17,6 @@ def client():
     with app.test_client() as c:
         yield c
     os.unlink(db)
-
-
-def login(client):
-    r = client.post("/api/login", json={"username": "admin", "password": "forcelet"})
-    assert r.status_code == 200
-    return {"Authorization": "Bearer " + r.get_json()["token"]}
 
 
 def test_patch_toggle_active(client):

@@ -29,11 +29,18 @@ def utcnow() -> str:
 class Store:
     def __init__(self, db_path: str):
         self.db_path = db_path
-        # check_same_thread=False + a lock: the Flask dev server handles
-        # requests on multiple threads sharing this connection.
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        # check_same_thread=False + a lock: the server handles requests on
+        # multiple threads sharing this connection. WAL mode lets readers
+        # proceed while a writer holds the lock, and busy_timeout makes
+        # concurrent writers wait instead of failing immediately.
+        self.conn = sqlite3.connect(db_path, check_same_thread=False,
+                                    timeout=10.0)
         self.conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        with self._lock:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA busy_timeout=10000")
+            self.conn.execute("PRAGMA foreign_keys=ON")
         self._init_meta_tables()
 
     def _execute(self, sql, params=()):
@@ -107,6 +114,16 @@ class Store:
         c.execute("""CREATE TABLE IF NOT EXISTS mf_api_keys
                      (key_hash TEXT PRIMARY KEY, id TEXT, name TEXT, user_id TEXT,
                       created_at TEXT, last_used_at TEXT)""")
+        # Server-side sessions: only the SHA-256 hash of the token is stored.
+        # limited=1 marks a session that may only change the user's password
+        # (used to force a password change for seeded/default credentials).
+        c.execute("""CREATE TABLE IF NOT EXISTS mf_sessions
+                     (token_hash TEXT PRIMARY KEY, user_id TEXT,
+                      created_at TEXT, expires_at TEXT, last_seen_at TEXT,
+                      ip TEXT, user_agent TEXT, limited INTEGER DEFAULT 0)""")
+        # Small key/value store: schema version, scheduler lock, etc.
+        c.execute("""CREATE TABLE IF NOT EXISTS mf_meta
+                     (key TEXT PRIMARY KEY, value TEXT)""")
         c.execute("""CREATE TABLE IF NOT EXISTS mf_feed_posts
                      (id TEXT PRIMARY KEY, object_name TEXT, record_id TEXT,
                       user_id TEXT, body TEXT, created_at TEXT)""")
@@ -474,6 +491,60 @@ class Store:
                       " VALUES (?, ?, ?, ?, ?)", (key_hash, kid, name, user_id, utcnow()))
         self._commit()
         return kid
+
+    # ------------------------------------------------------------------ sessions
+    def create_session(self, token_hash, user_id, expires_at, ip="", user_agent="",
+                       limited=False):
+        now = utcnow()
+        self._execute(
+            "INSERT INTO mf_sessions (token_hash, user_id, created_at, expires_at,"
+            " last_seen_at, ip, user_agent, limited)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (token_hash, user_id, now, expires_at, now, ip or "",
+             (user_agent or "")[:200], 1 if limited else 0))
+        self._commit()
+
+    def get_session(self, token_hash):
+        row = self._execute("SELECT * FROM mf_sessions WHERE token_hash=?",
+                            (token_hash,)).fetchone()
+        return dict(row) if row else None
+
+    def touch_session(self, token_hash, expires_at):
+        self._execute("UPDATE mf_sessions SET last_seen_at=?, expires_at=?"
+                      " WHERE token_hash=?", (utcnow(), expires_at, token_hash))
+        self._commit()
+
+    def unlimit_session(self, token_hash):
+        self._execute("UPDATE mf_sessions SET limited=0 WHERE token_hash=?",
+                      (token_hash,))
+        self._commit()
+
+    def delete_session(self, token_hash):
+        self._execute("DELETE FROM mf_sessions WHERE token_hash=?", (token_hash,))
+        self._commit()
+
+    def delete_user_sessions(self, user_id, except_hash=None):
+        if except_hash:
+            self._execute("DELETE FROM mf_sessions WHERE user_id=? AND token_hash!=?",
+                          (user_id, except_hash))
+        else:
+            self._execute("DELETE FROM mf_sessions WHERE user_id=?", (user_id,))
+        self._commit()
+
+    def prune_sessions(self):
+        self._execute("DELETE FROM mf_sessions WHERE expires_at < ?", (utcnow(),))
+        self._commit()
+
+    # ------------------------------------------------------------------ meta kv
+    def meta_kv_get(self, key, default=None):
+        row = self._execute("SELECT value FROM mf_meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def meta_kv_set(self, key, value):
+        self._execute("INSERT INTO mf_meta (key, value) VALUES (?, ?)"
+                      " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                      (key, value))
+        self._commit()
 
     def get_api_key(self, key_hash):
         row = self._execute("SELECT * FROM mf_api_keys WHERE key_hash=?", (key_hash,)).fetchone()

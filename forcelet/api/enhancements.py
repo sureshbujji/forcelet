@@ -18,7 +18,7 @@ from ..pdfgen import build_pdf
 from ..expressions import eval_expr, record_context
 from ._shared import (
     _audit, _do_update, _visible_records,
-    require_admin, require_auth, serialize,
+    issue_session, require_admin, require_auth, serialize,
 )
 
 # in-memory TOTP login challenges: challenge_id -> {user_id, expires}
@@ -460,10 +460,16 @@ def register(app: Flask):
             return jsonify({"error": "Invalid code"}), 401
         with _TOTP_LOCK:  # single-use: consume only after a valid code
             _TOTP_CHALLENGES.pop(body.get("challenge") or "", None)
-        return jsonify({"token": f"mf-{user['id']}",
+        must_change = bool(user.get("must_change_password"))
+        token = issue_session(store, user, limited=must_change)
+        resp = jsonify({"token": token,
+                        "must_change_password": must_change,
                         "user": {"id": user["id"], "username": user["username"],
                                  "name": user["name"], "profile": user["profile"],
                                  "role": user["role"]}})
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
 
     # wrap the original login view to add the TOTP step
     if _orig_login_view:

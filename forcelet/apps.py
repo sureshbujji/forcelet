@@ -19,16 +19,16 @@ from .store import new_id
 
 APP_TABLE = "mf_apps"
 
-# utility tab key -> label/icon shown in the App Manager and launcher
+# utility tab key -> label shown in the App Manager
 UTILITY_TABS = {
-    "reports":    {"label": "Reports",     "icon": "📊"},
-    "dashboards": {"label": "Dashboards",  "icon": "📈"},
-    "chatter":    {"label": "Chatter",     "icon": "💬"},
-    "approvals":  {"label": "Approvals",   "icon": "✔️"},
-    "forecasts":  {"label": "Forecasts",   "icon": "🔮"},
-    "calendar":   {"label": "Calendar",    "icon": "📅"},
-    "dispatch":   {"label": "Dispatch",    "icon": "🚚"},
-    "flows":      {"label": "Flows",       "icon": "🌊"},
+    "reports":    {"label": "Reports"},
+    "dashboards": {"label": "Dashboards"},
+    "chatter":    {"label": "Chatter"},
+    "approvals":  {"label": "Approvals"},
+    "forecasts":  {"label": "Forecasts"},
+    "calendar":   {"label": "Calendar"},
+    "dispatch":   {"label": "Dispatch"},
+    "flows":      {"label": "Flows"},
 }
 # utilities only shown to admins
 ADMIN_UTILITIES = {"bulk", "admin"}
@@ -79,7 +79,7 @@ def normalize_app(data: dict) -> dict:
     return {"id": data.get("id") or new_id(),
             "name": name, "label": label,
             "description": (data.get("description") or "").strip(),
-            "icon": (data.get("icon") or "").strip() or "📱",
+            "icon": (data.get("icon") or "").strip() or "",
             "color": (data.get("color") or "").strip() or "#1f6feb",
             "active": bool(data.get("active", True)),
             "sort_order": int(data.get("sort_order") or 0),
@@ -137,7 +137,7 @@ def visible_apps(store, security, user: dict) -> list:
         access = (app.get("profile_access") or {}).get(profile) or {}
         out.append({"id": app["id"], "name": app["name"], "label": app["label"],
                     "description": app.get("description", ""),
-                    "icon": app.get("icon", "📱"), "color": app.get("color", "#1f6feb"),
+                    "icon": app.get("icon", ""), "color": app.get("color", "#1f6feb"),
                     "default": bool(access.get("default")), "tabs": tabs})
     return out
 
@@ -189,11 +189,11 @@ def seed_apps() -> list:
                 + [{"kind": "utility", "ref": u} for u in utils])
 
     return [
-        normalize_app({"name": "Sales", "label": "Sales", "icon": "💼",
+        normalize_app({"name": "Sales", "label": "Sales", "icon": "",
                        "color": "#1f6feb", "sort_order": 1,
                        "description": "Sell faster: leads, opportunities, quotes and forecasts.",
                        "tabs": tabs(sales_tabs, sales_utils)}),
-        normalize_app({"name": "Service", "label": "Service", "icon": "🎧",
+        normalize_app({"name": "Service", "label": "Service", "icon": "",
                        "color": "#0e7c3e", "sort_order": 2,
                        "description": "Support customers: cases, work orders and knowledge.",
                        "tabs": tabs(service_tabs, service_utils)}),

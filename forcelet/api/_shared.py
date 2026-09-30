@@ -4,7 +4,12 @@ By Suresh Itha — part of the Forcelet platform.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
+import time
+from collections import deque
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from flask import current_app, jsonify, request
@@ -14,12 +19,76 @@ from .. import crypto as _crypto
 from .. import datamodel as _datamodel
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
+from ..security import (SESSION_MAX_SECONDS, SESSION_TTL_SECONDS, hash_token)
 
 
 def ctx():
     """Return (store, registry, security) for the current app."""
     return current_app.mf_store, current_app.mf_registry, current_app.mf_security
 
+
+# ---------------------------------------------------------------------------
+# Rate limiting (in-process sliding window; bypassed when TESTING)
+# ---------------------------------------------------------------------------
+_RATE_BUCKETS: dict[str, deque] = {}
+_RATE_LOCK = threading.Lock()
+
+
+def rate_limit(max_requests: int, window_seconds: int, key_fn=None):
+    """Decorator: at most max_requests per window_seconds per key."""
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(*a, **kw):
+            if current_app.config.get("TESTING"):
+                return fn(*a, **kw)
+            key = (key_fn() if key_fn else "global") + ":" + fn.__name__
+            now = time.time()
+            with _RATE_LOCK:
+                bucket = _RATE_BUCKETS.setdefault(key, deque())
+                while bucket and bucket[0] <= now - window_seconds:
+                    bucket.popleft()
+                if len(bucket) >= max_requests:
+                    return jsonify({"error": "Too many requests, slow down"}), 429
+                bucket.append(now)
+            return fn(*a, **kw)
+        return wrapper
+    return deco
+
+
+def _client_ip() -> str:
+    # When behind a trusted reverse proxy (FORCELET_BEHIND_PROXY=1), honor
+    # X-Forwarded-For; otherwise use the direct peer address so a client
+    # cannot spoof its IP.
+    import os
+    if os.environ.get("FORCELET_BEHIND_PROXY") == "1":
+        fwd = request.headers.get("X-Forwarded-For", "")
+        if fwd:
+            return fwd.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+# Query-param tokens exist only for browser EventSource streams, which cannot
+# set an Authorization header. They are accepted solely on those paths so
+# tokens do not leak into logs via arbitrary URLs.
+QUERY_TOKEN_PATHS = frozenset({"/api/streaming"})
+
+
+def issue_session(store, user, limited=False):
+    """Mint a session token for user; store only its hash. Returns the token."""
+    from ..security import new_session_token
+    token = new_session_token()
+    now = datetime.now(timezone.utc)
+    expires = min(now + timedelta(seconds=SESSION_MAX_SECONDS),
+                  now + timedelta(seconds=SESSION_TTL_SECONDS))
+    store.create_session(hash_token(token), user["id"],
+                         expires.isoformat(timespec="seconds"),
+                         ip=_client_ip(),
+                         user_agent=request.headers.get("User-Agent", ""),
+                         limited=limited)
+    return token
 
 
 def current_user():
@@ -28,20 +97,46 @@ def current_user():
     token = None
     if auth.startswith("Bearer "):
         token = auth[7:]
-    elif request.args.get("access_token"):
-        # query-param tokens exist for browser EventSource streams, which
-        # cannot set an Authorization header.
+    elif request.path in QUERY_TOKEN_PATHS and request.args.get("access_token"):
         token = request.args["access_token"]
     if not token:
         return None
-    if token.startswith("mf-"):
-        return security.get_user(token[3:])
     if token.startswith("mf_live_"):
-        import hashlib
         rec = store.get_api_key(hashlib.sha256(token.encode()).hexdigest())
         if rec:
             store.touch_api_key(rec["key_hash"])
             return security.get_user(rec["user_id"])
+        return None
+    from ..security import SESSION_PREFIX
+    if token.startswith(SESSION_PREFIX):
+        sess = store.get_session(hash_token(token))
+        if not sess:
+            return None
+        now = datetime.now(timezone.utc)
+        try:
+            expires = datetime.fromisoformat(sess["expires_at"])
+        except Exception:
+            return None
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires <= now:
+            store.delete_session(hash_token(token))
+            return None
+        # Sliding expiry: idle sessions live SESSION_TTL_SECONDS, capped at
+        # SESSION_MAX_SECONDS from creation.
+        try:
+            created = datetime.fromisoformat(sess["created_at"])
+        except Exception:
+            created = now
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        new_exp = min(created + timedelta(seconds=SESSION_MAX_SECONDS),
+                      now + timedelta(seconds=SESSION_TTL_SECONDS))
+        store.touch_session(hash_token(token), new_exp.isoformat(timespec="seconds"))
+        user = security.get_user(sess["user_id"])
+        if user:
+            request.mf_session = sess
+        return user
     return None
 
 
@@ -51,6 +146,12 @@ def require_auth(fn):
         user = current_user()
         if not user:
             return jsonify({"error": "Authentication required"}), 401
+        sess = getattr(request, "mf_session", None)
+        if sess and sess.get("limited") and request.path != "/api/change-password":
+            # Seeded/default credentials: the user must set a real password
+            # before doing anything else.
+            return jsonify({"error": "Password change required",
+                            "must_change_password": True}), 403
         request.mf_user = user
         return fn(*a, **kw)
     return wrapper

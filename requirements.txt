@@ -1,3 +1,4 @@
 flask>=3.0
 pytest>=8.0
 cryptography>=40.0
+gunicorn>=22.0

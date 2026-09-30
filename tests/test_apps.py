@@ -4,6 +4,7 @@ import pytest
 
 from forcelet import apps as apps_mod
 from forcelet.api import create_app
+from helpers import login
 
 
 @pytest.fixture()
@@ -18,14 +19,8 @@ def client(app):
     return app.test_client()
 
 
-def login(client, username="admin", password="forcelet"):
-    r = client.post("/api/login", json={"username": username, "password": password})
-    assert r.status_code == 200, r.get_json()
-    return {"Authorization": "Bearer " + r.get_json()["token"]}
-
-
 def make_app(client, h, **kw):
-    body = {"name": "Sales", "label": "Sales", "icon": "💼",
+    body = {"name": "Sales", "label": "Sales",
             "tabs": [{"kind": "object", "ref": "Account"},
                      {"kind": "object", "ref": "Opportunity"},
                      {"kind": "utility", "ref": "reports"}]}

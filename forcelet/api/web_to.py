@@ -82,7 +82,7 @@ def register(app: Flask):
             ".ksug p{margin:2px 0 8px;color:#444;font-size:14px}</style></head><body>"
             f"<h2>Open a support case</h2><form method='post' action='/api/public/web-to-case'>"
             f"{fields}<button type='submit'>Submit</button></form>"
-            "<div class='ksug' id='ksug'><b>💡 These help articles might answer your question:</b><div id='ksug_list'></div></div>"
+            "<div class='ksug' id='ksug'><b>These help articles might answer your question:</b><div id='ksug_list'></div></div>"
             "<script>var t=null;function esc(s){return String(s||'').replace(/[&<>\"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]});}"
             "function sug(){var q=(document.getElementsByName('Subject')[0].value+' '+document.getElementsByName('Description')[0].value).trim();"
             "if(q.length<4){document.getElementById('ksug').style.display='none';return;}"
