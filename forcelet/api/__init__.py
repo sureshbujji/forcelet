@@ -19,8 +19,8 @@ from ..migrations import run_migrations
 from . import (
     admin, api_keys, approvals, apps, audit, auth, callouts, cdc, chatter,
     datamodel, email, enhancements, experience, field_service, files, flows, forecasts, impexp, jobs, kanban,
-    metadata, notifications, oauth, packaging, platform, records, reports, scoring,
-    search, sla, activities, web_to, devops, dynamic_forms,
+    metadata, notifications, oauth, packaging, platform, platform_core, records, reports, scoring,
+    search, sla, activities, web_to, devops, dynamic_forms, sales_core, service_core,
 )
 
 APP_VERSION = "0.7.0"
@@ -77,8 +77,8 @@ def create_app(db_path: str) -> Flask:
     for mod in (admin, api_keys, approvals, apps, audit, auth, callouts, cdc,
                 chatter, datamodel, email, enhancements, experience, field_service, files, flows, forecasts,
                 impexp, jobs, kanban, metadata, notifications, oauth, packaging,
-                platform, records, reports, scoring, search, sla, activities,
-                web_to, devops, dynamic_forms):
+                platform, platform_core, records, reports, scoring, search, sla, activities,
+                web_to, devops, dynamic_forms, sales_core, service_core):
         mod.register(app)
 
     @app.get("/api/health")

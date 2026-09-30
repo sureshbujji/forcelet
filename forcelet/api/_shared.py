@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 import time
 from collections import deque
@@ -18,6 +19,8 @@ from .. import automation
 from .. import crypto as _crypto
 from .. import datamodel as _datamodel
 from .. import dynamic_forms as _dynforms
+from .. import duplicate_rules as _duprules
+from .. import email_alerts as _emailalerts
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
 from ..security import (SESSION_MAX_SECONDS, SESSION_TTL_SECONDS, hash_token)
@@ -26,6 +29,24 @@ from ..security import (SESSION_MAX_SECONDS, SESSION_TTL_SECONDS, hash_token)
 def ctx():
     """Return (store, registry, security) for the current app."""
     return current_app.mf_store, current_app.mf_registry, current_app.mf_security
+
+
+def recompute_opp_amount(user, opp_id):
+    """Recompute Opportunity.Amount after a generic OpportunityLineItem write.
+
+    The /api/sales/* routes do their own roll-up; this covers generic
+    /api/sobjects writes, CSV import, web-to-lead, and flows. Lazy import
+    avoids a circular dependency (sales_core imports this module).
+    Never raises: a stale Amount is better than a 500 on a saved record.
+    """
+    if not opp_id:
+        return
+    try:
+        from . import sales_core as _sales
+        _sales._recompute_amount(user, opp_id)
+    except Exception:
+        logging.getLogger("forcelet").warning(
+            "Opportunity Amount roll-up failed for %s", opp_id, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -240,9 +261,20 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
     md_err = _datamodel.validate_md_parents_exist(store, obj, clean)
     if md_err:
         return 422, {"error": "Validation failed", "details": [md_err]}
-    dups = automation.check_duplicates(store, obj_name, clean)
-    if dups and not allow_duplicates:
-        return 409, {"error": "Possible duplicates found", "duplicates": dups}
+    # Declarative duplicate rules (MatchingRule/DuplicateRule) take precedence:
+    # an explicit Block/Warn decides the outcome; otherwise the legacy
+    # mf_matching_rules check applies.
+    dup_action, dup_message = _duprules.evaluate_duplicate_rules(
+        store, obj_name, "create", clean)
+    if dup_action == "block" and not allow_duplicates:
+        return 409, {"error": dup_message}
+    if dup_action == "warn" and not allow_duplicates:
+        dup_warning = dup_message
+    else:
+        dup_warning = None
+        dups = automation.check_duplicates(store, obj_name, clean)
+        if dups and not allow_duplicates:
+            return 409, {"error": "Possible duplicates found", "duplicates": dups}
     clean["owner_id"] = (automation.apply_assignment_rules(
         store, registry, security, obj_name, clean, user) or user["id"])
     clean["created_by"] = user["id"]
@@ -286,7 +318,18 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
     store.emit_change(obj_name, rid, "create", user,
                       snapshot={k: v for k, v in store.get(obj_name, rid).items()
                                 if not _crypto.is_encrypted(v)})
-    return 201, serialize(user, obj, store.get(obj_name, rid))
+    final_rec = store.get(obj_name, rid)
+    try:
+        _emailalerts.fire_email_alerts(store, obj_name, "Create", final_rec,
+                                       user=user, security=security)
+    except Exception:
+        pass  # email alerts are fire-and-forget; never break the save pipeline
+    payload = serialize(user, obj, final_rec)
+    if dup_warning:
+        payload["warning"] = dup_warning
+    if obj_name == "OpportunityLineItem":
+        recompute_opp_amount(user, clean.get("OpportunityId"))
+    return 201, payload
 
 
 def _do_update(user, obj_name, rid, body, allow_duplicates=False):
@@ -328,9 +371,20 @@ def _do_update(user, obj_name, rid, body, allow_duplicates=False):
             return 422, {"error": "Validation failed", "details": errors}
         clean.update(clean2)
     merged = {**rec, **clean}
-    dups = automation.check_duplicates(store, obj_name, merged, exclude_id=rid)
-    if dups and not allow_duplicates:
-        return 409, {"error": "Possible duplicates found", "duplicates": dups}
+    # Declarative duplicate rules (MatchingRule/DuplicateRule) take precedence:
+    # an explicit Block/Warn decides the outcome; otherwise the legacy
+    # mf_matching_rules check applies.
+    dup_action, dup_message = _duprules.evaluate_duplicate_rules(
+        store, obj_name, "update", merged, exclude_id=rid)
+    if dup_action == "block" and not allow_duplicates:
+        return 409, {"error": dup_message}
+    if dup_action == "warn" and not allow_duplicates:
+        dup_warning = dup_message
+    else:
+        dup_warning = None
+        dups = automation.check_duplicates(store, obj_name, merged, exclude_id=rid)
+        if dups and not allow_duplicates:
+            return 409, {"error": "Possible duplicates found", "duplicates": dups}
     vr_errors = automation.check_validation_rules(store, obj_name, merged, rec)
     if vr_errors:
         return 422, {"error": "Validation rule failed", "details": vr_errors}
@@ -351,4 +405,16 @@ def _do_update(user, obj_name, rid, body, allow_duplicates=False):
     store.emit_change(obj_name, rid, "update", user, changed_fields=list(clean.keys()),
                       snapshot={k: v for k, v in new_rec.items()
                                 if not _crypto.is_encrypted(v)})
-    return 200, serialize(user, obj, new_rec)
+    try:
+        _emailalerts.fire_email_alerts(store, obj_name, "Update", new_rec,
+                                       user=user, security=security)
+    except Exception:
+        pass  # email alerts are fire-and-forget; never break the save pipeline
+    payload = serialize(user, obj, new_rec)
+    if dup_warning:
+        payload["warning"] = dup_warning
+    if obj_name == "OpportunityLineItem":
+        recompute_opp_amount(user, merged.get("OpportunityId"))
+        if rec.get("OpportunityId") != merged.get("OpportunityId"):
+            recompute_opp_amount(user, rec.get("OpportunityId"))
+    return 200, payload

@@ -264,6 +264,23 @@ class Security:
                     continue
                 if self._sharing_target_includes(rule.get("share_with") or {}, user):
                     return True
+        # case-team sharing: membership in the case's assigned team grants
+        # read access, even without ownership/role/sharing-rule coverage.
+        # Only evaluated when the grants above failed, and only when the
+        # case actually has a team assigned.
+        if obj_name == "Case" and record.get("id"):
+            try:
+                asg = self.store.config_get("mf_case_team_assignments",
+                                            record["id"])
+                if asg and asg.get("team_def_id"):
+                    team_id = asg["team_def_id"]
+                    for m in self.store.query("CaseTeamMemberDef",
+                                              owner_ids=None, limit=10000):
+                        if m.get("CaseTeamDefId") == team_id \
+                                and m.get("UserId") == user["id"]:
+                            return True
+            except Exception:
+                pass
         return False
 
     def _sharing_target_includes(self, target: dict, user: dict) -> bool:

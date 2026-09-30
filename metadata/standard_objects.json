@@ -87,6 +87,12 @@
           "via": "AccountId"
         },
         "type": "Number"
+      },
+      {
+        "name": "ParentAccountId",
+        "label": "Parent Account",
+        "type": "Lookup",
+        "reference_to": "Account"
       }
     ],
     "is_custom": false,
@@ -281,6 +287,24 @@
         "label": "Days Open",
         "name": "DaysOpen",
         "type": "Number"
+      },
+      {
+        "label": "Forecast Category",
+        "name": "ForecastCategory",
+        "picklist_values": [
+          "Pipeline",
+          "Best Case",
+          "Commit",
+          "Omitted",
+          "Closed"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Primary Campaign Source",
+        "name": "PrimaryCampaignId",
+        "reference_to": "Campaign",
+        "type": "Lookup"
       }
     ],
     "is_custom": false,
@@ -2270,5 +2294,749 @@
     "label": "Community User",
     "name": "CommunityUser",
     "plural": "Community Users"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Price Book Entry",
+        "name": "PriceBookEntryId",
+        "reference_to": "PriceBookEntry",
+        "type": "Lookup"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "type": "Lookup"
+      },
+      {
+        "label": "Source Quote",
+        "name": "SourceQuoteId",
+        "reference_to": "Quote",
+        "type": "Lookup"
+      },
+      {
+        "default": 1,
+        "label": "Quantity",
+        "name": "Quantity",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "label": "Sales Price",
+        "name": "UnitPrice",
+        "required": true,
+        "type": "Currency"
+      },
+      {
+        "default": 0,
+        "label": "Discount (%)",
+        "name": "Discount",
+        "type": "Percent"
+      },
+      {
+        "label": "Total Price",
+        "name": "TotalPrice",
+        "type": "Currency"
+      },
+      {
+        "label": "Service Date",
+        "name": "ServiceDate",
+        "type": "Date"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
+    "label": "Opportunity Product",
+    "name": "OpportunityLineItem",
+    "plural": "Opportunity Products"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity Product",
+        "name": "OpportunityLineItemId",
+        "reference_to": "OpportunityLineItem",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Period",
+        "name": "Period",
+        "required": true,
+        "type": "Date"
+      },
+      {
+        "label": "Amount",
+        "name": "Amount",
+        "required": true,
+        "type": "Currency"
+      },
+      {
+        "default": "Revenue",
+        "label": "Type",
+        "name": "Type",
+        "picklist_values": [
+          "Revenue"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Description",
+        "length": 120,
+        "name": "Description",
+        "type": "Text"
+      }
+    ],
+    "is_custom": false,
+    "label": "Revenue Schedule",
+    "name": "RevenueSchedule",
+    "plural": "Revenue Schedules"
+  },
+  {
+    "fields": [
+      {
+        "label": "Quote",
+        "name": "QuoteId",
+        "reference_to": "Quote",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
+    "label": "Quote Sync",
+    "name": "QuoteSync",
+    "plural": "Quote Syncs"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "default": "Other",
+        "label": "Role",
+        "name": "Role",
+        "picklist_values": [
+          "Decision Maker",
+          "Economic Buyer",
+          "Champion",
+          "End User",
+          "Influencer",
+          "Other"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "default": false,
+        "label": "Primary",
+        "name": "IsPrimary",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
+    "label": "Opportunity Contact Role",
+    "name": "OpportunityContactRole",
+    "plural": "Opportunity Contact Roles"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "User",
+        "length": 64,
+        "name": "UserId",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "default": "Sales Rep",
+        "label": "Team Role",
+        "name": "TeamRole",
+        "picklist_values": [
+          "Account Manager",
+          "Sales Rep",
+          "SE",
+          "Executive Sponsor",
+          "Other"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "default": "Read",
+        "label": "Opportunity Access",
+        "name": "AccessLevel",
+        "picklist_values": [
+          "Read",
+          "Edit"
+        ],
+        "type": "Picklist"
+      }
+    ],
+    "is_custom": false,
+    "label": "Opportunity Team Member",
+    "name": "OpportunityTeamMember",
+    "plural": "Opportunity Team Members"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Team Member",
+        "name": "TeamMemberId",
+        "reference_to": "OpportunityTeamMember",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "default": "Revenue",
+        "label": "Split Type",
+        "name": "SplitType",
+        "picklist_values": [
+          "Revenue",
+          "Credit"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Split %",
+        "name": "SplitPercentage",
+        "required": true,
+        "type": "Number"
+      }
+    ],
+    "is_custom": false,
+    "label": "Opportunity Split",
+    "name": "OpportunitySplit",
+    "plural": "Opportunity Splits"
+  },
+  {
+    "fields": [
+      {
+        "label": "Team Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": true,
+    "label": "Case Team Definition",
+    "name": "CaseTeamDef",
+    "plural": "Case Team Definitions"
+  },
+  {
+    "fields": [
+      {
+        "label": "Case Team",
+        "name": "CaseTeamDefId",
+        "reference_to": "CaseTeamDef",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "User",
+        "length": 64,
+        "name": "UserId",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "default": "Support Agent",
+        "label": "Team Role",
+        "name": "TeamRole",
+        "picklist_values": [
+          "Support Agent",
+          "Support Manager",
+          "SME",
+          "Other"
+        ],
+        "required": true,
+        "type": "Picklist"
+      }
+    ],
+    "is_custom": true,
+    "label": "Case Team Member",
+    "name": "CaseTeamMemberDef",
+    "plural": "Case Team Members"
+  },
+  {
+    "fields": [
+      {
+        "label": "Entitlement Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Asset",
+        "name": "AssetId",
+        "reference_to": "Asset",
+        "type": "Lookup"
+      },
+      {
+        "default": "Web Support",
+        "label": "Type",
+        "name": "Type",
+        "picklist_values": [
+          "Phone Support",
+          "Web Support",
+          "Premier"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "default": "Draft",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Draft",
+          "Active",
+          "Expired"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Start Date",
+        "name": "StartDate",
+        "type": "Date"
+      },
+      {
+        "label": "End Date",
+        "name": "EndDate",
+        "type": "Date"
+      },
+      {
+        "label": "Cases Per Period",
+        "name": "CasesPerPeriod",
+        "type": "Number"
+      },
+      {
+        "label": "Entitlement Process",
+        "name": "EntitlementProcessId",
+        "reference_to": "EntitlementProcess",
+        "type": "Lookup"
+      }
+    ],
+    "is_custom": true,
+    "label": "Entitlement",
+    "name": "Entitlement",
+    "plural": "Entitlements"
+  },
+  {
+    "fields": [
+      {
+        "label": "Process Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": true,
+    "label": "Entitlement Process",
+    "name": "EntitlementProcess",
+    "plural": "Entitlement Processes"
+  },
+  {
+    "fields": [
+      {
+        "label": "Entitlement Process",
+        "name": "EntitlementProcessId",
+        "reference_to": "EntitlementProcess",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Milestone Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Target (minutes)",
+        "name": "TargetMinutes",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "label": "Order",
+        "name": "MilestoneOrder",
+        "type": "Number"
+      }
+    ],
+    "is_custom": true,
+    "label": "Entitlement Process Milestone",
+    "name": "EntitlementProcessMilestone",
+    "plural": "Entitlement Process Milestones"
+  },
+  {
+    "fields": [
+      {
+        "label": "Title",
+        "length": 120,
+        "name": "Title",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Body",
+        "name": "Body",
+        "type": "TextArea"
+      },
+      {
+        "label": "Parent Record",
+        "length": 64,
+        "name": "ParentId",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Parent Type",
+        "name": "ParentType",
+        "picklist_values": [
+          "Account",
+          "Contact",
+          "Opportunity",
+          "Case",
+          "Lead"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Owner",
+        "length": 64,
+        "name": "OwnerId",
+        "type": "Text"
+      },
+      {
+        "default": false,
+        "label": "Private",
+        "name": "IsPrivate",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": true,
+    "label": "Note",
+    "name": "Note",
+    "plural": "Notes"
+  },
+  {
+    "fields": [
+      {
+        "label": "Rule Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Object",
+        "length": 80,
+        "name": "ObjectName",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Match Fields (comma-separated)",
+        "name": "Fields",
+        "type": "TextArea"
+      },
+      {
+        "label": "Match Type",
+        "name": "MatchType",
+        "picklist_values": [
+          "Exact",
+          "Fuzzy"
+        ],
+        "type": "Picklist",
+        "default": "Exact"
+      },
+      {
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox",
+        "default": true
+      }
+    ],
+    "is_custom": true,
+    "label": "Matching Rule",
+    "name": "MatchingRule",
+    "plural": "Matching Rules"
+  },
+  {
+    "fields": [
+      {
+        "label": "Rule Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Object",
+        "length": 80,
+        "name": "ObjectName",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Matching Rule",
+        "name": "MatchingRuleId",
+        "reference_to": "MatchingRule",
+        "type": "Lookup"
+      },
+      {
+        "label": "Action",
+        "name": "Action",
+        "picklist_values": [
+          "Block",
+          "Warn"
+        ],
+        "type": "Picklist",
+        "default": "Warn"
+      },
+      {
+        "label": "Message",
+        "name": "Message",
+        "type": "TextArea"
+      },
+      {
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox",
+        "default": true
+      },
+      {
+        "label": "Applies On",
+        "name": "AppliesOn",
+        "picklist_values": [
+          "Create",
+          "Update",
+          "Both"
+        ],
+        "type": "Picklist",
+        "default": "Both"
+      }
+    ],
+    "is_custom": true,
+    "label": "Duplicate Rule",
+    "name": "DuplicateRule",
+    "plural": "Duplicate Rules"
+  },
+  {
+    "fields": [
+      {
+        "label": "Quota Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Owner",
+        "length": 80,
+        "name": "OwnerId",
+        "type": "Text"
+      },
+      {
+        "label": "Period",
+        "length": 20,
+        "name": "Period",
+        "type": "Text"
+      },
+      {
+        "label": "Quota Amount",
+        "name": "QuotaAmount",
+        "type": "Currency"
+      },
+      {
+        "label": "Object",
+        "length": 80,
+        "name": "ObjectName",
+        "type": "Text",
+        "default": "Opportunity"
+      }
+    ],
+    "is_custom": true,
+    "label": "Forecast Quota",
+    "name": "ForecastQuota",
+    "plural": "Forecast Quotas"
+  },
+  {
+    "fields": [
+      {
+        "label": "Alert Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Object",
+        "length": 80,
+        "name": "ObjectName",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Trigger Event",
+        "name": "TriggerEvent",
+        "picklist_values": [
+          "Create",
+          "Update"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Recipients (comma-separated user ids or email addresses)",
+        "name": "Recipients",
+        "type": "TextArea"
+      },
+      {
+        "label": "Email Template",
+        "length": 80,
+        "name": "EmailTemplateId",
+        "type": "Text"
+      },
+      {
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox",
+        "default": true
+      },
+      {
+        "label": "Criteria (field-equals JSON, optional)",
+        "name": "Criteria",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": true,
+    "label": "Email Alert",
+    "name": "EmailAlert",
+    "plural": "Email Alerts"
+  },
+  {
+    "fields": [
+      {
+        "label": "Influence Name",
+        "length": 120,
+        "name": "Name",
+        "type": "Text"
+      },
+      {
+        "label": "Campaign",
+        "name": "CampaignId",
+        "reference_to": "Campaign",
+        "type": "Lookup"
+      },
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "type": "Lookup"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "type": "Lookup"
+      },
+      {
+        "label": "Influence %",
+        "name": "InfluencePercent",
+        "type": "Percent"
+      },
+      {
+        "label": "Attribution Model",
+        "name": "Model",
+        "picklist_values": [
+          "Primary Campaign Source",
+          "First Touch",
+          "Last Touch",
+          "Even Split"
+        ],
+        "type": "Picklist"
+      }
+    ],
+    "is_custom": true,
+    "label": "Campaign Influence",
+    "name": "CampaignInfluence",
+    "plural": "Campaign Influence"
   }
 ]

@@ -266,6 +266,9 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
   <main id="main"></main>
   <footer style="text-align:center;color:#999;font-size:12px;padding:16px">Built by Suresh Itha</footer>
 </div>
+<script src="fragments/sales_core.js"></script>
+<script src="fragments/service_core.js"></script>
+<script src="fragments/platform_core.js"></script>
 <script>
 let token=null, me=null, objects=[], lookups={}, curApp=null, userApps=[];
 const APP_UTILS={
@@ -715,6 +718,7 @@ async function showDetail(id){
   if(curDesc.permissions.edit) html+=`<button class="btn secondary" onclick="findDuplicates('${curObj}','${rec.Id}')">Find duplicates</button>`;
   if(curDesc.permissions.delete&&!isBigObj) html+=`<button class="btn danger" onclick="delRec('${rec.Id}')">Delete</button>`;
   if(curObj==="Quote") html+=`<button class="btn secondary" onclick="dlQuotePdf('${rec.Id}')">Download PDF</button>`;
+  if(curObj==="Quote") html+=`<button class="btn secondary" onclick="syncQuote('${rec.Id}')">Sync with Opportunity</button><button class="btn secondary" onclick="unsyncQuote('${rec.Id}')">Stop Sync</button>`;
   html+=`</div>`;
   html+=`<div class="btnrow" style="align-items:center;margin:2px 0 10px"><h2 style="margin:0">${esc(String(recTitle)).slice(0,80)}</h2>${curObj==="Account"&&rec.IsPersonAccount?' <span class="pill">Person Account</span>':""}${isBigObj?' <span class="pill">Big Object · read-only</span>':""}</div>`;
   const tabs=[["details","Details"],["related","Related"],["activity","Activity"],["chatter","Chatter"],["files","Files"],["history","History"]];
@@ -747,6 +751,11 @@ async function showDetail(id){
   if(curObj==="Quote") main+=await quoteLinesCard(rec.Id);
   if(curObj==="Case") main+=await milestonesCard(rec.Id);
   if(curObj==="Case") main+=await macroBar(rec.Id);
+  // Core CRM cards (SalesCore / ServiceCore fragments fill these after render)
+  if(curObj==="Opportunity") main+=salesCoreOppCards();
+  if(curObj==="Account") main+=accountHierarchyCard();
+  if(curObj==="Case") main+=serviceCoreCaseCard();
+  if(["Account","Contact","Opportunity","Case","Lead"].includes(curObj)) main+=notesCard();
   const ownerName=await userName(rec.OwnerId);
   rail+=`<div class="card"><div class="section-title">System</div><p class="muted">Id ${esc(rec.Id)} \u00b7 Record type ${esc(rec.RecordType)} \u00b7 Owner ${esc(ownerName)} \u00b7 Created ${fmtDateTime(rec.CreatedDate)}</p></div>`;
   const details=`<div class="detail-grid"><div>${main}</div><div>${rail}</div></div>`;
@@ -763,6 +772,8 @@ async function showDetail(id){
   html+=`<div id="dtab-details">${details}</div><div id="dtab-related" style="display:none">${related}</div><div id="dtab-activity" style="display:none">${activity}</div><div id="dtab-chatter" style="display:none">${chatter}</div><div id="dtab-files" style="display:none">${files}</div><div id="dtab-history" style="display:none">${history}</div>`;
   html+=`<div id="dupzone"></div>`;
   document.getElementById("main").innerHTML=html;
+  // Core CRM fragments render into the placeholder cards above.
+  renderCoreCrmDetail(curObj, id);
   // Keep the address bar in sync so records are deep-linkable, bookmarkable,
   // and the back button works. Guarded so popstate navigation doesn't dup.
   const recUrl=`/r/${encodeURIComponent(curObj)}/${encodeURIComponent(id)}`;
@@ -1045,11 +1056,58 @@ async function quoteLinesCard(recId){
     +`<div class="grid2" style="margin-top:10px"><div><label>Price book entry</label><select id="ql_pbe">${opts||"<option value=''>— no entries —</option>"}</select></div>`
     +`<div style="display:flex;gap:8px;align-items:flex-end"><div style="flex:1"><label>Qty</label><input id="ql_qty" type="number" value="1" min="1"></div><div style="flex:1"><label>Discount %</label><input id="ql_disc" type="number" value="0" min="0" max="100"></div><button class="btn small" onclick="addQuoteLine('${recId}')">Add</button></div></div></div>`;
 }
+// ---- Core CRM cards (SalesCore / ServiceCore fragments fill these) ----
+function salesCoreOppCards(){
+  return `<div class="card"><div class="section-title">Products</div><div id="sc_lineitems"><p class="muted">Loading…</p></div></div>`
+    +`<div class="card"><div class="section-title">Contact Roles</div><div id="sc_contactroles"><p class="muted">Loading…</p></div></div>`
+    +`<div class="card"><div class="section-title">Sales Team</div><div id="sc_team"><p class="muted">Loading…</p></div></div>`;
+}
+function accountHierarchyCard(){
+  return `<div class="card"><div class="section-title">Account Hierarchy</div><div id="sc_hierarchy"><p class="muted">Loading…</p></div></div>`;
+}
+function serviceCoreCaseCard(){
+  return `<div class="card"><div class="section-title">Case Team</div><div id="sc_caseteam"><p class="muted">Loading…</p></div></div>`;
+}
+function notesCard(){
+  return `<div class="card"><div class="section-title">Notes</div><div id="sc_notes"><p class="muted">Loading…</p></div></div>`;
+}
+function renderCoreCrmDetail(obj, recId){
+  try{
+    if(window.SalesCore){
+      SalesCore.setToken(token);
+      if(obj==="Opportunity"){
+        const li=document.getElementById("sc_lineitems"); if(li) SalesCore.renderLineItems(li,recId);
+        const cr=document.getElementById("sc_contactroles"); if(cr) SalesCore.renderContactRoles(cr,recId);
+        const tm=document.getElementById("sc_team"); if(tm) SalesCore.renderTeam(tm,recId);
+      }
+      if(obj==="Account"){
+        const h=document.getElementById("sc_hierarchy"); if(h) SalesCore.renderAccountHierarchy(h,recId);
+      }
+    }
+    if(window.ServiceCore){
+      ServiceCore.init(serviceCoreCall);
+      if(obj==="Case"){
+        const ct=document.getElementById("sc_caseteam"); if(ct) ServiceCore.renderCaseTeamPanel(ct,recId);
+      }
+      const nz=document.getElementById("sc_notes");
+      if(nz&&["Account","Contact","Opportunity","Case","Lead"].includes(obj)) ServiceCore.renderNotes(nz,obj,recId);
+    }
+  }catch(e){ console.warn("core crm detail render failed",e); }
+}
+async function syncQuote(qid){
+  const r=await api("POST",`/api/sales/quotes/${qid}/sync`);
+  if(r.ok){ toast("Quote synced with opportunity.","ok"); showDetail(qid); }
+  else toast("Sync failed: "+((r.data&&r.data.error)||r.status),"error");
+}
+async function unsyncQuote(qid){
+  const r=await api("POST",`/api/sales/quotes/${qid}/unsync`);
+  if(r.ok){ toast("Quote sync stopped.","ok"); showDetail(qid); }
+  else toast("Unsync failed: "+((r.data&&r.data.error)||r.status),"error");
+}
 async function addQuoteLine(recId){
   const pbeId=v("ql_pbe");
   if(!pbeId){ toast("Pick a price book entry first.","info"); return; }
-  const entries=await api("GET",`/api/sobjects/PriceBookEntry`);
-  const e=(entries.data||[]).find(x=>x.Id===pbeId)||{};
+  const entries=await api("GET",`/api/sobjects/PriceBookEntry`);  const e=(entries.data||[]).find(x=>x.Id===pbeId)||{};
   const r=await api("POST","/api/sobjects/QuoteLineItem",{QuoteId:recId,PriceBookEntryId:pbeId,Quantity:parseFloat(v("ql_qty"))||1,UnitPrice:e.UnitPrice||0,Discount:parseFloat(v("ql_disc"))||0});
   r.ok?showDetail(recId):toast("Failed: "+(r.data.error||r.status),"error");
 }
@@ -1759,7 +1817,13 @@ async function showAdmin(section, highlight){
     <p class="muted">Read-only virtual objects (<code>__x</code>) backed by an OData v4 service — queried live through a named credential (or anonymously). OData query options ($top, $filter, $select…) pass through.</p>
     <div class="grid2"><div><label>Label</label><input id="xo_label" placeholder="Products"><label>API name</label><input id="xo_api" placeholder="Products__x"><label>Named credential (optional)</label><input id="xo_cred" placeholder="erp-cred"></div>
     <div><label>OData service root</label><input id="xo_url" placeholder="https://example.com/odata"><label>Entity set</label><input id="xo_entity" placeholder="Products"><label>Key field</label><input id="xo_key" value="Id"></div></div>
-    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createXObject()">Save object</button><button class="btn secondary" onclick="listXObjects()">Refresh</button></div><div id="xo_list" style="margin-top:8px"></div></div>`;
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createXObject()">Save object</button><button class="btn secondary" onclick="listXObjects()">Refresh</button></div><div id="xo_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Duplicate rules, email alerts & forecasting</div>
+    <p class="muted">Declarative duplicate management (matching rules declare which fields identify a duplicate; duplicate rules Block or Warn on create/update), templated email alerts that fire on record create/update, and forecast quotas with category rollups over open opportunities. Duplicate blocks are enforced on every record save.</p>
+    <div id="cc_plat"></div></div>
+  <div class="card"><div class="section-title">Case teams & entitlements</div>
+    <p class="muted">Case team definitions, entitlement contracts with date-derived status, and ordered entitlement processes with milestones.</p>
+    <div id="cc_caseteams"></div><div id="cc_entitlements" style="margin-top:12px"></div><div id="cc_entproc" style="margin-top:12px"></div></div>`;
   document.getElementById("main").innerHTML=html;
   setupAfterRender(section, highlight);
 }
@@ -1772,6 +1836,7 @@ const SETUP_SECTIONS=[
  {id:"integrations",title:"Integrations",desc:"Webhooks, email, callouts, import / export"},
  {id:"devops",title:"DevOps",desc:"Bulk API, streaming, sandboxes, source tracking, packages"},
  {id:"monitoring",title:"Monitoring",desc:"Jobs, audit trail, AI scoring"},
+ {id:"corecrm",title:"Core CRM",desc:"Opportunity products & teams, case teams, entitlements, duplicate rules, forecasting"},
 ];
 const CARD_SECTION={
  "Create custom object":"datamodel","Add field to object":"datamodel","Record type":"datamodel","Page layout (JSON)":"datamodel","Sales path":"datamodel",
@@ -1782,6 +1847,7 @@ const CARD_SECTION={
  "Webhook":"integrations","Named credential (HTTP callouts)":"integrations","Email template":"integrations","CSV import":"integrations","Metadata package":"integrations","Change sets":"integrations",
  "Bulk API 2.0":"devops","Streaming events":"devops","Sandboxes":"devops","Source tracking":"devops","Custom metadata types":"devops","Custom settings":"devops","External objects":"devops",
  "Scheduled job":"monitoring","Field history tracking":"monitoring","Audit trail & change events":"monitoring","AI lead scoring":"monitoring",
+ "Duplicate rules, email alerts & forecasting":"corecrm","Case teams & entitlements":"corecrm",
 };
 const SETUP_TILES=[
  {section:"datamodel",card:"Create custom object",desc:"Define custom objects",url:"/api/objects"},
@@ -1888,6 +1954,7 @@ function setupAfterRender(section, highlight){
   if(sec.id==="datamodel"){ listSetupObjects(); }
   if(sec.id==="integrations"){ listNamedCreds(); listChangeSets(); }
   if(sec.id==="monitoring"){ listJobs(); loadHistoryTracking(); }
+  if(sec.id==="corecrm"){ renderCoreCrmSetup(); }
   if(highlight){
     const card=[...host.children].find(c=>{const t=c.querySelector(":scope > .section-title");return t&&t.textContent.trim()===highlight;});
     if(card){ card.classList.add("flash"); card.scrollIntoView({behavior:"smooth",block:"start"}); setTimeout(()=>card.classList.remove("flash"),2300); }
@@ -1896,6 +1963,29 @@ function setupAfterRender(section, highlight){
 function enhanceSetupCard(card,title){
   const kind=Object.keys(SETUP_KINDS).find(k=>SETUP_KINDS[k].cardTitle===title);
   if(kind){ const t=card.querySelector(":scope > .section-title"); if(t&&!t.querySelector(".card-count")) t.insertAdjacentHTML("beforeend",`<span class="card-count" data-count-for="${kind}"></span>`); }
+}
+// Core CRM setup: duplicate rules / email alerts / forecasting (PlatformCore)
+// plus case teams & entitlements (ServiceCore).
+async function serviceCoreCall(method,path,body){
+  const r=await api(method,path,body);
+  if(!r.ok) throw new Error((r.data&&r.data.error)||("HTTP "+r.status));
+  return r.data;
+}
+function renderCoreCrmSetup(){
+  try{
+    const plat=document.getElementById("cc_plat");
+    if(plat&&window.PlatformCore) PlatformCore.renderTabs(plat,H);
+  }catch(e){ console.warn("platform core setup render failed",e); }
+  try{
+    if(!window.ServiceCore) return;
+    ServiceCore.init(serviceCoreCall);
+    const ct=document.getElementById("cc_caseteams");
+    if(ct) ServiceCore.renderCaseTeams(ct);
+    const en=document.getElementById("cc_entitlements");
+    if(en) ServiceCore.renderEntitlements(en);
+    const ep=document.getElementById("cc_entproc");
+    if(ep) ServiceCore.renderEntitlementProcesses(ep);
+  }catch(e){ console.warn("service core setup render failed",e); }
 }
 function filterSetupCards(q){
   q=q.toLowerCase();

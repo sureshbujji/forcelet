@@ -20,7 +20,7 @@ from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
 from ._shared import (
     _audit, _do_create, _do_update, _visible_records,
-    current_user, require_admin, require_auth, serialize, ctx,
+    current_user, recompute_opp_amount, require_admin, require_auth, serialize, ctx,
 )
 
 
@@ -177,6 +177,9 @@ def register(app: Flask):
         cascaded = datamodel.cascade_delete(store, registry, user, obj_name, rid)
         store.recycle_put(obj_name, rec, user["id"])
         store.delete(obj_name, rid)
+        if obj_name == "OpportunityLineItem" and rec.get("OpportunityId"):
+            # Keep Opportunity.Amount in sync for generic line-item deletes.
+            recompute_opp_amount(user, rec["OpportunityId"])
         terr = automation.run_triggers(store, registry, security, obj_name,
                                       "after_delete", rec, None, user)
         # after_delete cannot roll back; errors are surfaced as warnings

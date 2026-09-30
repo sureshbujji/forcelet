@@ -1,0 +1,270 @@
+{
+  "_comment": "Platform core metadata fragment (NOT auto-loaded). The main agent merges this: for each entry in 'objects' call registry.create_object() then registry.add_field() per field; for 'field_additions' call registry.add_field() on the existing object. Field defs use the exact schema of metadata/standard_objects.json.",
+  "field_additions": {
+    "Opportunity": [
+      {
+        "label": "Forecast Category",
+        "name": "ForecastCategory",
+        "picklist_values": [
+          "Pipeline",
+          "Best Case",
+          "Commit",
+          "Omitted",
+          "Closed"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Primary Campaign Source",
+        "name": "PrimaryCampaignId",
+        "reference_to": "Campaign",
+        "type": "Lookup"
+      }
+    ]
+  },
+  "objects": [
+    {
+      "fields": [
+        {
+          "label": "Rule Name",
+          "length": 120,
+          "name": "Name",
+          "required": true,
+          "type": "Text"
+        },
+        {
+          "label": "Object",
+          "length": 80,
+          "name": "ObjectName",
+          "required": true,
+          "type": "Text"
+        },
+        {
+          "label": "Match Fields (comma-separated)",
+          "name": "Fields",
+          "type": "TextArea"
+        },
+        {
+          "label": "Match Type",
+          "name": "MatchType",
+          "picklist_values": [
+            "Exact",
+            "Fuzzy"
+          ],
+          "type": "Picklist",
+          "default": "Exact"
+        },
+        {
+          "label": "Active",
+          "name": "IsActive",
+          "type": "Checkbox",
+          "default": true
+        }
+      ],
+      "is_custom": true,
+      "label": "Matching Rule",
+      "name": "MatchingRule",
+      "plural": "Matching Rules"
+    },
+    {
+      "fields": [
+        {
+          "label": "Rule Name",
+          "length": 120,
+          "name": "Name",
+          "required": true,
+          "type": "Text"
+        },
+        {
+          "label": "Object",
+          "length": 80,
+          "name": "ObjectName",
+          "required": true,
+          "type": "Text"
+        },
+        {
+          "label": "Matching Rule",
+          "name": "MatchingRuleId",
+          "reference_to": "MatchingRule",
+          "type": "Lookup"
+        },
+        {
+          "label": "Action",
+          "name": "Action",
+          "picklist_values": [
+            "Block",
+            "Warn"
+          ],
+          "type": "Picklist",
+          "default": "Warn"
+        },
+        {
+          "label": "Message",
+          "name": "Message",
+          "type": "TextArea"
+        },
+        {
+          "label": "Active",
+          "name": "IsActive",
+          "type": "Checkbox",
+          "default": true
+        },
+        {
+          "label": "Applies On",
+          "name": "AppliesOn",
+          "picklist_values": [
+            "Create",
+            "Update",
+            "Both"
+          ],
+          "type": "Picklist",
+          "default": "Both"
+        }
+      ],
+      "is_custom": true,
+      "label": "Duplicate Rule",
+      "name": "DuplicateRule",
+      "plural": "Duplicate Rules"
+    },
+    {
+      "fields": [
+        {
+          "label": "Quota Name",
+          "length": 120,
+          "name": "Name",
+          "required": true,
+          "type": "Text"
+        },
+        {
+          "label": "Owner",
+          "length": 80,
+          "name": "OwnerId",
+          "type": "Text"
+        },
+        {
+          "label": "Period",
+          "length": 20,
+          "name": "Period",
+          "type": "Text"
+        },
+        {
+          "label": "Quota Amount",
+          "name": "QuotaAmount",
+          "type": "Currency"
+        },
+        {
+          "label": "Object",
+          "length": 80,
+          "name": "ObjectName",
+          "type": "Text",
+          "default": "Opportunity"
+        }
+      ],
+      "is_custom": true,
+      "label": "Forecast Quota",
+      "name": "ForecastQuota",
+      "plural": "Forecast Quotas"
+    },
+    {
+      "fields": [
+        {
+          "label": "Alert Name",
+          "length": 120,
+          "name": "Name",
+          "required": true,
+          "type": "Text"
+        },
+        {
+          "label": "Object",
+          "length": 80,
+          "name": "ObjectName",
+          "required": true,
+          "type": "Text"
+        },
+        {
+          "label": "Trigger Event",
+          "name": "TriggerEvent",
+          "picklist_values": [
+            "Create",
+            "Update"
+          ],
+          "type": "Picklist"
+        },
+        {
+          "label": "Recipients (comma-separated user ids or email addresses)",
+          "name": "Recipients",
+          "type": "TextArea"
+        },
+        {
+          "label": "Email Template",
+          "length": 80,
+          "name": "EmailTemplateId",
+          "type": "Text"
+        },
+        {
+          "label": "Active",
+          "name": "IsActive",
+          "type": "Checkbox",
+          "default": true
+        },
+        {
+          "label": "Criteria (field-equals JSON, optional)",
+          "name": "Criteria",
+          "type": "TextArea"
+        }
+      ],
+      "is_custom": true,
+      "label": "Email Alert",
+      "name": "EmailAlert",
+      "plural": "Email Alerts"
+    },
+    {
+      "fields": [
+        {
+          "label": "Influence Name",
+          "length": 120,
+          "name": "Name",
+          "type": "Text"
+        },
+        {
+          "label": "Campaign",
+          "name": "CampaignId",
+          "reference_to": "Campaign",
+          "type": "Lookup"
+        },
+        {
+          "label": "Opportunity",
+          "name": "OpportunityId",
+          "reference_to": "Opportunity",
+          "type": "Lookup"
+        },
+        {
+          "label": "Contact",
+          "name": "ContactId",
+          "reference_to": "Contact",
+          "type": "Lookup"
+        },
+        {
+          "label": "Influence %",
+          "name": "InfluencePercent",
+          "type": "Percent"
+        },
+        {
+          "label": "Attribution Model",
+          "name": "Model",
+          "picklist_values": [
+            "Primary Campaign Source",
+            "First Touch",
+            "Last Touch",
+            "Even Split"
+          ],
+          "type": "Picklist"
+        }
+      ],
+      "is_custom": true,
+      "label": "Campaign Influence",
+      "name": "CampaignInfluence",
+      "plural": "Campaign Influence"
+    }
+  ]
+}

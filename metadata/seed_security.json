@@ -274,6 +274,108 @@
           "delete": false,
           "edit": true,
           "read": true
+        },
+        "OpportunityLineItem": {
+          "create": true,
+          "read": true,
+          "edit": true,
+          "delete": true
+        },
+        "OpportunityContactRole": {
+          "create": true,
+          "read": true,
+          "edit": true,
+          "delete": true
+        },
+        "OpportunityTeamMember": {
+          "create": true,
+          "read": true,
+          "edit": true,
+          "delete": true
+        },
+        "OpportunitySplit": {
+          "create": true,
+          "read": true,
+          "edit": true,
+          "delete": true
+        },
+        "RevenueSchedule": {
+          "create": true,
+          "read": true,
+          "edit": true,
+          "delete": false
+        },
+        "QuoteSync": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "CaseTeamDef": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "CaseTeamMemberDef": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "Entitlement": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "EntitlementProcess": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "EntitlementProcessMilestone": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "Note": {
+          "create": true,
+          "read": true,
+          "edit": true,
+          "delete": true
+        },
+        "MatchingRule": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "DuplicateRule": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "ForecastQuota": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "EmailAlert": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "CampaignInfluence": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
         }
       }
     },
@@ -538,6 +640,108 @@
           "delete": false,
           "edit": false,
           "read": true
+        },
+        "OpportunityLineItem": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "OpportunityContactRole": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "OpportunityTeamMember": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "OpportunitySplit": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "RevenueSchedule": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "QuoteSync": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "CaseTeamDef": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "CaseTeamMemberDef": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "Entitlement": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "EntitlementProcess": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "EntitlementProcessMilestone": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "Note": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "MatchingRule": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "DuplicateRule": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "ForecastQuota": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "EmailAlert": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
+        },
+        "CampaignInfluence": {
+          "create": false,
+          "read": true,
+          "edit": false,
+          "delete": false
         }
       }
     }
