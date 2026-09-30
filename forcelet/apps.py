@@ -180,7 +180,11 @@ def seed_apps() -> list:
     sales_tabs = ["Account", "Contact", "Lead", "Opportunity", "Product",
                   "Quote", "Campaign", "Task", "Event"]
     service_tabs = ["Account", "Contact", "Case", "WorkOrder",
-                    "ServiceAppointment", "KnowledgeArticle", "Task", "Event"]
+                    "ServiceAppointment", "ServiceTerritory", "ServiceResource",
+                    "WorkType", "OperatingHours", "Skill", "ResourceAbsence",
+                    "ServiceCrew", "Location", "ProductItem", "ProductConsumed",
+                    "ProductRequest", "MaintenancePlan", "TimeEntry",
+                    "ServiceReport", "KnowledgeArticle", "Task", "Event"]
     sales_utils = ["reports", "dashboards", "forecasts", "chatter"]
     service_utils = ["reports", "dashboards", "calendar", "chatter"]
 
@@ -209,3 +213,30 @@ def seed_apps_if_missing(store) -> list:
             store.config_put(APP_TABLE, app)
             created.append(app)
     return created
+
+
+def migrate_standard_app_tabs(store) -> list:
+    """Add missing standard tabs to existing Sales/Service apps.
+
+    When new standard objects ship after a database was created, an existing
+    starter app would otherwise never gain tabs for them (seed_apps_if_missing
+    only creates whole apps). This appends any tabs from the current standard
+    definitions that the stored app is missing, preserving admin customizations
+    (existing tabs keep their order; nothing is removed or reordered).
+    Returns the names of apps that changed.
+    """
+    seed = {a["name"]: a for a in seed_apps()}
+    changed = []
+    for stored in store.config_all(APP_TABLE):
+        name = stored.get("name")
+        want = seed.get(name)
+        if not want:
+            continue  # custom app: never touch
+        have = {(t.get("kind"), t.get("ref")) for t in stored.get("tabs", [])}
+        new_tabs = [t for t in want.get("tabs", [])
+                    if (t.get("kind"), t.get("ref")) not in have]
+        if new_tabs:
+            stored["tabs"] = list(stored.get("tabs", [])) + new_tabs
+            store.config_put(APP_TABLE, stored)
+            changed.append(name)
+    return changed

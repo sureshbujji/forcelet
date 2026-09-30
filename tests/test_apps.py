@@ -191,3 +191,38 @@ def test_app_packaged_and_deployed(client, tmp_path):
     assert res["status"] == "Deployed", res.get("log")
     assert res["results"]["summary"]["config"]["apps"] == 1
     assert store2.config_all("mf_apps")[0]["name"] == "Sales"
+
+
+def test_migrate_standard_app_tabs_adds_missing_fs_tabs(app):
+    """Existing Service apps gain new standard tabs without losing customizations."""
+    with app.app_context():
+        store = app.mf_store
+        # simulate a pre-Field-Service Service app with a custom tab
+        old_service = {
+            "name": "Service", "label": "Service", "icon": "", "color": "#0e7c3e",
+            "sort_order": 2, "description": "old",
+            "tabs": [{"kind": "object", "ref": "Account"},
+                     {"kind": "object", "ref": "Case"},
+                     {"kind": "object", "ref": "MyCustom__c"}],
+        }
+        store.config_put(apps_mod.APP_TABLE, old_service)
+        # and a custom app that must not be touched
+        store.config_put(apps_mod.APP_TABLE, {
+            "name": "Custom", "label": "Custom",
+            "tabs": [{"kind": "object", "ref": "Account"}]})
+
+        changed = apps_mod.migrate_standard_app_tabs(store)
+        assert changed == ["Service"]
+
+        svc = apps_mod.get_app(store, [a["id"] for a in store.config_all(apps_mod.APP_TABLE)
+                                       if a["name"] == "Service"][0])
+        refs = [t["ref"] for t in svc["tabs"]]
+        # old tabs keep their order, custom tab preserved
+        assert refs[:3] == ["Account", "Case", "MyCustom__c"]
+        # new Field Service standard tabs were appended
+        for tab in ("ServiceTerritory", "ServiceResource", "WorkType",
+                    "OperatingHours", "Skill", "ResourceAbsence", "ServiceCrew"):
+            assert tab in refs
+
+        # second run is a no-op
+        assert apps_mod.migrate_standard_app_tabs(store) == []

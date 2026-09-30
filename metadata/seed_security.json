@@ -1,389 +1,605 @@
 {
- "profiles": [
-  {
-   "field_permissions": {},
-   "name": "System Administrator",
-   "object_permissions": {
-    "*": {
-     "create": true,
-     "delete": true,
-     "edit": true,
-     "read": true
+  "profiles": [
+    {
+      "field_permissions": {},
+      "name": "System Administrator",
+      "object_permissions": {
+        "*": {
+          "create": true,
+          "delete": true,
+          "edit": true,
+          "read": true
+        }
+      }
+    },
+    {
+      "field_permissions": {
+        "Opportunity": {
+          "Amount": {
+            "edit": true,
+            "read": true
+          }
+        }
+      },
+      "name": "Standard User",
+      "object_permissions": {
+        "Account": {
+          "create": true,
+          "delete": true,
+          "edit": true,
+          "read": true
+        },
+        "Asset": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Campaign": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "CampaignMember": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Case": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Contact": {
+          "create": true,
+          "delete": true,
+          "edit": true,
+          "read": true
+        },
+        "Contract": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Delivery": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Event": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "KnowledgeArticle": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Lead": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Location": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "MaintenancePlan": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "OperatingHours": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Opportunity": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Order": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "OrderItem": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "PriceBook": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "PriceBookEntry": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Product": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ProductConsumed": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ProductItem": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ProductRequest": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Quote": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "QuoteLineItem": {
+          "create": true,
+          "delete": true,
+          "edit": true,
+          "read": true
+        },
+        "ResourceAbsence": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ServiceAppointment": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ServiceCrew": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ServiceCrewMember": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ServiceReport": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ServiceResource": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ServiceResourceSkill": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "ServiceTerritory": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Skill": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Task": {
+          "create": true,
+          "delete": true,
+          "edit": true,
+          "read": true
+        },
+        "TimeEntry": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "TimeSlot": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "Vehicle": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "VehicleDefinition": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "WorkOrder": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "WorkType": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        },
+        "WorkTypeSkill": {
+          "create": true,
+          "delete": false,
+          "edit": true,
+          "read": true
+        }
+      }
+    },
+    {
+      "field_permissions": {
+        "Opportunity": {
+          "Amount": {
+            "read": false
+          }
+        }
+      },
+      "name": "Read Only",
+      "object_permissions": {
+        "Account": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Asset": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Campaign": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "CampaignMember": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Case": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Contact": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Contract": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Delivery": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Event": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "KnowledgeArticle": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Lead": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Location": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "MaintenancePlan": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "OperatingHours": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Opportunity": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Order": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "OrderItem": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "PriceBook": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "PriceBookEntry": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Product": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ProductConsumed": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ProductItem": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ProductRequest": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Quote": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "QuoteLineItem": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ResourceAbsence": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ServiceAppointment": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ServiceCrew": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ServiceCrewMember": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ServiceReport": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ServiceResource": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ServiceResourceSkill": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "ServiceTerritory": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Skill": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Task": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "TimeEntry": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "TimeSlot": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "Vehicle": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "VehicleDefinition": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "WorkOrder": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "WorkType": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        },
+        "WorkTypeSkill": {
+          "create": false,
+          "delete": false,
+          "edit": false,
+          "read": true
+        }
+      }
     }
-   }
-  },
-  {
-   "field_permissions": {
-    "Opportunity": {
-     "Amount": {
-      "edit": true,
-      "read": true
-     }
+  ],
+  "roles": [
+    {
+      "name": "CEO",
+      "parent": null
+    },
+    {
+      "name": "VP Sales",
+      "parent": "CEO"
+    },
+    {
+      "name": "Sales Manager",
+      "parent": "VP Sales"
+    },
+    {
+      "name": "Sales Rep",
+      "parent": "Sales Manager"
+    },
+    {
+      "name": "VP Support",
+      "parent": "CEO"
+    },
+    {
+      "name": "Support Agent",
+      "parent": "VP Support"
     }
-   },
-   "name": "Standard User",
-   "object_permissions": {
-    "Account": {
-     "create": true,
-     "delete": true,
-     "edit": true,
-     "read": true
+  ],
+  "users": [
+    {
+      "id": "u_admin01",
+      "name": "Ava Admin",
+      "password_hint": "default password is 'forcelet' (hashed at seed time)",
+      "profile": "System Administrator",
+      "role": "CEO",
+      "username": "admin"
     },
-    "Asset": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
+    {
+      "id": "u_maya001",
+      "name": "Maya Manager",
+      "password_hint": "default password is 'forcelet' (hashed at seed time)",
+      "profile": "Standard User",
+      "role": "Sales Manager",
+      "username": "maya"
     },
-    "Campaign": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
+    {
+      "id": "u_leo0001",
+      "name": "Leo Rep",
+      "password_hint": "default password is 'forcelet' (hashed at seed time)",
+      "profile": "Standard User",
+      "role": "Sales Rep",
+      "username": "leo"
     },
-    "CampaignMember": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "Case": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "Contact": {
-     "create": true,
-     "delete": true,
-     "edit": true,
-     "read": true
-    },
-    "Contract": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "Delivery": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "Event": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "KnowledgeArticle": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "Lead": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "Opportunity": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "Order": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "OrderItem": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "PriceBook": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "PriceBookEntry": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Product": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Quote": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "QuoteLineItem": {
-     "create": true,
-     "delete": true,
-     "edit": true,
-     "read": true
-    },
-    "ServiceAppointment": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "Task": {
-     "create": true,
-     "delete": true,
-     "edit": true,
-     "read": true
-    },
-    "Vehicle": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "VehicleDefinition": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
-    },
-    "WorkOrder": {
-     "create": true,
-     "delete": false,
-     "edit": true,
-     "read": true
+    {
+      "id": "u_ana0001",
+      "name": "Ana Agent",
+      "password_hint": "default password is 'forcelet' (hashed at seed time)",
+      "profile": "Read Only",
+      "role": "Support Agent",
+      "username": "ana"
     }
-   }
-  },
-  {
-   "field_permissions": {
-    "Opportunity": {
-     "Amount": {
-      "read": false
-     }
-    }
-   },
-   "name": "Read Only",
-   "object_permissions": {
-    "Account": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Asset": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Campaign": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "CampaignMember": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Case": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Contact": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Contract": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Delivery": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Event": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "KnowledgeArticle": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Lead": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Opportunity": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Order": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "OrderItem": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "PriceBook": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "PriceBookEntry": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Product": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Quote": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "QuoteLineItem": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "ServiceAppointment": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Task": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "Vehicle": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "VehicleDefinition": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    },
-    "WorkOrder": {
-     "create": false,
-     "delete": false,
-     "edit": false,
-     "read": true
-    }
-   }
-  }
- ],
- "roles": [
-  {
-   "name": "CEO",
-   "parent": null
-  },
-  {
-   "name": "VP Sales",
-   "parent": "CEO"
-  },
-  {
-   "name": "Sales Manager",
-   "parent": "VP Sales"
-  },
-  {
-   "name": "Sales Rep",
-   "parent": "Sales Manager"
-  },
-  {
-   "name": "VP Support",
-   "parent": "CEO"
-  },
-  {
-   "name": "Support Agent",
-   "parent": "VP Support"
-  }
- ],
- "users": [
-  {
-   "id": "u_admin01",
-   "name": "Ava Admin",
-   "password_hint": "default password is 'forcelet' (hashed at seed time)",
-   "profile": "System Administrator",
-   "role": "CEO",
-   "username": "admin"
-  },
-  {
-   "id": "u_maya001",
-   "name": "Maya Manager",
-   "password_hint": "default password is 'forcelet' (hashed at seed time)",
-   "profile": "Standard User",
-   "role": "Sales Manager",
-   "username": "maya"
-  },
-  {
-   "id": "u_leo0001",
-   "name": "Leo Rep",
-   "password_hint": "default password is 'forcelet' (hashed at seed time)",
-   "profile": "Standard User",
-   "role": "Sales Rep",
-   "username": "leo"
-  },
-  {
-   "id": "u_ana0001",
-   "name": "Ana Agent",
-   "password_hint": "default password is 'forcelet' (hashed at seed time)",
-   "profile": "Read Only",
-   "role": "Support Agent",
-   "username": "ana"
-  }
- ]
+  ]
 }

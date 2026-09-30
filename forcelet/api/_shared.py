@@ -17,6 +17,7 @@ from flask import current_app, jsonify, request
 from .. import automation
 from .. import crypto as _crypto
 from .. import datamodel as _datamodel
+from .. import dynamic_forms as _dynforms
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
 from ..security import (SESSION_MAX_SECONDS, SESSION_TTL_SECONDS, hash_token)
@@ -230,7 +231,10 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
         if not values.get("Name"):
             # person accounts derive their display name from the person fields
             values["Name"] = _datamodel.person_display_name(values) or "Person Account"
-    clean, errors = registry.validate_record(obj, values)
+    # Dynamic Forms: a required field hidden by a visibility rule must not
+    # block the save. Rules are evaluated against the submitted values.
+    df_hidden = _dynforms.hidden_fields(store, obj_name, values)
+    clean, errors = registry.validate_record(obj, values, skip_required=df_hidden)
     if errors:
         return 422, {"error": "Validation failed", "details": errors}
     md_err = _datamodel.validate_md_parents_exist(store, obj, clean)

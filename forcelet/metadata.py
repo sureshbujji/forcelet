@@ -125,8 +125,14 @@ class MetadataRegistry:
             self.store.add_unique_index(obj_name, fname)
         return full
 
-    def validate_record(self, obj_def: dict, values: dict, partial: bool = False):
-        """Validate a record's field values. Returns (clean: dict, errors: list)."""
+    def validate_record(self, obj_def: dict, values: dict, partial: bool = False,
+                        skip_required: set | None = None):
+        """Validate a record's field values. Returns (clean: dict, errors: list).
+
+        skip_required: field names exempt from the required check (used by
+        Dynamic Forms — a required field hidden by a visibility rule must not
+        block the save).
+        """
         from .field_types import validate_value
         fmap = self.field_map(obj_def)
         clean, errors = {}, []
@@ -149,7 +155,7 @@ class MetadataRegistry:
                 if fname not in values:
                     if fdef.get("default") is not None:
                         clean[fname] = fdef["default"]
-                    elif fdef.get("required"):
+                    elif fdef.get("required") and fname not in (skip_required or ()):
                         errors.append(f"{fdef['label']} is required")
         # field-level encryption: applied last, idempotent (never double-encrypts)
         from . import crypto as _crypto

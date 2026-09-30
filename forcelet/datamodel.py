@@ -175,14 +175,14 @@ TERRITORY_RULE_TABLE = "mf_territory_rules"
 
 
 def ensure_territory_tables(store):
-    c = store.conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS mf_territory_members
-                 (territory_id TEXT, user_id TEXT, role TEXT DEFAULT 'member',
-                  PRIMARY KEY (territory_id, user_id))""")
-    c.execute("""CREATE TABLE IF NOT EXISTS mf_account_territories
-                 (account_id TEXT, territory_id TEXT,
-                  PRIMARY KEY (account_id, territory_id))""")
     with store._lock:
+        c = store.conn.cursor()
+        c.execute("""CREATE TABLE IF NOT EXISTS mf_territory_members
+                     (territory_id TEXT, user_id TEXT, role TEXT DEFAULT 'member',
+                      PRIMARY KEY (territory_id, user_id))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS mf_account_territories
+                     (account_id TEXT, territory_id TEXT,
+                      PRIMARY KEY (account_id, territory_id))""")
         store.conn.commit()
 
 

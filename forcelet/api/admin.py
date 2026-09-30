@@ -135,6 +135,17 @@ def register(app: Flask):
                     return jsonify({"error": f"Bad cron expression: {e}"}), 422
             elif int(body.get("interval_minutes") or 0) <= 0:
                 return jsonify({"error": "interval_minutes must be positive"}), 422
+        if kind == "flows" and body.get("trigger") == "scheduled":
+            if "criteria" in body and "condition" not in body:
+                body["condition"] = body.pop("criteria")
+            sched = dict(body.get("schedule") or {})
+            if sched.get("frequency") == "weekly" and "day_of_week" not in sched:
+                sched["day_of_week"] = 1
+            body["schedule"] = sched
+            err = automation.validate_scheduled_flow(body, registry)
+            if err:
+                return jsonify({"error": err}), 422
+            body["next_run"] = automation.compute_next_run(sched)
         rid = store.config_put(table, body)
         _audit("create", kind, body.get("name") or rid)
         return jsonify(store.config_get(table, rid)), 201
@@ -162,7 +173,23 @@ def register(app: Flask):
             # snapshot the pre-change definition for version history
             from .enhancements import _snapshot_flow_version
             _snapshot_flow_version(store, rid, old, request.mf_user)
-        merged = {**old, **body}
+            if "criteria" in body and "condition" not in body:
+                body["condition"] = body.pop("criteria")
+            merged = {**old, **body}
+            if merged.get("trigger") == "scheduled":
+                sched = dict(merged.get("schedule") or {})
+                if sched.get("frequency") == "weekly" and "day_of_week" not in sched:
+                    sched["day_of_week"] = 1
+                merged["schedule"] = sched
+                err = automation.validate_scheduled_flow(merged, registry)
+                if err:
+                    return jsonify({"error": err}), 422
+                if body.get("schedule") and body["schedule"] != old.get("schedule"):
+                    merged["next_run"] = automation.compute_next_run(sched)
+                elif not merged.get("next_run"):
+                    merged["next_run"] = automation.compute_next_run(sched)
+        else:
+            merged = {**old, **body}
         store.config_put(table, {**merged, "id": rid})
         _audit("update", kind, merged.get("name") or rid)
         return jsonify(store.config_get(table, rid))

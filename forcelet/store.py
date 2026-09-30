@@ -51,6 +51,20 @@ class Store:
         with self._lock:
             self.conn.commit()
 
+    def _fetchone(self, sql, params=()):
+        """SELECT one row, holding the lock across execute+fetch.
+
+        Fetching outside the lock lets another thread run statements on the
+        shared connection mid-read, which can corrupt or truncate results.
+        """
+        with self._lock:
+            return self.conn.execute(sql, params).fetchone()
+
+    def _fetchall(self, sql, params=()):
+        """SELECT all rows, holding the lock across execute+fetch."""
+        with self._lock:
+            return self.conn.execute(sql, params).fetchall()
+
     # ------------------------------------------------------------------ meta
     def _init_meta_tables(self):
         c = self.conn.cursor()
@@ -81,7 +95,8 @@ class Store:
                       "mf_cmdt_records", "mf_custom_settings",
                       "mf_installed_packages", "mf_external_objects",
                       "mf_territories", "mf_territory_rules",
-                      "mf_person_accounts", "mf_archive_rules"):
+                      "mf_person_accounts", "mf_archive_rules",
+                      "mf_dynamic_forms"):
             c.execute(f"""CREATE TABLE IF NOT EXISTS {table}
                           (id TEXT PRIMARY KEY, definition TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS mf_history
@@ -121,6 +136,13 @@ class Store:
                      (token_hash TEXT PRIMARY KEY, user_id TEXT,
                       created_at TEXT, expires_at TEXT, last_seen_at TEXT,
                       ip TEXT, user_agent TEXT, limited INTEGER DEFAULT 0)""")
+        # Portal sessions live in their own table: the internal auth path
+        # only resolves mf_sess_/mf_live_ tokens from mf_sessions, so a
+        # portal token can never authenticate an internal /api/* endpoint.
+        c.execute("""CREATE TABLE IF NOT EXISTS mf_portal_sessions
+                     (token_hash TEXT PRIMARY KEY, community_user_id TEXT,
+                      created_at TEXT, expires_at TEXT, last_seen_at TEXT,
+                      ip TEXT, user_agent TEXT)""")
         # Small key/value store: schema version, scheduler lock, etc.
         c.execute("""CREATE TABLE IF NOT EXISTS mf_meta
                      (key TEXT PRIMARY KEY, value TEXT)""")
@@ -168,17 +190,17 @@ class Store:
 
     def meta_get(self, table: str, key: str):
         pk = "name" if table != "mf_users" else "id"
-        row = self._execute(f"SELECT definition FROM {table} WHERE {pk}=?", (key,)).fetchone()
+        row = self._fetchone(f"SELECT definition FROM {table} WHERE {pk}=?", (key,))
         # A concurrent writer can leave a momentarily-NULL definition visible;
         # treat it as "not found" instead of raising.
         return json.loads(row["definition"]) if row and row["definition"] else None
 
     def meta_all(self, table: str):
-        rows = self._execute(f"SELECT definition FROM {table}").fetchall()
+        rows = self._fetchall(f"SELECT definition FROM {table}")
         return [json.loads(r["definition"]) for r in rows]
 
     def meta_count(self, table: str) -> int:
-        return self._execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+        return self._fetchone(f"SELECT COUNT(*) AS n FROM {table}")["n"]
 
     # ------------------------------------------------------------- data DDL
     @staticmethod
@@ -227,7 +249,7 @@ class Store:
         self._commit()
 
     def existing_columns(self, obj_name: str) -> set:
-        rows = self._execute(f"PRAGMA table_info({self._table(obj_name)})").fetchall()
+        rows = self._fetchall(f"PRAGMA table_info({self._table(obj_name)})")
         return {r["name"] for r in rows}
 
     # ------------------------------------------------------------------ CRUD
@@ -247,26 +269,26 @@ class Store:
         return record["id"]
 
     def get(self, obj_name: str, record_id: str):
-        row = self._execute(
+        row = self._fetchone(
             f"SELECT * FROM {self._table(obj_name)} WHERE id=?", (record_id,)
-        ).fetchone()
+        )
         return dict(row) if row else None
 
     def query(self, obj_name: str, owner_ids: list | None = None, limit: int = 200):
         if owner_ids is None:
-            rows = self._execute(
+            rows = self._fetchall(
                 f"SELECT * FROM {self._table(obj_name)} ORDER BY created_date DESC LIMIT ?",
                 (limit,),
-            ).fetchall()
+            )
         else:
             if not owner_ids:
                 return []
             ph = ", ".join("?" for _ in owner_ids)
-            rows = self._execute(
+            rows = self._fetchall(
                 f"SELECT * FROM {self._table(obj_name)} WHERE owner_id IN ({ph}) "
                 f"ORDER BY created_date DESC LIMIT ?",
                 (*owner_ids, limit),
-            ).fetchall()
+            )
         return [dict(r) for r in rows]
 
     def update(self, obj_name: str, record_id: str, fields: dict):
@@ -298,16 +320,16 @@ class Store:
 
     def recycle_list(self, deleted_by: str | None = None):
         if deleted_by:
-            rows = self._execute(
+            rows = self._fetchall(
                 "SELECT * FROM mf_recycle_bin WHERE deleted_by=? ORDER BY deleted_at DESC",
-                (deleted_by,)).fetchall()
+                (deleted_by,))
         else:
-            rows = self._execute(
-                "SELECT * FROM mf_recycle_bin ORDER BY deleted_at DESC").fetchall()
+            rows = self._fetchall(
+                "SELECT * FROM mf_recycle_bin ORDER BY deleted_at DESC")
         return [dict(r) for r in rows]
 
     def recycle_get(self, bid: str):
-        row = self._execute("SELECT * FROM mf_recycle_bin WHERE id=?", (bid,)).fetchone()
+        row = self._fetchone("SELECT * FROM mf_recycle_bin WHERE id=?", (bid,))
         return dict(row) if row else None
 
     def recycle_delete(self, bid: str) -> bool:
@@ -324,7 +346,7 @@ class Store:
         return cur.rowcount
 
     def count(self, obj_name: str) -> int:
-        return self._execute(f"SELECT COUNT(*) AS n FROM {self._table(obj_name)}").fetchone()["n"]
+        return self._fetchone(f"SELECT COUNT(*) AS n FROM {self._table(obj_name)}")["n"]
 
     # --------------------------------------------------------------- layouts
     def layout_put(self, object_name: str, profile_name: str, definition: dict,
@@ -339,10 +361,10 @@ class Store:
     def layout_get(self, object_name: str, profile_name: str, record_type: str = "Default"):
         for prof, rt in ((profile_name, record_type), (profile_name, "Default"),
                          ("Default", record_type), ("Default", "Default")):
-            row = self._execute(
+            row = self._fetchone(
                 "SELECT definition FROM mf_layouts WHERE object_name=? AND profile_name=? AND record_type=?",
                 (object_name, prof, rt),
-            ).fetchone()
+            )
             if row:
                 return json.loads(row["definition"])
         return None
@@ -351,7 +373,7 @@ class Store:
         return [{"object": r["object_name"], "profile": r["profile_name"],
                  "record_type": r["record_type"],
                  **json.loads(r["definition"])}
-                for r in self._execute("SELECT * FROM mf_layouts").fetchall()]
+                for r in self._fetchall("SELECT * FROM mf_layouts")]
 
     # ------------------------------------------------- generic config tables
     def config_put(self, table: str, definition: dict) -> str:
@@ -363,11 +385,11 @@ class Store:
         return rid
 
     def config_get(self, table: str, rid: str):
-        row = self._execute(f"SELECT definition FROM {table} WHERE id=?", (rid,)).fetchone()
+        row = self._fetchone(f"SELECT definition FROM {table} WHERE id=?", (rid,))
         return json.loads(row["definition"]) if row else None
 
     def config_all(self, table: str):
-        rows = self._execute(f"SELECT definition FROM {table}").fetchall()
+        rows = self._fetchall(f"SELECT definition FROM {table}")
         return [json.loads(r["definition"]) for r in rows]
 
     def config_delete(self, table: str, rid: str) -> bool:
@@ -389,7 +411,7 @@ class Store:
         if where:
             q += f" WHERE {where}"
         q += f" ORDER BY {order} LIMIT {int(limit)}"
-        return [dict(r) for r in self._execute(q, params).fetchall()]
+        return [dict(r) for r in self._fetchall(q, params)]
 
     # scheduled runs
     def log_scheduled_run(self, job_id, status, detail=""):
@@ -477,8 +499,8 @@ class Store:
         self._commit()
 
     def get_refresh_token(self, token_hash):
-        row = self._execute("SELECT * FROM mf_refresh_tokens WHERE token_hash=?",
-                            (token_hash,)).fetchone()
+        row = self._fetchone("SELECT * FROM mf_refresh_tokens WHERE token_hash=?",
+                            (token_hash,))
         return dict(row) if row else None
 
     def delete_refresh_token(self, token_hash):
@@ -505,8 +527,8 @@ class Store:
         self._commit()
 
     def get_session(self, token_hash):
-        row = self._execute("SELECT * FROM mf_sessions WHERE token_hash=?",
-                            (token_hash,)).fetchone()
+        row = self._fetchone("SELECT * FROM mf_sessions WHERE token_hash=?",
+                            (token_hash,))
         return dict(row) if row else None
 
     def touch_session(self, token_hash, expires_at):
@@ -535,9 +557,41 @@ class Store:
         self._execute("DELETE FROM mf_sessions WHERE expires_at < ?", (utcnow(),))
         self._commit()
 
+    # --------------------------------------------- portal (community) sessions
+    def create_portal_session(self, token_hash, community_user_id, expires_at,
+                              ip="", user_agent=""):
+        now = utcnow()
+        self._execute(
+            "INSERT INTO mf_portal_sessions (token_hash, community_user_id,"
+            " created_at, expires_at, last_seen_at, ip, user_agent)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (token_hash, community_user_id, now, expires_at, now, ip or "",
+             (user_agent or "")[:200]))
+        self._commit()
+
+    def get_portal_session(self, token_hash):
+        row = self._fetchone("SELECT * FROM mf_portal_sessions WHERE token_hash=?",
+                            (token_hash,))
+        return dict(row) if row else None
+
+    def touch_portal_session(self, token_hash, expires_at):
+        self._execute("UPDATE mf_portal_sessions SET last_seen_at=?, expires_at=?"
+                      " WHERE token_hash=?", (utcnow(), expires_at, token_hash))
+        self._commit()
+
+    def delete_portal_session(self, token_hash):
+        self._execute("DELETE FROM mf_portal_sessions WHERE token_hash=?",
+                      (token_hash,))
+        self._commit()
+
+    def prune_portal_sessions(self):
+        self._execute("DELETE FROM mf_portal_sessions WHERE expires_at < ?",
+                      (utcnow(),))
+        self._commit()
+
     # ------------------------------------------------------------------ meta kv
     def meta_kv_get(self, key, default=None):
-        row = self._execute("SELECT value FROM mf_meta WHERE key=?", (key,)).fetchone()
+        row = self._fetchone("SELECT value FROM mf_meta WHERE key=?", (key,))
         return row["value"] if row else default
 
     def meta_kv_set(self, key, value):
@@ -547,7 +601,7 @@ class Store:
         self._commit()
 
     def get_api_key(self, key_hash):
-        row = self._execute("SELECT * FROM mf_api_keys WHERE key_hash=?", (key_hash,)).fetchone()
+        row = self._fetchone("SELECT * FROM mf_api_keys WHERE key_hash=?", (key_hash,))
         return dict(row) if row else None
 
     def touch_api_key(self, key_hash):
@@ -558,8 +612,8 @@ class Store:
     def api_keys_for(self, user_id):
         return [{"id": r["id"], "name": r["name"], "created_at": r["created_at"],
                  "last_used_at": r["last_used_at"]}
-                for r in self._execute("SELECT * FROM mf_api_keys WHERE user_id=?",
-                                       (user_id,)).fetchall()]
+                for r in self._fetchall("SELECT * FROM mf_api_keys WHERE user_id=?",
+                                       (user_id,))]
 
     def delete_api_key(self, kid, user_id):
         cur = self._execute("DELETE FROM mf_api_keys WHERE id=? AND user_id=?", (kid, user_id))
@@ -602,15 +656,15 @@ class Store:
         return cur.rowcount > 0
 
     def feed_is_following(self, user_id, object_name, record_id):
-        row = self._execute("SELECT 1 FROM mf_feed_follows"
+        row = self._fetchone("SELECT 1 FROM mf_feed_follows"
                             " WHERE user_id=? AND object_name=? AND record_id=?",
-                            (user_id, object_name, record_id)).fetchone()
+                            (user_id, object_name, record_id))
         return bool(row)
 
     def feed_follows_for(self, user_id):
-        return [dict(r) for r in self._execute(
+        return [dict(r) for r in self._fetchall(
             "SELECT * FROM mf_feed_follows WHERE user_id=? ORDER BY created_at DESC",
-            (user_id,)).fetchall()]
+            (user_id,))]
 
     def feed_mention(self, post_id, mentioned_user_id):
         return self._row_put("mf_feed_mentions", {
@@ -618,7 +672,7 @@ class Store:
             "created_at": utcnow()})
 
     def feed_get_post(self, post_id):
-        row = self._execute("SELECT * FROM mf_feed_posts WHERE id=?", (post_id,)).fetchone()
+        row = self._fetchone("SELECT * FROM mf_feed_posts WHERE id=?", (post_id,))
         return dict(row) if row else None
 
     def _feed_enrich(self, posts):
@@ -627,13 +681,13 @@ class Store:
         likes, comments = {}, {}
         if post_ids:
             ph = ", ".join("?" for _ in post_ids)
-            for r in self._execute(
+            for r in self._fetchall(
                     f"SELECT post_id, COUNT(*) AS n FROM mf_feed_likes"
-                    f" WHERE post_id IN ({ph}) GROUP BY post_id", post_ids).fetchall():
+                    f" WHERE post_id IN ({ph}) GROUP BY post_id", post_ids):
                 likes[r["post_id"]] = r["n"]
-            for r in self._execute(
+            for r in self._fetchall(
                     f"SELECT post_id, COUNT(*) AS n FROM mf_feed_comments"
-                    f" WHERE post_id IN ({ph}) GROUP BY post_id", post_ids).fetchall():
+                    f" WHERE post_id IN ({ph}) GROUP BY post_id", post_ids):
                 comments[r["post_id"]] = r["n"]
         for p in posts:
             p["user_name"] = users.get(p["user_id"], p["user_id"])
@@ -648,22 +702,22 @@ class Store:
 
     def feed_home(self, user_id, limit=50):
         """Posts on followed records + posts mentioning the user + own posts."""
-        follows = self._execute(
+        follows = self._fetchall(
             "SELECT object_name, record_id FROM mf_feed_follows WHERE user_id=?",
-            (user_id,)).fetchall()
+            (user_id,))
         clauses, params = ["p.user_id=?"], [user_id]
         for f in follows:
             clauses.append("(p.object_name=? AND p.record_id=?)")
             params += [f["object_name"], f["record_id"]]
-        mentioned = [r["post_id"] for r in self._execute(
+        mentioned = [r["post_id"] for r in self._fetchall(
             "SELECT post_id FROM mf_feed_mentions WHERE mentioned_user_id=?", (user_id,))]
         if mentioned:
             ph = ", ".join("?" for _ in mentioned)
             clauses.append(f"p.id IN ({ph})")
             params += mentioned
-        rows = self._execute(
+        rows = self._fetchall(
             f"SELECT p.* FROM mf_feed_posts p WHERE {' OR '.join(clauses)}"
-            f" ORDER BY p.created_at DESC LIMIT {int(limit)}", params).fetchall()
+            f" ORDER BY p.created_at DESC LIMIT {int(limit)}", params)
         return self._feed_enrich([dict(r) for r in rows])
 
     def feed_comments(self, post_id, limit=100):
@@ -675,14 +729,14 @@ class Store:
         return rows
 
     def feed_liked_by(self, post_id, user_id):
-        row = self._execute("SELECT 1 FROM mf_feed_likes WHERE post_id=? AND user_id=?",
-                            (post_id, user_id)).fetchone()
+        row = self._fetchone("SELECT 1 FROM mf_feed_likes WHERE post_id=? AND user_id=?",
+                            (post_id, user_id))
         return bool(row)
 
     def feed_mentions_of(self, post_id):
-        return [r["mentioned_user_id"] for r in self._execute(
+        return [r["mentioned_user_id"] for r in self._fetchall(
             "SELECT mentioned_user_id FROM mf_feed_mentions WHERE post_id=?",
-            (post_id,)).fetchall()]
+            (post_id,))]
 
     # ------------------------------------------------------------ files
     def file_put(self, object_name, record_id, filename, mime_type, size, user):
@@ -693,14 +747,14 @@ class Store:
             "uploaded_by": user["id"], "created_at": utcnow()})
 
     def file_get(self, fid):
-        rows = self._execute("SELECT * FROM mf_files WHERE id=?",
-                             (fid,)).fetchall()
+        rows = self._fetchall("SELECT * FROM mf_files WHERE id=?",
+                             (fid,))
         return dict(rows[0]) if rows else None
 
     def files_for_record(self, object_name, record_id):
-        return [dict(r) for r in self._execute(
+        return [dict(r) for r in self._fetchall(
             "SELECT * FROM mf_files WHERE object_name=? AND record_id=? "
-            "ORDER BY created_at DESC", (object_name, record_id)).fetchall()]
+            "ORDER BY created_at DESC", (object_name, record_id))]
 
     def file_delete(self, fid):
         self._execute("DELETE FROM mf_files WHERE id=?", (fid,))
@@ -721,13 +775,13 @@ class Store:
         if unread_only:
             sql += "AND is_read=0 "
         sql += "ORDER BY created_at DESC LIMIT ?"
-        return [dict(r) for r in self._execute(
-            sql, (user_id, limit)).fetchall()]
+        return [dict(r) for r in self._fetchall(
+            sql, (user_id, limit))]
 
     def notification_unread_count(self, user_id):
-        row = self._execute(
+        row = self._fetchone(
             "SELECT COUNT(*) AS n FROM mf_notifications "
-            "WHERE user_id=? AND is_read=0", (user_id,)).fetchone()
+            "WHERE user_id=? AND is_read=0", (user_id,))
         return row["n"]
 
     def notifications_mark_read(self, user_id, ids=None):
@@ -749,6 +803,6 @@ class Store:
             "converted_at": utcnow()})
 
     def lead_conversion(self, lead_id):
-        row = self._execute("SELECT * FROM mf_lead_conversions WHERE lead_id=?"
-                            " ORDER BY converted_at DESC LIMIT 1", (lead_id,)).fetchone()
+        row = self._fetchone("SELECT * FROM mf_lead_conversions WHERE lead_id=?"
+                            " ORDER BY converted_at DESC LIMIT 1", (lead_id,))
         return dict(row) if row else None

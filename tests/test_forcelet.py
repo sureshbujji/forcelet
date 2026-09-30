@@ -143,6 +143,29 @@ def test_role_hierarchy_sharing(client, leo, maya, ana, admin):
     assert r.status_code == 200
 
 
+def test_roleless_user_sees_only_own_records(client, leo, admin):
+    # Regression: _role_subtree(None) used to treat a role-less user as above
+    # all root roles, so a user with no role could see everyone's records.
+    r = client.post("/api/admin/users", headers=admin,
+                    json={"username": "norole", "name": "No Role",
+                          "profile": "Standard User"})
+    assert r.status_code == 201, r.get_json()
+    norole = login(client, "norole")
+    # leo creates an account; the role-less user must not see it
+    r = client.post("/api/sobjects/Account", headers=leo, json={"Name": "Leo Acme"})
+    assert r.status_code == 201
+    rid = r.get_json()["Id"]
+    r = client.get(f"/api/sobjects/Account/{rid}", headers=norole)
+    assert r.status_code == 404
+    # but the role-less user sees records they own
+    r = client.post("/api/sobjects/Account", headers=norole,
+                    json={"Name": "Norole Acme"})
+    assert r.status_code == 201
+    own = r.get_json()["Id"]
+    r = client.get(f"/api/sobjects/Account/{own}", headers=norole)
+    assert r.status_code == 200
+
+
 # ------------------------------------------------------------ layouts
 def test_layout_resolution(client, leo):
     r = client.get("/api/layout/Opportunity", headers=leo)

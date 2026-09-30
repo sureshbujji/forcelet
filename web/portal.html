@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forcelet Community — Customer Portal</title>
+<style>
+:root{
+  --blue:#0176d3; --blue-dark:#014486;
+  --bg:#f3f2f2; --surface:#ffffff; --surface2:#fafaf9;
+  --text:#181818; --muted:#706e6b; --line:#d8dde6;
+  --header-bg:#032d60; --header-text:#ffffff;
+  --danger:#c0392b; --ok:#1b5e20; --ok-bg:#e8f5e9; --err-bg:#fdecea; --err:#a93226;
+  --shadow:0 1px 3px rgba(0,0,0,.08); --radius:10px;
+}
+*{box-sizing:border-box}
+body{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:var(--text);line-height:1.45}
+header{background:var(--header-bg);color:var(--header-text);padding:12px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+header h1{margin:0;font-size:20px;font-weight:600}
+header nav{display:flex;gap:4px;margin-left:auto;align-items:center;flex-wrap:wrap}
+header nav button,header nav a{background:transparent;border:0;color:var(--header-text);font-size:14px;padding:8px 12px;border-radius:6px;cursor:pointer;text-decoration:none}
+header nav button:hover,header nav a:hover{background:rgba(255,255,255,.15)}
+header nav button.active{background:rgba(255,255,255,.22)}
+main{max-width:960px;margin:0 auto;padding:24px 16px 64px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:16px}
+.card h2{margin:0 0 12px;font-size:18px}
+.muted{color:var(--muted);font-size:13px}
+.btn{background:var(--blue);color:#fff;border:1px solid var(--blue-dark);border-radius:6px;padding:8px 16px;font-size:14px;cursor:pointer}
+.btn:hover{background:var(--blue-dark)}
+.btn.secondary{background:var(--surface);color:var(--blue);border-color:var(--blue)}
+.btn.small{padding:5px 10px;font-size:13px}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+label.f{display:block;margin:10px 0 2px;font-size:13px;font-weight:600}
+input[type=text],input[type=password],input[type=email],input[type=tel],textarea,select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit;background:#fff;color:var(--text)}
+textarea{min-height:90px;resize:vertical}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#eef4ff;color:var(--blue-dark);border:1px solid #c9d9f2}
+.pill.st-New{background:#eef4ff;color:var(--blue-dark)}
+.pill.st-Working,.pill.st-Dispatched,.pill.st-In.Progress{background:#fff7e0;color:#7a5b00;border-color:#f0d989}
+.pill.st-Completed,.pill.st-Closed{background:var(--ok-bg);color:var(--ok);border-color:#bfe3c6}
+.pill.st-Cancelled,.pill.st-Cannot.Complete{background:var(--err-bg);color:var(--err);border-color:#f0b9b3}
+.err{background:var(--err-bg);color:var(--err);border:1px solid #f0b9b3;border-radius:6px;padding:8px 12px;margin:10px 0;font-size:14px}
+.okmsg{background:var(--ok-bg);color:var(--ok);border:1px solid #bfe3c6;border-radius:6px;padding:8px 12px;margin:10px 0;font-size:14px}
+.kb-item{padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.kb-item:last-child{border-bottom:0}
+.kb-item h3{margin:0 0 4px;font-size:16px;color:var(--blue)}
+.appt{border-left:4px solid var(--blue);padding:12px 16px}
+.sig{border:1px solid var(--line);border-radius:6px;max-width:320px;background:#fff}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:640px){.grid2{grid-template-columns:1fr}}
+.tabs{display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap;border-bottom:2px solid var(--line)}
+.tabs button{background:none;border:0;padding:10px 14px;font-size:14px;cursor:pointer;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px}
+.tabs button.active{color:var(--blue-dark);font-weight:600;border-bottom-color:var(--blue)}
+.hidden{display:none!important}
+footer{text-align:center;color:var(--muted);font-size:12px;padding:24px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Forcelet Community</h1>
+  <nav id="nav">
+    <button data-view="kb" class="active">Knowledge Base</button>
+    <span id="nav-authed" class="hidden">
+      <button data-view="cases">My Cases</button>
+      <button data-view="appts">My Appointments</button>
+      <button data-view="reports">Service Reports</button>
+      <button data-view="profile">Profile</button>
+      <button id="signout" title="Sign out">Sign out</button>
+    </span>
+    <button id="nav-login" data-view="login">Sign in</button>
+  </nav>
+</header>
+<main id="main"></main>
+<footer>Forcelet customer community portal</footer>
+
+<script>
+"use strict";
+const API = "";
+let token = sessionStorage.getItem("portal_token") || "";
+let contactName = sessionStorage.getItem("portal_name") || "";
+let view = "kb";
+
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function fmtDT(s){if(!s)return "";const d=new Date(s.length<=16?s+"Z":s);return isNaN(d)?esc(s):d.toLocaleString();}
+function pill(s){return '<span class="pill st-'+esc(String(s||"").replace(/ /g,"."))+'">'+esc(s||"")+"</span>";}
+
+async function api(method,path,body){
+  const r = await fetch(API+path,{method,headers:Object.assign({"Content-Type":"application/json"},token?{"Authorization":"Bearer "+token}:{}),body:body?JSON.stringify(body):undefined});
+  let j=null; try{j=await r.json();}catch(e){}
+  if(r.status===401&&token){signOut(true);}
+  return {status:r.status,data:j};
+}
+function signOut(silent){
+  token="";contactName="";
+  sessionStorage.removeItem("portal_token");sessionStorage.removeItem("portal_name");
+  if(!silent)location.reload(); else setView("kb");
+}
+function setView(v){
+  view=v;
+  document.querySelectorAll("header nav button[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
+  render();
+}
+
+/* ------------------------------------------------------------ public KB */
+async function kbList(){
+  const {data}=await api("GET","/api/portal/kb");
+  const arts=data||[];
+  let h='<div class="card"><h2>Knowledge Base</h2>';
+  if(!arts.length)h+='<p class="muted">No published articles yet.</p>';
+  for(const a of arts){
+    h+='<div class="kb-item" data-id="'+esc(a.Id)+'"><h3>'+esc(a.Title)+'</h3>'
+      +'<div class="muted">'+esc(a.ArticleNumber||"")+(a.Category?" &middot; "+esc(a.Category):"")+'</div>'
+      +'<div>'+esc(a.Summary||"")+'</div></div>';
+  }
+  h+="</div>";
+  if(!token)h+='<div class="card"><h2>Need help with a service?</h2><p class="muted">Sign in to file and track support cases, see upcoming appointments, and view service reports.</p><div class="btnrow"><button class="btn" data-view="login">Sign in</button></div></div>';
+  return h;
+}
+async function kbArticle(id){
+  const {status,data}=await api("GET","/api/portal/kb/"+encodeURIComponent(id));
+  if(status!==200)return '<div class="card"><p class="err">Article not found.</p><div class="btnrow"><button class="btn secondary" data-view="kb">Back to list</button></div></div>';
+  const body=esc(data.Body||"").replace(/\n/g,"<br>");
+  return '<div class="card"><div class="muted">'+esc(data.ArticleNumber||"")+(data.Category?" &middot; "+esc(data.Category):"")+'</div>'
+    +"<h2>"+esc(data.Title)+"</h2><p>"+body+"</p>"
+    +'<div class="btnrow"><button class="btn secondary" data-view="kb">Back to list</button></div></div>';
+}
+
+/* ----------------------------------------------------------------- login */
+function loginForm(){
+  return '<div class="card" style="max-width:420px;margin:0 auto"><h2>Sign in</h2>'
+    +'<div id="lmsg"></div>'
+    +'<form id="lform"><label class="f">Username</label><input type="text" id="lu" autocomplete="username" required>'
+    +'<label class="f">Password</label><input type="password" id="lp" autocomplete="current-password" required>'
+    +'<div class="btnrow"><button class="btn" type="submit">Sign in</button></div></form></div>';
+}
+
+/* ----------------------------------------------------------------- cases */
+async function casesView(){
+  const {data}=await api("GET","/api/portal/cases");
+  const cases=data||[];
+  let h='<div class="card"><h2>My Cases</h2>';
+  if(!cases.length)h+='<p class="muted">No cases yet.</p>';
+  else{h+='<table><tr><th>Subject</th><th>Status</th><th>Priority</th><th>Opened</th></tr>';
+    for(const c of cases){
+      h+="<tr><td><b>"+esc(c.Subject)+"</b>"+(c.Description?'<div class="muted">'+esc(c.Description).slice(0,160)+"</div>":"")+"</td>"
+        +"<td>"+pill(c.Status)+"</td><td>"+esc(c.Priority||"")+"</td><td class="+'"muted"'+">"+fmtDT(c.CreatedDate)+"</td></tr>";
+    }
+    h+="</table>";}
+  h+='</div><div class="card"><h2>New Case</h2><div id="cmsg"></div>'
+    +'<form id="cform"><label class="f">Subject</label><input type="text" id="csubj" required maxlength="80">'
+    +'<label class="f">Description</label><textarea id="cdesc"></textarea>'
+    +'<div class="grid2"><div><label class="f">Priority</label><select id="cpri"><option>Low</option><option selected>Medium</option><option>High</option><option>Critical</option></select></div></div>'
+    +'<div class="btnrow"><button class="btn" type="submit">Submit case</button></div></form></div>';
+  return h;
+}
+
+/* ---------------------------------------------------------- appointments */
+async function apptsView(){
+  const {data}=await api("GET","/api/portal/appointments");
+  const appts=data||[];
+  let h='<div class="card"><h2>Upcoming Service Appointments</h2>';
+  if(!appts.length)h+='<p class="muted">No upcoming appointments scheduled.</p>';
+  for(const a of appts){
+    h+='<div class="card appt"><h2 style="font-size:16px">'+esc(a.Name||"Appointment")+"</h2>"
+      +"<div>"+pill(a.Status)+"</div>"
+      +'<div style="margin-top:8px"><b>'+fmtDT(a.ScheduledStart)+"</b>"
+      +(a.ScheduledEnd?" &ndash; "+fmtDT(a.ScheduledEnd):"")+"</div>"
+      +(a.WorkOrderSubject?'<div>Work: '+esc(a.WorkOrderSubject)+"</div>":"")
+      +(a.Technician?'<div class="muted">Technician: '+esc(a.Technician)+"</div>":"")
+      +(a.Address?'<div class="muted">'+esc(a.Address)+"</div>":"")
+      +((a.ArrivalWindowStart||a.ArrivalWindowEnd)?'<div class="muted">Arrival window: '+fmtDT(a.ArrivalWindowStart)+" &ndash; "+fmtDT(a.ArrivalWindowEnd)+"</div>":"")
+      +"</div>";
+  }
+  return h+"</div>";
+}
+
+/* --------------------------------------------------------------- reports */
+async function reportsView(){
+  const {data}=await api("GET","/api/portal/reports");
+  const reps=data||[];
+  let h='<div class="card"><h2>Service Reports</h2>';
+  if(!reps.length)h+='<p class="muted">No service reports yet.</p>';
+  for(const r of reps){
+    h+='<div class="card"><h2 style="font-size:16px">'+esc(r.AppointmentName||"Service visit")+"</h2>"
+      +(r.ScheduledStart?'<div class="muted">'+fmtDT(r.ScheduledStart)+"</div>":"")
+      +(r.Summary?'<p>'+esc(r.Summary).replace(/\n/g,"<br>")+"</p>":"")
+      +(r.SignatureName?'<div class="muted">Signed by '+esc(r.SignatureName)+(r.SignedAt?" on "+fmtDT(r.SignedAt):"")+"</div>":"")
+      +(r.SignatureData?'<div style="margin-top:8px"><img class="sig" src="'+esc(r.SignatureData)+'" alt="Customer signature"></div>':"")
+      +"</div>";
+  }
+  return h+"</div>";
+}
+
+/* --------------------------------------------------------------- profile */
+async function profileView(){
+  const {data}=await api("GET","/api/portal/profile");
+  const p=data||{};
+  return '<div class="card"><h2>My Profile</h2><div id="pmsg"></div>'
+    +'<form id="pform"><div class="grid2">'
+    +'<div><label class="f">First name</label><input type="text" value="'+esc(p.FirstName)+'" disabled></div>'
+    +'<div><label class="f">Last name</label><input type="text" value="'+esc(p.LastName)+'" disabled></div>'
+    +'<div><label class="f">Account</label><input type="text" value="'+esc(p.AccountName)+'" disabled></div>'
+    +'<div><label class="f">Title</label><input type="text" value="'+esc(p.Title)+'" disabled></div>'
+    +'<div><label class="f">Email</label><input type="email" id="pemail" value="'+esc(p.Email)+'"></div>'
+    +'<div><label class="f">Phone</label><input type="tel" id="pphone" value="'+esc(p.Phone)+'"></div>'
+    +'</div><div class="btnrow"><button class="btn" type="submit">Save changes</button></div></form></div>';
+}
+
+/* ---------------------------------------------------------------- render */
+async function render(){
+  const authed=!!token;
+  document.getElementById("nav-authed").classList.toggle("hidden",!authed);
+  document.getElementById("nav-login").classList.toggle("hidden",authed);
+  const m=document.getElementById("main");
+  let h="";
+  if(view==="login"&&authed){setView("cases");return;}
+  if(view==="kb")h=await kbList();
+  else if(view==="kbarticle")h=await kbArticle(m.dataset.aid);
+  else if(view==="login")h=loginForm();
+  else if(!authed){setView("login");return;}
+  else if(view==="cases")h=await casesView();
+  else if(view==="appts")h=await apptsView();
+  else if(view==="reports")h=await reportsView();
+  else if(view==="profile")h=await profileView();
+  m.innerHTML=h;
+  wire();
+}
+function wire(){
+  document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>setView(b.dataset.view));
+  document.querySelectorAll(".kb-item").forEach(el=>el.onclick=()=>{
+    document.getElementById("main").dataset.aid=el.dataset.id;setView("kbarticle");});
+  const lf=document.getElementById("lform");
+  if(lf)lf.onsubmit=async e=>{
+    e.preventDefault();
+    const u=document.getElementById("lu").value,p=document.getElementById("lp").value;
+    const {status,data}=await api("POST","/api/portal/login",{username:u,password:p});
+    if(status!==200){document.getElementById("lmsg").innerHTML='<p class="err">'+esc((data&&data.error)||"Sign-in failed")+"</p>";return;}
+    token=data.token;contactName=data.contact_name||"";
+    sessionStorage.setItem("portal_token",token);sessionStorage.setItem("portal_name",contactName);
+    setView("cases");
+  };
+  const cf=document.getElementById("cform");
+  if(cf)cf.onsubmit=async e=>{
+    e.preventDefault();
+    const {status,data}=await api("POST","/api/portal/cases",{subject:document.getElementById("csubj").value,description:document.getElementById("cdesc").value,priority:document.getElementById("cpri").value});
+    const m2=document.getElementById("cmsg");
+    if(status===201){m2.innerHTML='<p class="okmsg">Case submitted.</p>';render();}
+    else m2.innerHTML='<p class="err">'+esc((data&&data.error)||"Could not submit case")+"</p>";
+  };
+  const pf=document.getElementById("pform");
+  if(pf)pf.onsubmit=async e=>{
+    e.preventDefault();
+    const {status,data}=await api("PATCH","/api/portal/profile",{email:document.getElementById("pemail").value,phone:document.getElementById("pphone").value});
+    const m2=document.getElementById("pmsg");
+    m2.innerHTML=status===200?'<p class="okmsg">Profile updated.</p>':'<p class="err">'+esc((data&&data.error)||"Could not update profile")+"</p>";
+  };
+  const so=document.getElementById("signout");
+  if(so)so.onclick=async()=>{await api("POST","/api/portal/logout");signOut(false);};
+}
+setView(token?"cases":"kb");
+</script>
+</body>
+</html>

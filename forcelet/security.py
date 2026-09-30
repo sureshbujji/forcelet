@@ -196,8 +196,10 @@ class Security:
         return [f["name"] for f in obj_def.get("fields", []) if self.can(user, "edit", obj_def["name"], f["name"])]
 
     # ---------------------------------------------------------------- sharing
-    def _role_subtree(self, role_name: str) -> set:
+    def _role_subtree(self, role_name: str | None) -> set:
         """Role + all roles below it in the hierarchy."""
+        if not role_name:
+            return set()
         roles = {r["name"]: r for r in self.list_roles()}
         out, stack = set(), [role_name]
         while stack:
@@ -212,6 +214,9 @@ class Security:
         """User ids whose records this user may see. None = everyone (admin)."""
         if self.is_admin(user):
             return None
+        if not user.get("role"):
+            # No role: no subordinates; the user sees only their own records.
+            return [user["id"]]
         subtree = self._role_subtree(user.get("role"))
         return [u["id"] for u in self.list_users() if u.get("role") in subtree]
 

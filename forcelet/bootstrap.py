@@ -146,6 +146,12 @@ def bootstrap(db_path: str):
                         security.assign_permission_set(user["id"], cand["id"])
                         break
 
+    # ---- dynamic forms metadata (seed once) ----
+    if store._execute("SELECT COUNT(*) AS n FROM mf_dynamic_forms").fetchone()["n"] == 0:
+        with open(os.path.join(METADATA_DIR, "seed_dynamic_forms.json")) as f:
+            for rule in json.load(f).get("rules", []):
+                store.config_put("mf_dynamic_forms", rule)
+
     # migrate: Lead.Status gains the 'Converted' picklist value (lead conversion)
     lead = registry.get_object("Lead")
     if lead:
@@ -351,6 +357,128 @@ def bootstrap(db_path: str):
             "Technician": "Sam Rivera",
             "Address": "1 Fleet Way, Austin, TX 78701"})
 
+    # seed field service demo data (territories, hours, resources, skills)
+    if store.count("ServiceTerritory") == 0:
+        rep = security.get_user_by_username("leo")
+        owner_id = rep["id"] if rep else None
+
+        def _fseed(obj_name, fields):
+            rec = dict(fields)
+            rec["owner_id"] = owner_id
+            rec["created_by"] = owner_id
+            return store.insert(obj_name, rec)
+
+        oh = _fseed("OperatingHours", {
+            "Name": "Standard Field Hours",
+            "Description": "Mon-Fri 8am-6pm field operations."})
+        for dow in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
+            _fseed("TimeSlot", {
+                "OperatingHoursId": oh, "DayOfWeek": dow,
+                "StartTime": "08:00:00", "EndTime": "18:00:00"})
+
+        bay = _fseed("ServiceTerritory", {
+            "Name": "Bay Area", "OperatingHoursId": oh,
+            "Description": "Greater Bay Area service territory."})
+        south = _fseed("ServiceTerritory", {
+            "Name": "South Bay", "ParentTerritoryId": bay,
+            "OperatingHoursId": oh,
+            "Description": "San Jose and surrounding areas."})
+
+        sk_hvac = _fseed("Skill", {"Name": "HVAC",
+                                  "Description": "Heating/cooling systems."})
+        sk_appl = _fseed("Skill", {"Name": "Appliance Repair",
+                                  "Description": "Home appliance diagnostics and repair."})
+        sk_elec = _fseed("Skill", {"Name": "Electrical",
+                                  "Description": "Electrical systems and wiring."})
+        sk_plumb = _fseed("Skill", {"Name": "Plumbing",
+                                   "Description": "Plumbing systems."})
+
+        wt_insp = _fseed("WorkType", {
+            "Name": "Inspection", "EstimatedDuration": 60,
+            "Description": "Standard multi-point inspection."})
+        wt_hvac = _fseed("WorkType", {
+            "Name": "HVAC Service", "EstimatedDuration": 90,
+            "Description": "HVAC diagnosis and repair."})
+        _fseed("WorkTypeSkill", {"WorkTypeId": wt_hvac, "SkillId": sk_hvac})
+        wt_appl = _fseed("WorkType", {
+            "Name": "Appliance Repair", "EstimatedDuration": 120,
+            "Description": "Appliance diagnosis and repair."})
+        _fseed("WorkTypeSkill", {"WorkTypeId": wt_appl, "SkillId": sk_appl})
+        _fseed("WorkTypeSkill", {"WorkTypeId": wt_appl, "SkillId": sk_elec})
+
+        sam = _fseed("ServiceResource", {
+            "Name": "Sam Rivera", "ResourceType": "Technician",
+            "Username": "leo", "ServiceTerritoryId": bay,
+            "OperatingHoursId": oh, "IsActive": True,
+            "Phone": "555-0101", "Email": "sam.rivera@example.com",
+            "HomeBase": "37.5485;-121.9886"})
+        _fseed("ServiceResourceSkill",
+               {"ServiceResourceId": sam, "SkillId": sk_hvac, "SkillLevel": 4})
+        _fseed("ServiceResourceSkill",
+               {"ServiceResourceId": sam, "SkillId": sk_appl, "SkillLevel": 3})
+        _fseed("ServiceResourceSkill",
+               {"ServiceResourceId": sam, "SkillId": sk_elec, "SkillLevel": 3})
+        priya = _fseed("ServiceResource", {
+            "Name": "Priya Nair", "ResourceType": "Technician",
+            "Username": "ana", "ServiceTerritoryId": south,
+            "OperatingHoursId": oh, "IsActive": True,
+            "Phone": "555-0102", "Email": "priya.nair@example.com",
+            "HomeBase": "37.3382;-121.8863"})
+        _fseed("ServiceResourceSkill",
+               {"ServiceResourceId": priya, "SkillId": sk_elec, "SkillLevel": 5})
+        _fseed("ServiceResourceSkill",
+               {"ServiceResourceId": priya, "SkillId": sk_plumb, "SkillLevel": 4})
+        _fseed("ServiceResourceSkill",
+               {"ServiceResourceId": priya, "SkillId": sk_hvac, "SkillLevel": 3})
+        _fseed("ResourceAbsence", {
+            "ServiceResourceId": priya, "Type": "Vacation",
+            "Start": "2026-10-09T00:00:00", "End": "2026-10-09T23:59:59",
+            "Notes": "Annual leave."})
+        crew = _fseed("ServiceCrew", {
+            "Name": "Bay Area Crew A", "ServiceTerritoryId": bay,
+            "IsActive": True})
+        _fseed("ServiceCrewMember", {
+            "ServiceCrewId": crew, "ServiceResourceId": sam, "Role": "Leader"})
+
+        # inventory: a main warehouse, a van per technician, demo parts
+        warehouse = _fseed("Location", {
+            "Name": "Main Warehouse", "LocationType": "Warehouse",
+            "Address": "500 Industrial Pkwy, Fremont, CA 94538"})
+        van_sam = _fseed("Location", {
+            "Name": "Sam Rivera Van", "LocationType": "Van",
+            "ServiceResourceId": sam,
+            "Address": "Van stock - Sam Rivera"})
+        van_priya = _fseed("Location", {
+            "Name": "Priya Nair Van", "LocationType": "Van",
+            "ServiceResourceId": priya,
+            "Address": "Van stock - Priya Nair"})
+
+        def _part(name, code):
+            hit = next((r for r in store.query("Product", owner_ids=None,
+                                               limit=10000)
+                        if r.get("Name") == name), None)
+            if hit:
+                return hit["id"]
+            return _fseed("Product", {"Name": name, "ProductCode": code,
+                                     "IsActive": True})
+
+        p_filter = _part("HVAC Filter", "FS-HVAC-FILTER")
+        p_belt = _part("Washer Drive Belt", "FS-WSH-BELT")
+        p_thermo = _part("Thermostat", "FS-THERMO")
+
+        def _stock(product_id, location_id, qty):
+            _fseed("ProductItem", {
+                "Name": f"{product_id} @ {location_id}",
+                "ProductId": product_id, "LocationId": location_id,
+                "QuantityOnHand": qty})
+
+        for pid, qty in ((p_filter, 50), (p_belt, 30), (p_thermo, 40)):
+            _stock(pid, warehouse, qty)
+        for pid, qty in ((p_filter, 6), (p_belt, 4), (p_thermo, 5)):
+            _stock(pid, van_sam, qty)
+        for pid, qty in ((p_filter, 5), (p_belt, 3), (p_thermo, 6)):
+            _stock(pid, van_priya, qty)
+
         _bseed("Event", {
             "Subject": "Q4 business review", "EventType": "Meeting",
             "StartDateTime": "2026-10-20T14:00:00",
@@ -358,5 +486,49 @@ def bootstrap(db_path: str):
             "Location": "Acme HQ, Austin",
             "AccountId": acme, "ContactId": c1,
             "Description": "Quarterly review with Acme fleet team."})
+
+    # Experience Cloud: demo community account, contact, and portal login.
+    # Guarded by CommunityUser count so existing databases get it on upgrade.
+    if store.count("CommunityUser") == 0:
+        import secrets as _psecrets
+        demo_acct = next((r for r in store.query("Account", owner_ids=None,
+                                                limit=10000)
+                          if r.get("Name") == "Portal Demo Co"), None)
+        if demo_acct is None:
+            demo_acct_id = store.insert("Account", {
+                "Name": "Portal Demo Co", "Industry": "Technology",
+                "Phone": "(555) 010-2030",
+                "Description": "Demo account for the Experience Cloud "
+                               "community portal."})
+        else:
+            demo_acct_id = demo_acct["id"]
+        demo_contact = next((r for r in store.query("Contact", owner_ids=None,
+                                                    limit=10000)
+                             if r.get("Email") == "demo@portaldemo.example.com"),
+                            None)
+        if demo_contact is None:
+            demo_contact_id = store.insert("Contact", {
+                "FirstName": "Portal", "LastName": "Demo",
+                "Email": "demo@portaldemo.example.com",
+                "Phone": "(555) 010-2031", "AccountId": demo_acct_id})
+        else:
+            demo_contact_id = demo_contact["id"]
+        testing = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        portal_pw = "portal123" if testing else _psecrets.token_urlsafe(12)
+        store.insert("CommunityUser", {
+            "Name": "Portal Demo", "ContactId": demo_contact_id,
+            "Username": "portal-demo",
+            "PasswordHash": hash_password(portal_pw), "IsActive": True})
+        if not testing:
+            print(f"   [bootstrap] portal demo user 'portal-demo' "
+                  f"password: {portal_pw}")
+
+    # migrate: starter-app tabs for standard objects added after this DB
+    # was created (e.g. Field Service tabs on the Service app)
+    try:
+        from .apps import migrate_standard_app_tabs
+        migrate_standard_app_tabs(store)
+    except Exception:
+        pass
 
     return store, registry, security

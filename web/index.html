@@ -130,6 +130,9 @@ th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase}
 tr:hover td{background:var(--surface2)}
 .section-title{font-size:15px;font-weight:600;margin-bottom:8px}
 .field{margin-bottom:10px}.fl{font-size:12px;color:var(--muted)}.fv{font-size:14px}
+/* dynForm: dynamic forms — conditional field visibility in record forms */
+.ff{transition:opacity .15s ease}.ff.df-hidden{display:none}
+.df-targets{max-height:150px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px}
 .muted{color:var(--muted);font-size:13px}
 .err{background:var(--err-bg);color:var(--err);padding:10px 14px;border-radius:8px;margin:10px 0;font-size:14px}
 .ok{background:var(--ok-bg);color:var(--ok);padding:10px 14px;border-radius:8px;margin:10px 0;font-size:14px}
@@ -194,6 +197,15 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
 .disp-row{display:grid;grid-template-columns:150px 1fr;border-top:1px solid var(--line)}
 .disp-lane{position:relative;min-height:46px}
 .disp-bar{position:absolute;top:9px;height:28px;border-radius:6px;color:#fff;font-size:12px;line-height:20px;padding:4px 8px;overflow:hidden;white-space:nowrap;cursor:pointer;box-shadow:var(--shadow)}
+.stat-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap}
+.unsch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-top:10px}
+.disp-lane.dragover,.unsch-grid.dragover{outline:2px dashed var(--accent);outline-offset:-2px;background:rgba(1,118,211,.07)}
+.disp-bar[draggable="true"],.appt-card[draggable="true"]{cursor:grab}
+#notifdd{position:absolute;top:56px;right:12px;width:370px;max-width:94vw;max-height:460px;overflow:auto;z-index:90;display:none}
+.sigpad{width:100%;max-width:340px;height:120px;border:1px solid var(--line);border-radius:8px;background:#fff;touch-action:none;cursor:crosshair}
+.appt-card{padding:14px}
+.setup-links{margin:6px 0;font-size:12px;color:var(--muted)}
+.setup-links a{color:var(--accent);margin:0 2px}
 @media (max-width:900px){.fbwrap,.split,.dashbuild-grid{grid-template-columns:1fr}.fbpanel{position:static;max-height:none}}
 
 /* mobile */
@@ -206,6 +218,8 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
   main table{display:block;overflow-x:auto;white-space:nowrap}
   #toasts{left:16px;right:16px;bottom:16px;max-width:none}
   #chatfab{left:16px;bottom:16px}
+  .appt-card .btn{min-height:44px;font-size:15px}
+  .unsch-grid{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 /* calendar */
@@ -237,7 +251,8 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
       <input id="gsearch" placeholder="Search all records…  (⌘K)" onkeydown="if(event.key==='Enter')showSearch()" style="width:200px;margin:0">
       <select id="gsearch_mode" title="Search mode" style="width:auto;margin:0;padding:4px"><option value="keyword">Keyword</option><option value="semantic">Semantic</option></select>
       <button class="iconbtn" onclick="openPalette()" title="Command palette (⌘K)">⌘K</button>
-      <button class="iconbtn" id="bell" onclick="showNotifications()" title="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span id="bellcount" style="display:none"></span></button>
+      <button class="iconbtn" id="bell" onclick="toggleNotifDD(event)" title="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span id="bellcount" style="display:none"></span></button>
+      <div id="notifdd" class="card"></div>
       <button class="iconbtn" onclick="showRecycleBin()" title="Recycle Bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
       <button class="iconbtn" id="themebtn" onclick="toggleTheme()" title="Toggle dark mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
       <div class="userbox dd" id="usermenu"><button class="iconbtn" id="whoami" onclick="toggleDD(event,'usermenu')" title="Account"></button><span class="dd-menu"><div class="dd-head" id="whoami_detail"></div><button onclick="totpManage()">Two-factor authentication</button><button onclick="logout()">Switch user</button></span></div>
@@ -258,6 +273,8 @@ const APP_UTILS={
  chatter:["__chatter","showChatter()","Chatter"], approvals:["__approvals","showApprovals()","Approvals"],
  forecasts:["__forecasts","showForecasts()","Forecasts"], calendar:["__calendar","showCalendar()","Calendar"],
  dispatch:["__dispatch","showDispatch()","Dispatch"], flows:["__flows","showFlows()","Flows"],
+ myschedule:["__myschedule","showMySchedule()","My Schedule"],
+ inventory:["__inventory","showInventory()","Inventory"],
  bulk:["__bulk","showBulk()","Bulk Jobs","admin"], admin:["__admin","showAdmin()","Admin Setup","admin"],
 };
 const H=()=>({"Authorization":"Bearer "+token,"Content-Type":"application/json"});
@@ -395,9 +412,12 @@ async function finishLogin(r,currentPassword){
   document.getElementById("app").style.display="block";
   document.getElementById("whoami").textContent=me.name;
   document.getElementById("whoami_detail").textContent=`${me.profile} · ${me.role||"no role"}`;
-  await loadObjects();
-  refreshBell();
-  await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
+  navSilent=true; // don't let the initial tab render rewrite a deep-link URL
+  try{
+    await loadObjects();
+    refreshBell();
+    await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
+  }finally{ navSilent=false; }
 }
 let pendingCurrentPassword="";
 function showForcedPasswordChange(r,currentPassword){
@@ -424,9 +444,12 @@ async function forcedPasswordSubmit(){
   document.getElementById("app").style.display="block";
   document.getElementById("whoami").textContent=me.name;
   document.getElementById("whoami_detail").textContent=`${me.profile} · ${me.role||"no role"}`;
-  await loadObjects();
-  refreshBell();
-  await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
+  navSilent=true; // don't let the initial tab render rewrite a deep-link URL
+  try{
+    await loadObjects();
+    refreshBell();
+    await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
+  }finally{ navSilent=false; }
 }
 async function logout(){
   try{ await fetch("/api/logout",{method:"POST",headers:{"Authorization":"Bearer "+token}}); }catch(e){}
@@ -462,6 +485,8 @@ function renderLegacyTabs(pending){
   html+=`<button data-obj="__forecasts" onclick="showForecasts()">Forecasts</button>`;
   html+=`<button data-obj="__flows" onclick="showFlows()">Flows</button>`;
   html+=`<button data-obj="__dispatch" onclick="showDispatch()">Dispatch</button>`;
+  html+=`<button data-obj="__myschedule" onclick="showMySchedule()">My Schedule</button>`;
+  html+=`<button data-obj="__inventory" onclick="showInventory()">Inventory</button>`;
   html+=`<button data-obj="__calendar" onclick="showCalendar()">Calendar</button>`;
   if(me.profile==="System Administrator") html+=`<button data-obj="__bulk" onclick="showBulk()">Bulk Jobs</button>`;
   if(me.profile==="System Administrator") html+=`<button data-obj="__admin" onclick="showAdmin()">Admin Setup</button>`;
@@ -469,7 +494,10 @@ function renderLegacyTabs(pending){
   updateTabFade();
   if(objects.length) showObject(objects[0].name);
 }
-function setActive(name){ document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("active",b.dataset.obj===name)); }
+let navSilent=false; // true while routeFromUrl replays history (Back/Forward/deep link): don't rewrite the URL
+function setActive(name){ document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("active",b.dataset.obj===name));
+  // tab/list navigation leaves any open record: drop the /r/<obj>/<id> URL so the address bar matches the view
+  if(!navSilent&&location.pathname!=="/") window.history.pushState({tab:name},"","/"); }
 
 // ------------------------------------------------------- custom applications
 function renderAppTabs(pending){
@@ -671,6 +699,8 @@ async function showDetail(id){
   if(!r.ok){ document.getElementById("main").innerHTML=`<div class="err">Record not found.</div>`; return; }
   const rec=r.data, fmap={}; curDesc.fields.forEach(f=>fmap[f.name]=f);
   const isBigObj=/__b$/.test(curObj);
+  await dynFormRules(curObj); // dynForm: hide fields per visibility rules
+  const dfHidden=dynFormHidden(curObj,rec);
   const refNames={};
   for(const f of curDesc.fields){
     if((f.type==="Lookup"||f.type==="MasterDetail")&&f.reference_to&&rec[f.name]){
@@ -694,7 +724,7 @@ async function showDetail(id){
   const sections=(curLayout.sections&&curLayout.sections.length)?curLayout.sections:[{title:"Details",columns:[curDesc.fields.map(f=>f.name)]}];
   for(const sec of sections){
     let secHtml="", secEmpty=true;
-    for(const col of sec.columns){ secHtml+=`<div>${col.map(fn=>{const f=fmap[fn]; if(!f)return""; let fv;
+    for(const col of sec.columns){ secHtml+=`<div>${col.map(fn=>{const f=fmap[fn]; if(!f||dfHidden.has(fn))return""; let fv;
       if(refNames[fn]) fv=`<a href="#" onclick="jumpTo('${f.reference_to}','${rec[fn]}');return false">${esc(refNames[fn].label)}</a>`;
       else if(f.type==="Geolocation"||f.type==="Address") fv=fmtValHtml(f,rec[fn]);
       else fv=esc(fmtVal(f,rec[fn]));
@@ -795,7 +825,8 @@ async function pathSet(id,field,value){
 }
 let descCache={};
 async function getDesc(name){ if(!descCache[name]){ const r=await api("GET",`/api/describe/${name}`); descCache[name]=r.data; } return descCache[name]; }
-function jumpTo(obj,id){ showObject(obj).then(()=>showDetail(id)); }
+// (single jumpTo definition lives with the calendar code below)
+
 // ------------------------------------------------------- record URLs
 // The address bar mirrors the open record (/r/<object>/<id>). The server
 // serves the SPA for those paths; this router renders them, handles the
@@ -807,12 +838,15 @@ function parseRecordUrl(){
 async function routeFromUrl(){
   if(!token) return; // login screen owns the page until authenticated
   const r=parseRecordUrl();
-  if(r){
-    try{ await showObject(r.obj); await showDetail(r.id); }
-    catch(e){ window.history.replaceState(null,"","/"); routeFromUrl(); }
-  }else if(curObj){
-    await showObject(curObj); // back to the list we came from
-  }
+  navSilent=true;
+  try{
+    if(r){
+      try{ await showObject(r.obj); await showDetail(r.id); }
+      catch(e){ window.history.replaceState(null,"","/"); if(curObj) await showObject(curObj); }
+    }else if(curObj){
+      await showObject(curObj); // back to the list we came from
+    }
+  }finally{ navSilent=false; }
 }
 window.addEventListener("popstate",()=>{ routeFromUrl(); });
 async function activityCard(recId){
@@ -837,7 +871,12 @@ async function sendEmail(recId){
   const r=await api("POST",`/api/sobjects/${curObj}/${recId}/send-email`,{template_id:document.getElementById("em_tpl").value||null,to:v("em_to"),subject:v("em_subj"),body:v("em_body")});
   r.ok?showDetail(recId):toast("Failed: "+(r.data.error||r.status),"error");
 }
+function startBellPoll(){
+  if(window._bellTimer) return; // idempotent: one poller per session
+  window._bellTimer=setInterval(()=>{ if(token) refreshBell(); },60000);
+}
 async function refreshBell(){
+  startBellPoll();
   const r=await api("GET","/api/notifications/unread-count");
   const n=r.ok?(r.data.count||0):0;
   const el=document.getElementById("bellcount");
@@ -853,6 +892,30 @@ async function showNotifications(){
 }
 async function notifMarkAll(){ await api("POST","/api/notifications/read",{all:true}); refreshBell(); showNotifications(); }
 async function notifOpen(nid,obj,rid){ await api("POST","/api/notifications/read",{ids:[nid]}); refreshBell(); jumpTo(obj,rid); }
+function notifDDClose(){ const dd=document.getElementById("notifdd"); if(dd) dd.style.display="none"; }
+async function toggleNotifDD(e){
+  if(e) e.stopPropagation();
+  const dd=document.getElementById("notifdd"); if(!dd) return;
+  if(dd.style.display==="block"){ dd.style.display="none"; return; }
+  dd.style.display="block";
+  renderNotifDD();
+}
+async function renderNotifDD(){
+  const dd=document.getElementById("notifdd"); if(!dd) return;
+  dd.innerHTML=`<p class="muted" style="margin:4px">Loading…</p>`;
+  const r=await api("GET","/api/notifications?unread_only=1");
+  const items=(r.ok&&Array.isArray(r.data))?r.data:[];
+  dd.innerHTML=`<div class="btnrow" style="align-items:center;margin-bottom:8px"><b>Notifications</b><span style="flex:1"></span><button class="btn secondary small" onclick="notifMarkAllDD()">Mark all read</button></div>`
+   +(items.length?items.map(n=>{
+     const openable=n.object_name&&n.record_id;
+     return `<div class="card" style="margin:8px 0;padding:10px 12px;${openable?"cursor:pointer":""}"${openable?` onclick="notifDDClose();notifOpen('${n.id}','${esc(n.object_name)}','${esc(n.record_id)}')" role="link" tabindex="0" onkeydown="if(event.key==='Enter')this.click()"`:""}>`
+      +`<div class="fl"><b>${esc(n.title||"")}</b> <span class="muted">${esc((n.created_at||"").slice(0,16).replace("T"," "))}</span></div>`
+      +`<div class="fv" style="margin-top:4px">${esc(n.body||"")}</div></div>`;
+   }).join(""):`<p class="muted">You're all caught up.</p>`)
+   +`<div class="btnrow" style="margin-top:6px"><button class="btn secondary small" onclick="notifDDClose();showNotifications()">View all</button></div>`;
+}
+async function notifMarkAllDD(){ await api("POST","/api/notifications/read",{all:true}); refreshBell(); renderNotifDD(); }
+document.addEventListener("click",e=>{ const dd=document.getElementById("notifdd"); if(dd&&dd.style.display==="block"&&!dd.contains(e.target)&&!e.target.closest("#bell")) dd.style.display="none"; });
 let feedRefresh=()=>{};
 function feedHtml(posts){
   if(!posts.length) return `<p class="muted">Nothing here yet.</p>`;
@@ -1052,6 +1115,75 @@ async function lookupOptions(refObj){
   lookups[refObj]=(r.data||[]).map(x=>({id:x.Id,label:x[nameField]||x.Id}));
   return lookups[refObj];
 }
+/* dynForm: dynamic forms — conditional field visibility.
+   Mirrors forcelet/dynamic_forms.py: hide-rules win; a field listed in any
+   active "show" rule is hidden unless a "show" rule for it evaluates true. */
+let _dfCache={};
+async function dynFormRules(obj){
+  if(!_dfCache[obj]){ try{ const r=await api("GET","/api/dynamic-forms/"+encodeURIComponent(obj)); _dfCache[obj]=r.ok?(r.data.rules||[]):[]; }catch(e){ _dfCache[obj]=[]; } }
+  return _dfCache[obj];
+}
+function dynFormBlank(v){ return v===null||v===undefined||(typeof v==="string"&&!v.trim())||(Array.isArray(v)&&!v.length); }
+function dynFormNum(v){ if(typeof v==="boolean")return null; const n=parseFloat(v); return isNaN(n)?null:n; }
+function dynFormBool(v){ if(typeof v==="boolean")return v; if(v===null||v===undefined)return false; return ["true","1","yes","y","on"].includes(String(v).trim().toLowerCase()); }
+function dynFormEq(a,b){
+  if(typeof a==="boolean"||typeof b==="boolean") return dynFormBool(a)===dynFormBool(b);
+  const na=dynFormNum(a),nb=dynFormNum(b);
+  if(na!==null&&nb!==null) return na===nb;
+  return String(a)===String(b);
+}
+function dynFormCond(w,vals){
+  if(!w) return false;
+  const a=(vals||{})[w.field];
+  switch(w.operator){
+    case "is_blank": return dynFormBlank(a);
+    case "is_not_blank": return !dynFormBlank(a);
+    case "equals": return dynFormEq(a,w.value);
+    case "not_equals": return !dynFormEq(a,w.value);
+    case "contains": { const exp=String(w.value??""); return !!exp&&a!==null&&a!==undefined&&String(a).toLowerCase().includes(exp.toLowerCase()); }
+    case "greater_than": { const na=dynFormNum(a),nb=dynFormNum(w.value); return na!==null&&nb!==null&&na>nb; }
+    case "less_than": { const na=dynFormNum(a),nb=dynFormNum(w.value); return na!==null&&nb!==null&&na<nb; }
+    default: return false;
+  }
+}
+function dynFormHidden(obj,vals){
+  const rules=(_dfCache[obj]||[]).filter(r=>r.active!==false);
+  const hidden=new Set(),shown=new Set(),gated=new Set();
+  for(const r of rules){
+    const cond=dynFormCond(r.when||{},vals||{});
+    const fs=((r.then||{}).fields||[]);
+    if((r.then||{}).action==="hide"){ if(cond) fs.forEach(f=>hidden.add(f)); }
+    else { fs.forEach(f=>shown.add(f)); if(cond) fs.forEach(f=>gated.add(f)); }
+  }
+  shown.forEach(f=>{ if(!gated.has(f)) hidden.add(f); });
+  return hidden;
+}
+function dynFormReadValues(){
+  const vals={};
+  for(const f of (curDesc.fields||[])){
+    if(f.type==="Geolocation"||f.type==="Address") continue;
+    const el=document.getElementById("f_"+f.name); if(!el) continue;
+    if(f.type==="Checkbox") vals[f.name]=el.checked;
+    else if(f.type==="MultiPicklist") vals[f.name]=[...el.selectedOptions].map(o=>o.value).join(";");
+    else vals[f.name]=el.value;
+  }
+  return vals;
+}
+async function dynFormInitForm(){
+  await dynFormRules(curObj);
+  const apply=()=>{
+    const hidden=dynFormHidden(curObj,dynFormReadValues());
+    for(const f of (curDesc.fields||[])){
+      const w=document.getElementById("ff_"+f.name); if(!w) continue;
+      const hide=hidden.has(f.name), isHid=w.classList.contains("df-hidden");
+      if(hide&&!isHid) w.classList.add("df-hidden");
+      else if(!hide&&isHid){ w.classList.remove("df-hidden"); try{ w.animate([{opacity:0},{opacity:1}],{duration:150}); }catch(e){} }
+    }
+  };
+  const card=document.querySelector("#main .card");
+  if(card){ card.addEventListener("input",apply); card.addEventListener("change",apply); }
+  apply();
+}
 async function showForm(id){
   if(id&&/__b$/.test(curObj)){ document.getElementById("main").innerHTML=`<div class="err">Big object records are append-only and cannot be edited.</div>`; return; }
   let rec={};
@@ -1061,26 +1193,31 @@ async function showForm(id){
   let html=`<div class="card"><h2>${id?"Edit":"New"} ${esc(curDesc.label)}</h2><div id="ferr"></div>${rtSel}`;
   for(const f of fields){
     if((!id&&!f.editable)||f.computed) continue;
-    html+=`<label>${esc(f.label)}${f.required?' <b style="color:#c0392b">*</b>':""}${f.type==="MasterDetail"?' <span class="pill">Master-Detail</span>':""}</label>`;
+    let fh=`<label>${esc(f.label)}${f.required?' <b style="color:#c0392b">*</b>':""}${f.type==="MasterDetail"?' <span class="pill">Master-Detail</span>':""}</label>`;
     const val=rec[f.name]??"";
-    if(f.type==="Picklist") html+=`<select id="f_${f.name}"><option value="">—</option>${(f.picklist_values||[]).map(v=>`<option ${v===val?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
-    else if(f.type==="MultiPicklist") html+=`<select id="f_${f.name}" multiple size="4">${(f.picklist_values||[]).map(v=>`<option ${String(val).split(";").includes(v)?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
-    else if(f.type==="Checkbox") html+=`<input type="checkbox" id="f_${f.name}" ${val?"checked":""} style="width:auto">`;
-    else if(f.type==="TextArea") html+=`<textarea id="f_${f.name}" rows="3">${esc(val)}</textarea>`;
-    else if(f.type==="Lookup"){ const opts=await lookupOptions(f.reference_to); html+=`<select id="f_${f.name}"><option value="">—</option>${opts.map(o=>`<option value="${o.id}" ${o.id===val?"selected":""}>${esc(o.label)}</option>`).join("")}</select>`; }
-    else if(f.type==="MasterDetail"){ const opts=await lookupOptions(f.reference_to); html+=`<select id="f_${f.name}" required><option value="">— select ${esc(f.reference_to)} —</option>${opts.map(o=>`<option value="${o.id}" ${o.id===val?"selected":""}>${esc(o.label)}</option>`).join("")}</select>`; }
-    else if(f.type==="Geolocation"){ const p=String(val||"").split(";"); html+=`<div class="grid2" style="gap:6px"><div><input id="f_${f.name}_lat" placeholder="Latitude" value="${esc(p[0]||"")}" style="margin:0"></div><div><input id="f_${f.name}_lng" placeholder="Longitude" value="${esc(p[1]||"")}" style="margin:0"></div></div>`; }
-    else if(f.type==="Address"){ let a={}; try{ a=typeof val==="string"&&val?JSON.parse(val):(val||{}); }catch(e){} html+=["street","city","state","postal_code","country"].map(k=>`<input id="f_${f.name}_${k}" placeholder="${k.replace("_"," ")}" value="${esc(a[k]||"")}" style="margin-bottom:6px">`).join(""); }
-    else if(f.type==="Time"){ html+=`<input id="f_${f.name}" type="time" value="${esc(String(val).slice(0,5))}">`; }
-    else html+=`<input id="f_${f.name}" type="${f.type==="Date"?"date":f.type==="Email"?"email":f.type==="URL"?"url":"text"}" value="${esc(val)}">`;
+    if(f.type==="Picklist") fh+=`<select id="f_${f.name}"><option value="">—</option>${(f.picklist_values||[]).map(v=>`<option ${v===val?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
+    else if(f.type==="MultiPicklist") fh+=`<select id="f_${f.name}" multiple size="4">${(f.picklist_values||[]).map(v=>`<option ${String(val).split(";").includes(v)?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
+    else if(f.type==="Checkbox") fh+=`<input type="checkbox" id="f_${f.name}" ${val?"checked":""} style="width:auto">`;
+    else if(f.type==="TextArea") fh+=`<textarea id="f_${f.name}" rows="3">${esc(val)}</textarea>`;
+    else if(f.type==="Lookup"){ const opts=await lookupOptions(f.reference_to); fh+=`<select id="f_${f.name}"><option value="">—</option>${opts.map(o=>`<option value="${o.id}" ${o.id===val?"selected":""}>${esc(o.label)}</option>`).join("")}</select>`; }
+    else if(f.type==="MasterDetail"){ const opts=await lookupOptions(f.reference_to); fh+=`<select id="f_${f.name}" required><option value="">— select ${esc(f.reference_to)} —</option>${opts.map(o=>`<option value="${o.id}" ${o.id===val?"selected":""}>${esc(o.label)}</option>`).join("")}</select>`; }
+    else if(f.type==="Geolocation"){ const p=String(val||"").split(";"); fh+=`<div class="grid2" style="gap:6px"><div><input id="f_${f.name}_lat" placeholder="Latitude" value="${esc(p[0]||"")}" style="margin:0"></div><div><input id="f_${f.name}_lng" placeholder="Longitude" value="${esc(p[1]||"")}" style="margin:0"></div></div>`; }
+    else if(f.type==="Address"){ let a={}; try{ a=typeof val==="string"&&val?JSON.parse(val):(val||{}); }catch(e){} fh+=["street","city","state","postal_code","country"].map(k=>`<input id="f_${f.name}_${k}" placeholder="${k.replace("_"," ")}" value="${esc(a[k]||"")}" style="margin-bottom:6px">`).join(""); }
+    else if(f.type==="Time"){ fh+=`<input id="f_${f.name}" type="time" value="${esc(String(val).slice(0,5))}">`; }
+    else fh+=`<input id="f_${f.name}" type="${f.type==="Date"?"date":f.type==="Email"?"email":f.type==="URL"?"url":"text"}" value="${esc(val)}">`;
+    html+=`<div class="ff" id="ff_${f.name}">${fh}</div>`;
   }
   html+=`<div class="btnrow" style="margin-top:14px"><button class="btn" onclick="saveForm('${id||""}')">Save</button><button class="btn secondary" onclick="showObject('${curObj}')">Cancel</button></div></div>`;
   document.getElementById("main").innerHTML=html;
+  dynFormInitForm();
 }
 async function saveForm(id){
   const body={};
   const rtEl=document.getElementById("f_RecordType"); if(rtEl) body.RecordType=rtEl.value;
+  await dynFormRules(curObj); // dynForm: hidden fields must not be submitted
+  const dfHidden=dynFormHidden(curObj,dynFormReadValues());
   for(const f of curDesc.fields){
+    if(dfHidden.has(f.name)) continue;
     if(f.type==="Geolocation"){ const la=document.getElementById("f_"+f.name+"_lat"), ln=document.getElementById("f_"+f.name+"_lng"); if(la&&ln&&(la.value.trim()||ln.value.trim())) body[f.name]=`${la.value.trim()};${ln.value.trim()}`; continue; }
     if(f.type==="Address"){ const parts={}; let any=false; for(const k of ["street","city","state","postal_code","country"]){ const e=document.getElementById(`f_${f.name}_${k}`); if(e&&e.value.trim()){ parts[k]=e.value.trim(); any=true; } } if(any) body[f.name]=JSON.stringify(parts); continue; }
     const el=document.getElementById("f_"+f.name); if(!el) continue;
@@ -1097,6 +1234,75 @@ async function saveForm(id){
     document.getElementById("ferr").innerHTML=`<div class="err">${esc(msg)}</div>`;
   }
 }
+
+/* dynForm: dynamic forms — admin rule builder */
+let DF_EDIT=null;
+async function dfOnObj(){
+  const obj=document.getElementById("df_obj").value;
+  const d=await api("GET","/api/describe/"+encodeURIComponent(obj));
+  const fs=((d.data||{}).fields)||[];
+  document.getElementById("df_when_field").innerHTML=fs.map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join("");
+  document.getElementById("df_targets").innerHTML=fs.map(f=>`<label style="display:flex;gap:6px;align-items:center;margin:4px 0"><input type="checkbox" class="df_tpick" value="${esc(f.name)}" style="width:auto"> ${esc(f.label||f.name)}</label>`).join("");
+  dfRefresh();
+}
+async function dfRules(){
+  const obj=document.getElementById("df_obj").value;
+  const r=await api("GET","/api/dynamic-forms/"+encodeURIComponent(obj));
+  return (r.ok&&(r.data.rules||[]))||[];
+}
+async function dfRefresh(){
+  const obj=document.getElementById("df_obj").value;
+  const rules=await dfRules();
+  const el=document.getElementById("df_list");
+  if(!rules.length){ el.innerHTML=`<p class="muted">No rules for ${esc(obj)} yet.</p>`; return; }
+  el.innerHTML=`<table><tr><th>Name</th><th>When</th><th>Action</th><th>Fields</th><th>Active</th><th></th></tr>`+rules.map(x=>{
+    const w=x.when||{}, t=x.then||{};
+    return `<tr><td>${esc(x.name||"")}</td><td>${esc(w.field||"")} ${esc(w.operator||"")} ${esc(String(w.value??""))}</td><td>${esc(t.action||"")}</td><td>${esc((t.fields||[]).join(", "))}</td><td>${x.active===false?"No":"Yes"}</td><td><div class="btnrow"><button class="btn small secondary" onclick="dfEdit('${x.id}')">Edit</button><button class="btn small danger" onclick="dfDel('${x.id}')">Delete</button></div></td></tr>`;
+  }).join("")+`</table>`;
+}
+function dfErr(m){ document.getElementById("dferr").innerHTML=m?`<div class="err">${esc(m)}</div>`:""; }
+async function dfSave(){
+  const obj=document.getElementById("df_obj").value;
+  const body={name:document.getElementById("df_name").value.trim(),
+    when:{field:document.getElementById("df_when_field").value,operator:document.getElementById("df_op").value,value:document.getElementById("df_value").value},
+    then:{action:document.getElementById("df_action").value,fields:[...document.querySelectorAll(".df_tpick:checked")].map(c=>c.value)}};
+  if(!body.name){ dfErr("Rule name is required."); return; }
+  if(!body.then.fields.length){ dfErr("Pick at least one target field."); return; }
+  const r=await api(DF_EDIT?"PUT":"POST",DF_EDIT?`/api/dynamic-forms/${encodeURIComponent(obj)}/rules/${DF_EDIT}`:`/api/dynamic-forms/${encodeURIComponent(obj)}/rules`,body);
+  if(r.ok){ _dfCache[obj]=null; dfCancel(); dfRefresh(); }
+  else dfErr((r.data&&r.data.error||"Save failed")+(r.data&&r.data.details?": "+r.data.details.join("; "):""));
+}
+async function dfEdit(id){
+  const rules=await dfRules();
+  const x=rules.find(r=>r.id===id); if(!x) return;
+  DF_EDIT=id;
+  document.getElementById("df_name").value=x.name||"";
+  document.getElementById("df_when_field").value=(x.when||{}).field||"";
+  document.getElementById("df_op").value=(x.when||{}).operator||"equals";
+  document.getElementById("df_value").value=(x.when||{}).value??"";
+  document.getElementById("df_action").value=(x.then||{}).action||"hide";
+  document.querySelectorAll(".df_tpick").forEach(c=>{ c.checked=((x.then||{}).fields||[]).includes(c.value); });
+  document.getElementById("df_submit").textContent="Save rule";
+  document.getElementById("df_cancel").style.display="";
+  dfErr("");
+}
+async function dfDel(id){
+  if(!confirm("Delete this visibility rule?")) return;
+  const obj=document.getElementById("df_obj").value;
+  const r=await api("DELETE",`/api/dynamic-forms/${encodeURIComponent(obj)}/rules/${id}`);
+  if(r.ok){ _dfCache[obj]=null; if(DF_EDIT===id) dfCancel(); dfRefresh(); }
+  else dfErr((r.data&&r.data.error)||"Delete failed");
+}
+function dfCancel(){
+  DF_EDIT=null;
+  document.getElementById("df_name").value="";
+  document.getElementById("df_value").value="";
+  document.querySelectorAll(".df_tpick").forEach(c=>{ c.checked=false; });
+  document.getElementById("df_submit").textContent="Create rule";
+  document.getElementById("df_cancel").style.display="none";
+  dfErr("");
+}
+function dfInit(){ if(document.getElementById("df_obj")) dfOnObj(); }
 
 // ------------------------------------------------------------ reports
 async function showReports(){
@@ -1329,6 +1535,9 @@ async function showAdmin(section, highlight){
   if(!section){ renderSetupHome(); return; }
   if(highlight==="App Manager"){ renderAppManager(); return; }
   const [users,roles,profiles,ft]=await Promise.all([api("GET","/api/admin/users"),api("GET","/api/admin/roles"),api("GET","/api/admin/profiles"),api("GET","/api/field-types")]);
+  const arr=r=>Array.isArray(r.data)?r.data:[];
+  const [uList,rList,pList,ftList]=[arr(users),arr(roles),arr(profiles),arr(ft)];
+  if(!uList.length||!rList.length||!pList.length||!ftList.length){ toast("Could not load setup data. Please retry.","error"); }
   const objs=objects.map(o=>`<option>${o.name}</option>`).join("");
   let html=`<h2>Admin Setup</h2>
   <div class="card"><div class="section-title">Create custom object</div><div id="oerr"></div>
@@ -1336,7 +1545,7 @@ async function showAdmin(section, highlight){
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createObject()">Create object</button></div><div id="ao_list"></div></div>
   <div class="card"><div class="section-title">Add field to object</div><div id="aferr"></div>
     <label>Object</label><select id="af_obj">${objs}</select><label>Field API name</label><input id="af_name"><label>Label</label><input id="af_label">
-    <label>Type</label><select id="af_type">${ft.data.map(t=>`<option value="${t.name}">${t.name} — ${esc(t.description)}</option>`).join("")}</select>
+    <label>Type</label><select id="af_type">${ftList.map(t=>`<option value="${t.name}">${t.name} — ${esc(t.description)}</option>`).join("")}</select>
     <label>Picklist values (comma-separated, for picklists)</label><input id="af_pick">
     <label>Lookup target object (for Lookup and MasterDetail types)</label><input id="af_ref" placeholder="Account">
     <label><input type="checkbox" id="af_reparent" style="width:auto" checked> Reparentable (master-detail only — allow changing the parent)</label>
@@ -1352,6 +1561,14 @@ async function showAdmin(section, highlight){
     <div><label>Error message</label><input id="vr_msg"><label>Condition JSON</label><textarea id="vr_cond" rows="3" placeholder='{"<":[{"field":"CloseDate"},{"today":true}]}'></textarea><div class="cb-host" id="cb_vr"></div></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="vr_submit" onclick="submitSetupForm('validation-rules')">Create rule</button><button class="btn secondary" id="vr_cancel" style="display:none" onclick="cancelSetupEdit('validation-rules')">Cancel</button></div>
     <div id="vr_list"></div></div>
+  <div class="card"><div class="section-title">Dynamic Forms</div><div id="dferr"></div>
+    <p class="muted">Show or hide fields based on another field's value, live in record forms. A field listed in a "Show" rule stays hidden until a Show rule for it is true; "Hide" rules take precedence. Hidden required fields won't block saving.</p>
+    <div class="grid2"><div><label>Object</label><select id="df_obj" onchange="dfOnObj()">${objs}</select><label>Rule name</label><input id="df_name">
+      <label>When field</label><select id="df_when_field"></select><label>Operator</label><select id="df_op"><option>equals</option><option>not_equals</option><option>contains</option><option>greater_than</option><option>less_than</option><option>is_blank</option><option>is_not_blank</option></select></div>
+    <div><label>Value</label><input id="df_value" placeholder="leave blank for is_blank / is_not_blank"><label>Action</label><select id="df_action"><option value="hide">Hide fields when true</option><option value="show">Show fields only when true</option></select>
+      <label>Target fields</label><div id="df_targets" class="df-targets"></div></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="df_submit" onclick="dfSave()">Create rule</button><button class="btn secondary" id="df_cancel" style="display:none" onclick="dfCancel()">Cancel</button></div>
+    <div id="df_list"></div></div>
   <div class="card"><div class="section-title">Code trigger (Apex-style)</div><div id="trerr"></div>
     <p class="muted">Python code. Events: before_insert, after_insert, before_update, after_update, before_delete, after_delete. Context: <code>record</code> (mutable in before_*), <code>old</code>, <code>user</code>, <code>errors</code> (append a message to block the save), <code>query(obj, **filters)</code>, <code>create(obj, fields)</code>, <code>update(obj, id, fields)</code>. No imports, files, or network. Max trigger depth 3.</p>
     <div class="grid2"><div><label>Object</label><select id="tr_obj">${objs}</select><label>Name</label><input id="tr_name"><label>Events (comma-separated)</label><input id="tr_events" placeholder="before_insert, before_update"><label>Order</label><input id="tr_order" type="number" value="10"></div>
@@ -1359,8 +1576,8 @@ async function showAdmin(section, highlight){
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="tr_submit" onclick="submitSetupForm('triggers')">Create trigger</button><button class="btn secondary" id="tr_cancel" style="display:none" onclick="cancelSetupEdit('triggers')">Cancel</button></div>
     <div id="tr_list"></div></div>
   <div class="card"><div class="section-title">Flow (workflow automation)</div><div id="flerr"></div>
-    <p class="muted">Trigger: on_create / on_update / on_create_or_update. Actions JSON, e.g. <code>[{"type":"create_record","object":"Task","fields":{"Subject":"Follow up: {{Trigger.Name}}","Status":"Not Started"}}]</code>. Templates support {{Trigger.Field}}, {{Trigger.Id}}, {{User.Id}}.</p>
-    <div class="grid2"><div><label>Object</label><select id="fl_obj">${objs}</select><label>Name</label><input id="fl_name"><label>Trigger</label><select id="fl_trig"><option>on_create</option><option>on_update</option><option>on_create_or_update</option></select></div>
+    <p class="muted">Trigger: on_create / on_update / on_create_or_update / scheduled. Scheduled flows run on a schedule (UTC) against matching records — schedule JSON e.g. <code>{"frequency":"daily","time":"09:00"}</code> or <code>{"frequency":"weekly","time":"09:00","day_of_week":1}</code> (0=Monday). Actions JSON, e.g. <code>[{"type":"create_record","object":"Task","fields":{"Subject":"Follow up: {{Trigger.Name}}","Status":"Not Started"}}]</code>. Templates support {{Trigger.Field}}, {{Trigger.Id}}, {{User.Id}}.</p>
+    <div class="grid2"><div><label>Object</label><select id="fl_obj">${objs}</select><label>Name</label><input id="fl_name"><label>Trigger</label><select id="fl_trig"><option>on_create</option><option>on_update</option><option>on_create_or_update</option><option>scheduled</option></select><label>Schedule JSON (scheduled trigger only)</label><textarea id="fl_sched" rows="2" placeholder='{"frequency":"daily","time":"09:00"}'></textarea></div>
     <div><label>Condition JSON (blank = always)</label><textarea id="fl_cond" rows="3"></textarea><div class="cb-host" id="cb_fl"></div><label>Actions JSON</label><textarea id="fl_act" rows="3"></textarea></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="fl_submit" onclick="submitSetupForm('flows')">Create flow</button><button class="btn secondary" id="fl_cancel" style="display:none" onclick="cancelSetupEdit('flows')">Cancel</button><div id="fl_list"></div></div></div>
   <div class="card"><div class="section-title">Approval process</div><div id="aperr"></div>
@@ -1383,7 +1600,7 @@ async function showAdmin(section, highlight){
   <div class="card"><div class="section-title">Permission set</div><div id="pserr"></div>
     <p class="muted">Grants <i>additional</i> access on top of a user's profile. Object permissions JSON: <code>{"Lead":{"delete":true}}</code></p>
     <div class="grid2"><div><label>Name</label><input id="ps_name"><label>Label</label><input id="ps_label"></div>
-    <div><label>Object permissions JSON</label><textarea id="ps_obj" rows="2" placeholder='{"Lead":{"delete":true}}'></textarea><label>Assign to user</label><select id="ps_user">${users.data.map(u=>`<option value="${u.id}">${esc(u.username)}</option>`).join("")}</select></div></div>
+    <div><label>Object permissions JSON</label><textarea id="ps_obj" rows="2" placeholder='{"Lead":{"delete":true}}'></textarea><label>Assign to user</label><select id="ps_user">${uList.map(u=>`<option value="${u.id}">${esc(u.username)}</option>`).join("")}</select></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createPermissionSet()">Create &amp; assign</button></div><div id="ps_list"></div></div>
   <div class="card"><div class="section-title">Webhook</div><div id="wherr"></div>
     <div class="grid2"><div><label>Name</label><input id="wh_name"><label>Object</label><select id="wh_obj">${objs}</select></div>
@@ -1497,14 +1714,14 @@ async function showAdmin(section, highlight){
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="importCsv()">Import</button></div></div>
   <div class="card"><div class="section-title">Create user</div><div id="auerr"></div>
     <div class="grid2"><div><label>Username</label><input id="au_user"><label>Full name</label><input id="au_name"><label>Temporary password</label><input id="au_pass" type="password" placeholder="User must change at first login"></div>
-    <div><label>Profile</label><select id="au_prof">${profiles.data.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select>
-    <label>Role</label><select id="au_role"><option value="">— none —</option>${roles.data.map(r=>`<option>${esc(r.name)}</option>`).join("")}</select></div></div>
+    <div><label>Profile</label><select id="au_prof">${pList.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select>
+    <label>Role</label><select id="au_role"><option value="">— none —</option>${rList.map(r=>`<option>${esc(r.name)}</option>`).join("")}</select></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createUser()">Create user</button></div><div id="au_list"></div></div>
   <div class="card"><div class="section-title">Create role</div><div id="arerr"></div>
-    <label>Role name</label><input id="ar_name"><label>Parent role</label><select id="ar_parent"><option value="">— none (top) —</option>${roles.data.map(r=>`<option>${esc(r.name)}</option>`).join("")}</select>
+    <label>Role name</label><input id="ar_name"><label>Parent role</label><select id="ar_parent"><option value="">— none (top) —</option>${rList.map(r=>`<option>${esc(r.name)}</option>`).join("")}</select>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createRole()">Create role</button></div><div id="rl_list"></div></div>
   <div class="card"><div class="section-title">Page layout (JSON)</div><div id="alerr"></div>
-    <div class="grid2"><div><label>Object</label><select id="al_obj">${objs}</select><label>Profile</label><select id="al_prof">${profiles.data.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select></div>
+    <div class="grid2"><div><label>Object</label><select id="al_obj">${objs}</select><label>Profile</label><select id="al_prof">${pList.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select></div>
     <div><label>Record type (blank = Default)</label><input id="al_rt" placeholder="Default"><label>Layout JSON</label><textarea id="al_json" rows="4" placeholder='{"sections":[{"title":"Details","columns":[["Name","Phone"]]}]}'></textarea></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveLayout()">Save layout</button></div></div>
   <div class="card"><div class="section-title">Bulk API 2.0</div><div id="bulkerr"></div>
@@ -1560,7 +1777,7 @@ const CARD_SECTION={
  "Create custom object":"datamodel","Add field to object":"datamodel","Record type":"datamodel","Page layout (JSON)":"datamodel","Sales path":"datamodel",
  "Relationships":"datamodel","Person Accounts":"datamodel","Territories":"datamodel","Big Objects & Archival":"datamodel",
  "App Manager":"apps",
- "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Approval process":"automation","Assignment rule":"automation","Case SLA policy":"automation","Escalation rule":"automation","Auto-response rule":"automation",
+ "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Dynamic Forms":"automation","Approval process":"automation","Assignment rule":"automation","Case SLA policy":"automation","Escalation rule":"automation","Auto-response rule":"automation",
  "Create user":"security","Create role":"security","Permission set":"security","Sharing rule (criteria-based)":"security","Duplicate matching rule":"security","API keys":"security",
  "Webhook":"integrations","Named credential (HTTP callouts)":"integrations","Email template":"integrations","CSV import":"integrations","Metadata package":"integrations","Change sets":"integrations",
  "Bulk API 2.0":"devops","Streaming events":"devops","Sandboxes":"devops","Source tracking":"devops","Custom metadata types":"devops","Custom settings":"devops","External objects":"devops",
@@ -1581,6 +1798,7 @@ const SETUP_TILES=[
  {section:"automation",card:"Screen flow",desc:"Guided multi-step wizards",kind:"flows",flowFilter:"screen"},
  {section:"automation",card:"Code trigger (Apex-style)",desc:"Sandboxed Python triggers",kind:"triggers"},
  {section:"automation",card:"Validation rule",desc:"Save-time validation",kind:"validation-rules"},
+ {section:"automation",card:"Dynamic Forms",desc:"Conditional field visibility"},
  {section:"automation",card:"Approval process",desc:"Multi-step approvals",kind:"approval-processes"},
  {section:"automation",card:"Assignment rule",desc:"Round-robin & rule assignment",kind:"assignment-rules"},
  {section:"automation",card:"Case SLA policy",desc:"Milestones & breach tracking",kind:"sla-policies"},
@@ -1658,7 +1876,7 @@ function setupAfterRender(section, highlight){
   // collapsible cards
   host.querySelectorAll(":scope > .card > .section-title").forEach(t=>{ t.onclick=()=>t.parentElement.classList.toggle("collapsed"); });
   // lists + builders for the visible section
-  if(sec.id==="automation"){ listAutoResponses(); }
+  if(sec.id==="automation"){ listAutoResponses(); dfInit(); }
   if(sec.id==="datamodel"){ listPaths(); }
   if(sec.id==="datamodel"){ listRelationships(); loadPersonStatus(); listTerritories(); listTerrRules(); listBigObjects(); listArchiveRules(); }
   if(sec.id==="devops"){ listBulkJobs(); listSandboxes(); listCmdt(); listSettings(); listXObjects(); }
@@ -1691,8 +1909,8 @@ const SETUP_KINDS={
    fields:[["name","vr_name"],["object","vr_obj"],["message","vr_msg"],["condition","vr_cond","json",{}],["active",null,"const",true]]},
  "triggers":{cardTitle:"Code trigger (Apex-style)",cardSection:"automation",listEl:"tr_list",errEl:"trerr",submit:"tr_submit",cancel:"tr_cancel",cols:[["Name","name"],["Object","object"],["Events","events"]],
    fields:[["name","tr_name"],["object","tr_obj"],["events","tr_events","csv"],["order","tr_order","int",10],["code","tr_code"],["active",null,"const",true]]},
- "flows":{cardTitle:"Flow (workflow automation)",cardSection:"automation",listEl:"fl_list",errEl:"flerr",submit:"fl_submit",cancel:"fl_cancel",cols:[["Name","name"],["Object","object"],["Trigger","trigger"]],filter:r=>!r.flow_type||r.flow_type==="record",
-   fields:[["name","fl_name"],["object","fl_obj"],["trigger","fl_trig"],["condition","fl_cond","json",{}],["actions","fl_act","json",[]],["active",null,"const",true]],extra:"flowCanvas"},
+ "flows":{cardTitle:"Flow (workflow automation)",cardSection:"automation",listEl:"fl_list",errEl:"flerr",submit:"fl_submit",cancel:"fl_cancel",cols:[["Name","name"],["Object","object"],["Trigger","trigger"],["Next run","next_run"]],filter:r=>!r.flow_type||r.flow_type==="record",
+   fields:[["name","fl_name"],["object","fl_obj"],["trigger","fl_trig"],["schedule","fl_sched","json",{}],["condition","fl_cond","json",{}],["actions","fl_act","json",[]],["active",null,"const",true]],extra:"flowCanvas"},
  "screen-flows":{apiKind:"flows",cardTitle:"Screen flow",cardSection:"automation",listEl:"sfl_list",errEl:"sflerr",submit:"sfl_submit",cancel:"sfl_cancel",cols:[["Name","name"]],filter:r=>r.flow_type==="screen",
    fields:[["name","sfl_name"],["screens","sfl_screens","json",[]],["finish_actions","sfl_fin","json",[]],["flow_type",null,"const","screen"],["active",null,"const",true]],extra:"flowCanvas"},
  "approval-processes":{cardTitle:"Approval process",cardSection:"automation",listEl:"ap_list",errEl:"aperr",submit:"ap_submit",cancel:"ap_cancel",cols:[["Name","name"],["Object","object"]],
@@ -1791,7 +2009,7 @@ async function delSetupRow(kind,rid){
 }
 function cellVal(row,f){
   let val=row[f];
-  if(f==="last_run") val=(val||"never").slice(0,16).replace("T"," ");
+  if(f==="last_run"||f==="next_run") val=(val||"never").slice(0,16).replace("T"," ");
   if(f==="events"||f==="fields") val=(val||[]).join(", ");
   if(f==="is_default") val=val?"✓":"—";
   if(val===undefined||val===null||val==="") val="—";
@@ -1802,7 +2020,7 @@ async function refreshSetupList(kind){
   const el=document.getElementById(cfg.listEl); if(!el) return;
   const apiKind=cfg.apiKind||kind;
   const r=await api("GET","/api/admin/"+apiKind);
-  let rows=r.data||[];
+  let rows=Array.isArray(r.data)?r.data:[];
   SETUP_CACHE[kind]=rows;
   if(cfg.filter) rows=rows.filter(cfg.filter);
   const badge=document.querySelector(`[data-count-for="${kind}"]`); if(badge) badge.textContent=`(${rows.length})`;
@@ -1811,9 +2029,6 @@ async function refreshSetupList(kind){
   el.innerHTML=`<table style="margin-top:10px"><tr>${cfg.cols.map(c=>`<th>${c[0]}</th>`).join("")}${cfg.noActive?"":`<th>Status</th>`}<th></th></tr>`+
    rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> <button class=\"btn secondary small\" onclick=\"viewJobRuns(\'${x.id}\')\">Runs</button> `:""}${cfg.extra==="flowCanvas"?`<button class="btn secondary small" onclick="openFlowBuilder('${kind}','${x.id}')">Canvas</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`;
 }
-// legacy shims
-async function listConfigs(kind,elId,withRun){ const map={"assignment-rules":"assignment-rules","email-templates":"email-templates","sla-policies":"sla-policies","escalation-rules":"escalation-rules"}; if(map[kind]) return refreshSetupList(kind); }
-async function delConfig(kind,id,elId){ return delSetupRow(kind,id); }
 /* ============ guided condition builder (point-and-click, no raw JSON) ============ */
 const CB_OPS=[["==","equals"],["!=","not equals"],[">","greater than"],["<","less than"],[">=","> or equal"],["<=","< or equal"],["contains","contains"],["starts_with","starts with"],["isblank","is blank"],["notblank","is not blank"]];
 const CB_STATE={};
@@ -2652,7 +2867,14 @@ function fbPos(key,i){
 }
 function fbLabel(n){
   const f=FB.flow;
-  if(n.kind==="start") return FB.isScreen?("▶ "+(f.name||"Screen flow")):("▶ "+String(f.trigger||"on_create").replace(/_/g," ")+" · "+(f.object||""));
+  if(n.kind==="start"){
+    if(FB.isScreen) return "▶ "+(f.name||"Screen flow");
+    if(f.trigger==="scheduled"){
+      const s=f.schedule||{};
+      return "▶ scheduled · "+(s.frequency||"daily")+" "+(s.time||"")+" UTC";
+    }
+    return "▶ "+String(f.trigger||"on_create").replace(/_/g," ")+" · "+(f.object||"");
+  }
   if(n.kind==="cond") return "◆ Condition";
   if(n.kind==="screen"){ const s=(f.screens||[])[n.idx]||{}; return "▤ "+(s.title||("Screen "+(n.idx+1))); }
   const a=((n.kind==="faction"?f.finish_actions:f.actions)||[])[n.idx]||{};
@@ -2663,7 +2885,8 @@ function fbLabel(n){
 async function openFlowBuilder(kind,id){
   const cfg=SETUP_KINDS[kind];
   const r=await api("GET","/api/admin/"+(cfg.apiKind||kind));
-  const flow=(r.data||[]).find(x=>x.id===id);
+  const rows=Array.isArray(r.data)?r.data:[];
+  const flow=rows.find(x=>x.id===id);
   if(!flow){ toast("Flow not found.","error"); return; }
   FB={kind,id,flow:JSON.parse(JSON.stringify(flow)),isScreen:(kind==="screen-flows"||flow.flow_type==="screen"),sel:"start"};
   renderFlowBuilder();
@@ -2729,6 +2952,22 @@ function fbBindDrag(){
   });
   svg.addEventListener("pointerup",()=>{drag=null;});
 }
+function fbScheduleHtml(f){
+  const s=f.schedule||{};
+  const days=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  return `<div class="card" style="margin-top:8px;padding:10px"><div class="section-title">Schedule (UTC)</div>`
+   +`<label>Frequency</label><select id="fb_freq" onchange="fbTrigChange()">${["daily","weekly"].map(x=>`<option ${s.frequency===x?"selected":""}>${x}</option>`).join("")}</select>`
+   +`<label>Time (HH:MM, 24-hour)</label><input id="fb_stime" value="${esc(s.time||"09:00")}" placeholder="09:00">`
+   +((s.frequency||"daily")==="weekly"?`<label>Day of week</label><select id="fb_dow">${days.map((d,i)=>`<option value="${i}" ${+s.day_of_week===i?"selected":""}>${d}</option>`).join("")}</select>`:"")
+   +`</div>`;
+}
+function fbTrigChange(){
+  if(!FB) return;
+  FB.flow.trigger=(document.getElementById("fb_trig")||{}).value||FB.flow.trigger;
+  const fr=(document.getElementById("fb_freq")||{}).value;
+  if(FB.flow.trigger==="scheduled") FB.flow.schedule={...(FB.flow.schedule||{}),frequency:fr||"daily"};
+  renderFbPanel();
+}
 function renderFbPanel(){
   const el=document.getElementById("fbpanel"); if(!el||!FB) return;
   const n=fbNodes().find(x=>x.key===FB.sel);
@@ -2737,7 +2976,7 @@ function renderFbPanel(){
   let h="";
   if(n.kind==="start"){
     h=`<div class="section-title">Start</div><label>Name</label><input id="fb_name" value="${esc(f.name||"")}">`;
-    if(!FB.isScreen) h+=`<label>Object</label><select id="fb_objsel">${objOpts}</select><label>Trigger</label><select id="fb_trig">${["on_create","on_update","on_create_or_update"].map(t=>`<option ${f.trigger===t?"selected":""}>${t}</option>`).join("")}</select>`;
+    if(!FB.isScreen) h+=`<label>Object</label><select id="fb_objsel">${objOpts}</select><label>Trigger</label><select id="fb_trig" onchange="fbTrigChange()">${["on_create","on_update","on_create_or_update","scheduled"].map(t=>`<option ${f.trigger===t?"selected":""}>${t}</option>`).join("")}</select>`+(f.trigger==="scheduled"?fbScheduleHtml(f):"");
   }else if(n.kind==="cond"){
     h=`<div class="section-title">Condition</div><label>Object</label><select id="fb_objsel">${objOpts}</select><div class="cb-host" id="cb_fb"></div><label>Condition JSON</label><textarea id="fb_cond" rows="4">${esc(JSON.stringify(f.condition||{}))}</textarea>`;
   }else if(n.kind==="action"||n.kind==="faction"){
@@ -2787,7 +3026,13 @@ function fbApplyPanel(loud){
   const f=FB.flow, gv=id=>(document.getElementById(id)||{}).value;
   if(n.kind==="start"){
     f.name=gv("fb_name")||f.name;
-    if(!FB.isScreen){ f.object=gv("fb_objsel")||f.object; f.trigger=gv("fb_trig")||f.trigger; }
+    if(!FB.isScreen){
+      f.object=gv("fb_objsel")||f.object; f.trigger=gv("fb_trig")||f.trigger;
+      if(f.trigger==="scheduled"){
+        f.schedule={frequency:gv("fb_freq")||"daily",time:gv("fb_stime")||"09:00"};
+        if(f.schedule.frequency==="weekly") f.schedule.day_of_week=parseInt(gv("fb_dow")||"1",10);
+      }else delete f.schedule;
+    }
   }else if(n.kind==="cond"){
     f.condition=fbJson("fb_cond",f.condition);
   }else if(n.kind==="action"||n.kind==="faction"){
@@ -2850,48 +3095,470 @@ async function fbSave(){
   if(!fbJsonOk){ toast("Fix the invalid JSON before saving.","error"); return; }
   const f=FB.flow, payload={name:f.name,canvas:f.canvas||{}};
   if(FB.isScreen){ payload.screens=f.screens||[]; payload.finish_actions=f.finish_actions||[]; }
-  else{ payload.object=f.object; payload.trigger=f.trigger; payload.condition=f.condition||{}; payload.actions=f.actions||[]; }
+  else{ payload.object=f.object; payload.trigger=f.trigger; payload.condition=f.condition||{}; payload.actions=f.actions||[]; if(f.schedule) payload.schedule=f.schedule; }
   const cfg=SETUP_KINDS[FB.kind];
   const r=await api("PATCH","/api/admin/"+(cfg.apiKind||FB.kind)+"/"+FB.id,payload);
   if(r.ok){ toast("Flow saved.","ok"); fbLoadVersions(); }
   else toast("Save failed: "+(r.data.error||r.status),"error");
 }
 
-/* ============ dispatch console (service timeline) ============ */
-let dispDate=null;
+/* ============ dispatch console ============ */
+let dispDate=null, dispTerr="", dispCache=null, dispSkills={};
+const FS_STAT_COLOR={"Completed":"#2e9e4f","In Progress":"#d98a1f","Dispatched":"#8b5cf6","Scheduled":"#0176d3","Cancelled":"#94a3b8","Cannot Complete":"#ef4444","None":"#6b7280"};
+const FS_TRANSITIONS={"None":["Scheduled","Cancelled"],"Scheduled":["Dispatched","Cancelled"],"Dispatched":["In Progress","Cancelled"],"In Progress":["Completed","Cannot Complete","Cancelled"],"Cannot Complete":["Scheduled"],"Cancelled":["Scheduled"]};
+const FS_ACTION_LABEL={"Scheduled":"Re-schedule","Dispatched":"Start travel","In Progress":"Start work","Completed":"Complete","Cannot Complete":"Cannot complete","Cancelled":"Cancel"};
+function fsStatusPill(s){
+  const c=FS_STAT_COLOR[s||"None"]||"#6b7280";
+  return `<span class="stat-pill" style="background:${c}1f;color:${c};border:1px solid ${c}66">${esc(s||"None")}</span>`;
+}
+function fsMapLink(loc){
+  const p=String(loc||"").split(";");
+  if(p.length!==2||!p[0].trim()||!p[1].trim()) return "";
+  return ` <a href="https://www.google.com/maps?q=${encodeURIComponent(p[0].trim()+","+p[1].trim())}" target="_blank" rel="noopener">Map</a>`;
+}
+function fsHm(iso){ return iso?String(iso).slice(11,16):"—"; }
 async function showDispatch(){
   setActive("__dispatch");
   if(!dispDate) dispDate=new Date().toISOString().slice(0,10);
   document.getElementById("main").innerHTML=skel(3);
-  const r=await api("GET","/api/sobjects/ServiceAppointment?sort=ScheduledStart&dir=asc");
-  if(!r.ok){ document.getElementById("main").innerHTML=`<div class="err">${esc((r.data||{}).error||"Failed to load")}</div>`; return; }
-  const day=(r.data||[]).filter(a=>(a.ScheduledStart||"").slice(0,10)===dispDate);
-  const techs={};
-  day.forEach(a=>{ const t=a.Technician||"(Unassigned)"; (techs[t]=techs[t]||[]).push(a); });
-  const names=Object.keys(techs).sort();
+  const q=`date=${dispDate}${dispTerr?`&territory_id=${encodeURIComponent(dispTerr)}`:""}`;
+  const [d,terr,sk]=await Promise.all([
+    api("GET",`/api/field-service/dispatch?${q}`),
+    api("GET","/api/sobjects/ServiceTerritory"),
+    api("GET","/api/sobjects/Skill")
+  ]);
+  if(!d.ok){ document.getElementById("main").innerHTML=`<div class="err">${esc((d.data||{}).error||"Failed to load dispatch data")}</div>`; return; }
+  dispCache=d.data||{};
+  const terrs=(terr.ok&&terr.data)||[];
+  dispSkills={}; ((sk.ok&&sk.data)||[]).forEach(s=>{ dispSkills[s.Id]=s.Name||s.Id; });
+  const lanes=dispCache.lanes||[], unsched=dispCache.unscheduled||[];
+  const nAppt=lanes.reduce((n,l)=>n+(l.appointments||[]).length,0);
   const H0=6,H1=22,SPAN=H1-H0;
-  const pct=dt=>{ const d=new Date(dt); return Math.min(100,Math.max(0,((d.getHours()+d.getMinutes()/60)-H0)/SPAN*100)); };
-  const col=s=>s==="Completed"?"#2e9e4f":s==="In Progress"?"#d98a1f":s==="Cancelled"?"#94a3b8":"#0176d3";
+  const pct=dt=>{ const x=new Date(dt); return Math.min(100,Math.max(0,((x.getHours()+x.getMinutes()/60)-H0)/SPAN*100)); };
   const today=new Date().toISOString().slice(0,10);
   const nowPct=dispDate===today?pct(new Date().toISOString()):null;
   let ticks=""; for(let h=H0;h<=H1;h+=2) ticks+=`<span style="position:absolute;left:${((h-H0)/SPAN*100).toFixed(1)}%;transform:translateX(-50%)">${h}:00</span>`;
-  let html=`<div class="btnrow"><h2 style="margin:0">Dispatch console</h2><span class="muted">${day.length} appointment(s) · ${names.length} technician(s)</span><span style="flex:1"></span>`
+  let html=`<div class="btnrow" style="align-items:center;flex-wrap:wrap"><h2 style="margin:0">Dispatch console</h2>`
+    +`<span class="muted">${nAppt} scheduled · ${unsched.length} unscheduled · ${lanes.length} resource(s)</span><span style="flex:1"></span>`
+    +`<select id="disp_terr" onchange="dispTerr=this.value;showDispatch()" style="width:auto"><option value="">All territories</option>${terrs.map(t=>`<option value="${t.Id}"${dispTerr===t.Id?" selected":""}>${esc(t.Name||t.Id)}</option>`).join("")}</select> `
     +`<input type="date" id="disp_date" value="${dispDate}" style="width:auto"> <button class="btn secondary small" onclick="dispDate=v('disp_date');showDispatch()">Go</button> `
-    +`<button class="btn secondary small" onclick="dispDate=new Date().toISOString().slice(0,10);showDispatch()">Today</button></div>`;
-  html+=`<div class="card"><div class="disp-head"><div></div><div class="disp-scale">${ticks}</div></div>`;
-  if(!names.length) html+=`<p class="muted">No appointments scheduled on this date.</p>`;
-  for(const t of names){
-    html+=`<div class="disp-row"><div style="padding:10px 8px"><b>${esc(t)}</b><div class="muted">${techs[t].length} appt(s)</div></div><div class="disp-lane">`;
-    for(const a of techs[t]){
+    +`<button class="btn secondary small" onclick="dispDate=new Date().toISOString().slice(0,10);showDispatch()">Today</button> `
+    +`<button class="btn small" onclick="dispAutoSchedule()">Auto-schedule day</button> `
+    +`<button class="btn secondary small" onclick="dispOptimize()">Optimize routes</button></div>`;
+  html+=`<div class="setup-links">Setup: ${["ServiceTerritory","ServiceResource","WorkType","OperatingHours","Skill"].map(o=>`<a href="#" onclick="showObject('${o}');return false">${o}</a>`).join(" · ")}</div>`;
+  // ---- resource lanes gantt ----
+  html+=`<div class="card"><div class="section-title">Resource schedule</div><div class="disp-head"><div></div><div class="disp-scale">${ticks}</div></div>`;
+  if(!lanes.length) html+=`<p class="muted">No active service resources${dispTerr?" in this territory":""}. Add them under Setup: ServiceResource.</p>`;
+  for(const lane of lanes){
+    const res=lane.resource||{};
+    const appts=(lane.appointments||[]).slice().sort((a,b)=>(a.ScheduledStart||"").localeCompare(b.ScheduledStart||""));
+    const ends=[];
+    for(const a of appts){ // stack overlapping bars on separate rows
+      const s=a.ScheduledStart||"", e=a.ScheduledEnd||s;
+      let r=0; while(ends[r]&&ends[r]>s) r++;
+      ends[r]=e; a._row=r;
+    }
+    const laneH=Math.max(1,ends.length)*36+10;
+    html+=`<div class="disp-row"><div style="padding:10px 8px"><b>${esc(res.Name||"(no name)")}</b><div class="muted">${appts.length} appt(s)</div></div><div class="disp-lane" style="min-height:${laneH}px" ondragover="dispDragOver(event)" ondragleave="dispDragLeave(event)" ondrop="dispDropLane(event,'${res.Id}')">`;
+    for(const a of appts){
       const l=pct(a.ScheduledStart), w=Math.max(2.5,pct(a.ScheduledEnd||a.ScheduledStart)-l);
-      const tip=`${a.Name||"(no name)"} — ${(a.ScheduledStart||"").slice(11,16)}–${(a.ScheduledEnd||"").slice(11,16)} · ${a.Status||""}${a.Address?" · "+a.Address:""}`;
-      html+=`<div class="disp-bar" style="left:${l.toFixed(1)}%;width:${w.toFixed(1)}%;background:${col(a.Status)}" title="${esc(tip)}" onclick="jumpTo('ServiceAppointment','${a.Id}')">${esc(a.Name||"(no name)")}</div>`;
+      const tip=`${a.Name||"(no name)"} — ${fsHm(a.ScheduledStart)}–${fsHm(a.ScheduledEnd)} · ${a.Status||""}${a.Address?" · "+a.Address:""}`;
+      html+=`<div class="disp-bar" draggable="true" ondragstart="dispDragStart(event,'sched','${a.Id}')" style="left:${l.toFixed(1)}%;width:${w.toFixed(1)}%;top:${9+(a._row||0)*36}px;background:${FS_STAT_COLOR[a.Status]||"#0176d3"}" title="${esc(tip)}" onclick="openApptModal('${a.Id}')">${esc(a.Name||"(no name)")}</div>`;
     }
     if(nowPct!=null&&nowPct>=0&&nowPct<=100) html+=`<div style="position:absolute;left:${nowPct.toFixed(1)}%;top:0;bottom:0;width:2px;background:#ef4444;opacity:.7" title="Now"></div>`;
     html+=`</div></div>`;
   }
-  html+=`</div><p class="muted">Click a block to open the appointment. Bars are colored by status.</p>`;
+  html+=`</div><p class="muted">Click a block to open the appointment. Drag an unscheduled card onto a lane to assign it, drag a bar between lanes to reassign, or drop a bar back on the unscheduled tray to unassign.</p>`;
+  // ---- unscheduled tray ----
+  html+=`<div class="section-title" style="margin-top:18px">Unscheduled (${unsched.length})</div>`;
+  html+=`<div class="unsch-grid" id="unsch_tray" ondragover="dispDragOver(event)" ondragleave="dispDragLeave(event)" ondrop="dispDropTray(event)">${unsched.length?unsched.map(a=>dispUnscheduledCard(a)).join(""):`<p class="muted">Nothing waiting to be scheduled.</p>`}</div>`;
   document.getElementById("main").innerHTML=html;
+}
+function dispUnscheduledCard(a){
+  const wo=a.work_order||{};
+  const skills=(a.required_skills||[]).map(id=>dispSkills[id]||id);
+  const addr=a.Address?esc(a.Address):"", map=fsMapLink(a.Location);
+  return `<div class="card appt-card" draggable="true" ondragstart="dispDragStart(event,'unsched','${a.Id}')"><div class="btnrow" style="align-items:center;margin-bottom:8px"><b>${esc(a.Name||"(no name)")}</b> ${fsStatusPill(a.Status)}</div>`
+   +(wo.Subject?`<div><b>${esc(wo.Subject)}</b>${wo.Priority?` <span class="muted">· ${esc(wo.Priority)} priority</span>`:""}</div>`:"")
+   +(a.ArrivalWindowStart?`<div class="muted">Window: ${fmtDateTime(a.ArrivalWindowStart)} – ${fmtDateTime(a.ArrivalWindowEnd)}</div>`:"")
+   +(skills.length?`<div class="muted">Required skills: ${skills.map(esc).join(", ")}</div>`:"")
+   +((addr||map)?`<div class="muted" style="margin-top:4px">${addr}${map}</div>`:"")
+   +`<div class="btnrow" style="margin:10px 0 0"><button class="btn small" onclick="openApptModal('${a.Id}')">Find candidates</button>`
+   +(wo.Id?` <button class="btn secondary small" onclick="jumpTo('WorkOrder','${wo.Id}')">Work order</button>`:"")+`</div></div>`;
+}
+function dispFindAppt(id){
+  if(!dispCache) return null;
+  for(const l of dispCache.lanes||[]) for(const a of l.appointments||[]) if(a.Id===id) return a;
+  for(const a of dispCache.unscheduled||[]) if(a.Id===id) return a;
+  return null;
+}
+function dispResourceName(rid){
+  if(!rid||!dispCache) return null;
+  for(const l of dispCache.lanes||[]) if((l.resource||{}).Id===rid) return l.resource.Name;
+  return null;
+}
+async function openApptModal(apptId){
+  let a=dispFindAppt(apptId);
+  if(!a){
+    const r=await api("GET",`/api/sobjects/ServiceAppointment/${apptId}`);
+    if(!r.ok){ toast("Appointment not found.","error"); return; }
+    a=r.data;
+  }
+  const wo=a.work_order||{};
+  const assigned=!!a.ServiceResourceId;
+  const resName=dispResourceName(a.ServiceResourceId);
+  const addr=a.Address?esc(a.Address):"", map=fsMapLink(a.Location);
+  openLightbox(`<div class="section-title">${esc(a.Name||"Appointment")}</div>`
+   +`<div class="btnrow" style="align-items:center">${fsStatusPill(a.Status)}<span style="flex:1"></span>`
+   +(assigned?`<button class="btn secondary small" onclick="dispUnassign('${a.Id}')">Unassign</button>`:"")
+   +`<button class="btn secondary small" onclick="closeLightbox();jumpTo('ServiceAppointment','${a.Id}')">Open record</button></div>`
+   +`<table style="margin:8px 0"><tbody>`
+   +`<tr><td class="muted" style="width:34%">Scheduled</td><td>${fmtDateTime(a.ScheduledStart)}${a.ScheduledEnd?" – "+fmtDateTime(a.ScheduledEnd):""}</td></tr>`
+   +(a.ArrivalWindowStart?`<tr><td class="muted">Arrival window</td><td>${fmtDateTime(a.ArrivalWindowStart)} – ${fmtDateTime(a.ArrivalWindowEnd)}</td></tr>`:"")
+   +(wo.Subject?`<tr><td class="muted">Work order</td><td><a href="#" onclick="closeLightbox();jumpTo('WorkOrder','${wo.Id}');return false">${esc(wo.Subject)}</a>${wo.Priority?` · ${esc(wo.Priority)}`:""}</td></tr>`:"")
+   +(assigned?`<tr><td class="muted">Assigned to</td><td>${esc(resName||a.ServiceResourceId)}</td></tr>`:"")
+   +((addr||map)?`<tr><td class="muted">Address</td><td>${addr}${map}</td></tr>`:"")
+   +`</tbody></table>`
+   +`<div class="section-title" style="margin-top:6px">Parts consumed</div><div id="apptparts"><p class="muted">Loading parts…</p></div>`
+   +`<div class="section-title" style="margin-top:6px">Candidates</div><div id="apptcands"><p class="muted">Loading candidates…</p></div>`);
+  loadApptParts(apptId); // loads in parallel with candidates below
+  const cr=await api("GET",`/api/field-service/candidates?appointment_id=${encodeURIComponent(apptId)}&date=${dispDate}`);
+  const box=document.getElementById("apptcands"); if(!box) return;
+  if(!cr.ok){ box.innerHTML=`<div class="err">${esc((cr.data||{}).error||"Failed to load candidates")}</div>`; return; }
+  const cands=cr.data.candidates||[];
+  if(!cands.length){ box.innerHTML=`<p class="muted">No eligible resource with availability on this date.</p>`; return; }
+  box.innerHTML=cands.map(c=>{
+    const res=c.resource||{};
+    return `<div class="card" style="margin:8px 0;padding:10px 12px"><div class="btnrow" style="align-items:center;margin-bottom:4px"><b>${esc(res.Name||"(no name)")}</b><span style="flex:1"></span>`
+     +`<button class="btn small" onclick="dispAssign('${apptId}','${res.Id}','${esc(c.start||"")}')">Assign</button></div>`
+     +`<div class="muted">${fmtDateTime(c.start)} · ${c.travel_min==null?"?":c.travel_min} min travel · ${c.duration_min==null?"?":c.duration_min} min job</div>`
+     +((c.reasons||[]).length?`<div class="muted" style="font-size:12px;margin-top:4px">${c.reasons.map(esc).join(" · ")}</div>`:"")+`</div>`;
+  }).join("");
+}
+async function dispAssign(apptId,resId,start){
+  const r=await api("POST","/api/field-service/assign",{appointment_id:apptId,resource_id:resId,start:start||undefined});
+  if(r.ok){ closeLightbox(); toast("Appointment assigned.","ok"); showDispatch(); }
+  else{ toast("Assign failed: "+((r.data||{}).error||r.status),"error"); showDispatch(); }
+}
+async function dispUnassign(apptId){
+  const r=await api("POST","/api/field-service/unassign",{appointment_id:apptId});
+  if(r.ok){ closeLightbox(); toast("Appointment unassigned.","ok"); showDispatch(); }
+  else toast("Unassign failed: "+((r.data||{}).error||r.status),"error");
+}
+let fsProducts=null; // cached Product list for dropdowns
+async function fsLoadProducts(){
+  if(fsProducts) return fsProducts;
+  const r=await api("GET","/api/sobjects/Product");
+  fsProducts=(r.ok&&r.data)||[];
+  return fsProducts;
+}
+async function loadApptParts(apptId){
+  const box=document.getElementById("apptparts"); if(!box) return;
+  const [pc,prods]=await Promise.all([api("GET","/api/sobjects/ProductConsumed"),fsLoadProducts()]);
+  if(!document.getElementById("apptparts")) return;
+  const rows=((pc.ok&&pc.data)||[]).filter(p=>(p.ServiceAppointmentId||p.AppointmentId)===apptId);
+  const prodName=p=>p.ProductName||p.Product||((fsProducts.find(x=>x.Id===p.ProductId)||{}).Name)||p.ProductId||"(product)";
+  const qty=p=>p.QuantityConsumed??p.Quantity??"";
+  box.innerHTML=(rows.length
+    ?`<table style="margin:4px 0"><tbody>${rows.map(p=>`<tr><td><b>${esc(prodName(p))}</b></td><td class="muted">Qty: ${esc(String(qty(p)))}</td></tr>`).join("")}</tbody></table>`
+    :`<p class="muted">No parts consumed yet.</p>`)
+   +`<div class="btnrow" style="margin-top:8px;align-items:center;flex-wrap:wrap">`
+   +(fsProducts.length
+     ?`<select id="pc_prod" style="width:auto;max-width:220px">${fsProducts.map(p=>`<option value="${p.Id}">${esc(p.Name||p.Id)}</option>`).join("")}</select>`
+     +`<input id="pc_qty" type="number" min="1" step="1" value="1" style="width:80px" aria-label="Quantity">`
+     +`<button class="btn small" onclick="fsConsumeProduct('${apptId}')">Consume</button>`
+     :`<span class="muted">No products defined — add them under Products first.</span>`)
+   +`</div>`;
+}
+async function fsConsumeProduct(apptId){
+  const pid=v("pc_prod"), qty=parseInt(v("pc_qty"),10);
+  if(!pid){ toast("Select a product.","error"); return; }
+  if(!(qty>0)){ toast("Enter a quantity greater than 0.","error"); return; }
+  const r=await api("POST","/api/field-service/consume-product",{appointment_id:apptId,product_id:pid,quantity:qty});
+  if(r.ok){ toast("Part consumed.","ok"); loadApptParts(apptId); }
+  else toast("Consume failed: "+((r.data||{}).error||r.status),"error");
+}
+async function dispAutoSchedule(){
+  const r=await api("POST","/api/field-service/schedule",{date:dispDate,territory_id:dispTerr||null});
+  if(!r.ok){ toast("Auto-schedule failed: "+((r.data||{}).error||r.status),"error"); return; }
+  const sch=(r.data.scheduled||[]), un=(r.data.unscheduled||[]);
+  toast(`Scheduled ${sch.length}, unable: ${un.length}.`,"ok");
+  showDispatch();
+  if(un.length) openLightbox(`<div class="section-title">Unable to schedule (${un.length})</div>`
+   +`<table><tbody>${un.map(u=>`<tr><td><b>${esc(u.name||u.appointment_id)}</b></td><td class="muted">${esc(u.reason||"")}</td></tr>`).join("")}</tbody></table>`);
+}
+async function dispOptimize(){
+  const r=await api("POST","/api/field-service/optimize",{date:dispDate,territory_id:dispTerr||null});
+  if(!r.ok){ toast("Optimize failed: "+((r.data||{}).error||r.status),"error"); return; }
+  const moved=r.data.moved||[];
+  toast(moved.length?`Optimized: ${moved.length} appointment(s) re-sequenced to cut travel.`:"Nothing to optimize — routes are already efficient.","ok");
+  showDispatch();
+}
+/* ---- Gantt drag and drop (click/modal flows stay as the keyboard path) ---- */
+function dispDragStart(e,kind,id){
+  e.dataTransfer.setData("text/plain",JSON.stringify({kind,id}));
+  e.dataTransfer.effectAllowed="move";
+}
+function dispDragOver(e){
+  e.preventDefault(); e.dataTransfer.dropEffect="move";
+  const t=e.currentTarget;
+  if(t&&t.classList&&(t.classList.contains("disp-lane")||t.classList.contains("unsch-grid"))) t.classList.add("dragover");
+}
+function dispDragLeave(e){ const t=e.currentTarget; if(t&&t.classList) t.classList.remove("dragover"); }
+function dispDragPayload(e){
+  try{ const d=JSON.parse(e.dataTransfer.getData("text/plain")||""); return d&&d.id?d:null; }catch(_){ return null; }
+}
+function dispLaneOf(apptId){
+  if(!dispCache) return null;
+  for(const l of dispCache.lanes||[]) for(const a of l.appointments||[]) if(a.Id===apptId) return (l.resource||{}).Id||null;
+  return null;
+}
+async function dispDropLane(e,resId){
+  e.preventDefault();
+  const t=e.currentTarget; if(t&&t.classList) t.classList.remove("dragover");
+  const d=dispDragPayload(e); if(!d) return;
+  if(dispLaneOf(d.id)===resId) return; // already on this lane
+  // mirror the modal's assign behavior: use the candidate's proposed start for this resource
+  let start=null;
+  try{
+    const cr=await api("GET",`/api/field-service/candidates?appointment_id=${encodeURIComponent(d.id)}&date=${dispDate}`);
+    const cands=(cr.ok&&(cr.data.candidates||[]))||[];
+    const hit=cands.find(c=>(c.resource||{}).Id===resId);
+    start=hit&&hit.start?hit.start:null;
+  }catch(_){}
+  dispAssign(d.id,resId,start);
+}
+async function dispDropTray(e){
+  e.preventDefault();
+  const t=e.currentTarget; if(t&&t.classList) t.classList.remove("dragover");
+  const d=dispDragPayload(e); if(!d||d.kind!=="sched") return;
+  if(!dispLaneOf(d.id)) return; // already unscheduled
+  dispUnassign(d.id);
+}
+
+/* ============ technician self-service (My Schedule) ============ */
+let mySchedDate=null;
+async function showMySchedule(){
+  setActive("__myschedule");
+  if(!mySchedDate) mySchedDate=new Date().toISOString().slice(0,10);
+  document.getElementById("main").innerHTML=skel(3);
+  const r=await api("GET",`/api/field-service/my-schedule?date=${mySchedDate}`);
+  if(!r.ok){ document.getElementById("main").innerHTML=`<div class="err">${esc((r.data||{}).error||"Failed to load schedule")}</div>`; return; }
+  const d=r.data||{}, res=d.resource, appts=d.appointments||[];
+  const srR=await api("GET","/api/sobjects/ServiceReport");
+  const srByAppt={}; ((srR.ok&&srR.data)||[]).forEach(s=>{ const k=s.ServiceAppointmentId||s.AppointmentId; if(k&&!srByAppt[k]) srByAppt[k]=s; });
+  let html=`<div class="btnrow" style="align-items:center;flex-wrap:wrap"><h2 style="margin:0">My Schedule</h2>`
+   +(res?`<span class="muted">${esc(res.Name||"")}</span>`:"")
+   +`<span style="flex:1"></span><input type="date" id="mys_date" value="${mySchedDate}" style="width:auto"> <button class="btn secondary small" onclick="mySchedDate=v('mys_date');showMySchedule()">Go</button> `
+   +`<button class="btn secondary small" onclick="mySchedDate=new Date().toISOString().slice(0,10);showMySchedule()">Today</button></div>`;
+  if(!res){
+    html+=`<div class="card"><h3 style="margin-top:0">No service resource linked</h3><p class="muted">No service resource is linked to your login — ask your administrator to set your username on a Service Resource record.</p></div>`;
+  }else if(!appts.length){
+    html+=`<div class="card"><p class="muted">No appointments assigned to you on ${esc(mySchedDate)}.</p></div>`;
+  }else{
+    if(res) html+=`<div class="card"><div class="section-title">Van stock</div><div id="mys_vanstock"><p class="muted">Loading van stock…</p></div></div>`;
+    html+=appts.map(a=>{
+      const wo=a.work_order||{};
+      const nexts=FS_TRANSITIONS[a.Status||"None"]||[];
+      const addr=a.Address?esc(a.Address):"", map=fsMapLink(a.Location);
+      return `<div class="card appt-card"><div class="btnrow" style="align-items:center;margin-bottom:8px"><b style="font-size:16px">${esc(a.Name||"(no name)")}</b> ${fsStatusPill(a.Status)}<span style="flex:1"></span><span class="muted"><b>${fsHm(a.ScheduledStart)} – ${fsHm(a.ScheduledEnd)}</b></span></div>`
+       +(wo.Subject?`<div><b>${esc(wo.Subject)}</b>${wo.Priority?` <span class="muted">· ${esc(wo.Priority)} priority</span>`:""}</div>`:"")
+       +(wo.Description?`<div class="muted">${esc(wo.Description)}</div>`:"")
+       +((addr||map)?`<div class="muted" style="margin-top:4px">${addr}${map}</div>`:"")
+       +(a.ArrivalWindowStart?`<div class="muted">Arrival window: ${fmtDateTime(a.ArrivalWindowStart)} – ${fmtDateTime(a.ArrivalWindowEnd)}</div>`:"")
+       +(nexts.length?`<div class="btnrow" style="margin:12px 0 0">${nexts.map(s=>`<button class="btn small" onclick="fsSetStatus('${a.Id}','${esc(s)}')">${FS_ACTION_LABEL[s]||s}</button>`).join("")}</div>`:"")
+       +`<div class="btnrow" style="margin:10px 0 0"><button class="btn secondary small" onclick="fsToggle('te_${a.Id}')">Log time</button> <button class="btn secondary small" onclick="fsToggle('sr_${a.Id}');sigInit('sig_${a.Id}')">Service report</button></div>`
+       +`<div id="te_${a.Id}" style="display:none;margin-top:10px">${fsTimeEntryForm(a)}</div>`
+       +`<div id="sr_${a.Id}" style="display:none;margin-top:10px">${fsServiceReportForm(a,srByAppt[a.Id])}</div>`
+       +`</div>`;
+    }).join("");
+  }
+  document.getElementById("main").innerHTML=html;
+  if(res) loadMyVanStock();
+}
+async function fsSetStatus(apptId,status){
+  const r=await api("POST","/api/field-service/status",{appointment_id:apptId,status});
+  if(r.ok){ toast(`Status updated to ${status}.`,"ok"); showMySchedule(); }
+  else toast("Status change failed: "+((r.data||{}).error||r.status),"error");
+}
+
+/* ============ field service batch 2: inventory, time, reports, van stock ============ */
+function fsToggle(id){ const el=document.getElementById(id); if(el) el.style.display=(el.style.display==="none"?"":"none"); }
+function fsWarehouse(locations){
+  return locations.find(l=>l.LocationType==="Warehouse")
+      || locations.find(l=>/warehouse/i.test(l.Name||""))
+      || locations[0] || null;
+}
+const FS_REQ_COLOR={"Submitted":"#0176d3","Approved":"#8b5cf6","Fulfilled":"#2e9e4f","Cancelled":"#94a3b8","Draft":"#6b7280"};
+function fsReqPill(s){ const c=FS_REQ_COLOR[s]||"#6b7280"; return `<span class="stat-pill" style="background:${c}1f;color:${c};border:1px solid ${c}66">${esc(s||"—")}</span>`; }
+
+/* ---- inventory view ---- */
+async function showInventory(){
+  setActive("__inventory");
+  document.getElementById("main").innerHTML=skel(3);
+  const [pr,prods,locs]=await Promise.all([
+    api("GET","/api/field-service/product-requests"),
+    fsLoadProducts(),
+    api("GET","/api/sobjects/Location")
+  ]);
+  if(!pr.ok){ document.getElementById("main").innerHTML=`<div class="err">${esc((pr.data||{}).error||"Failed to load product requests")}</div>`; return; }
+  const reqs=pr.data.requests||[];
+  const locations=(locs.ok&&locs.data)||[];
+  const wh=fsWarehouse(locations);
+  const canFulfill=s=>s==="Submitted"||s==="Approved";
+  let html=`<div class="btnrow" style="align-items:center;flex-wrap:wrap"><h2 style="margin:0">Inventory</h2><span class="muted">${reqs.length} request(s)</span><span style="flex:1"></span>`
+   +`<button class="btn secondary small" onclick="fsGenPlans()">Generate recurring</button></div>`;
+  html+=`<div class="card"><div class="section-title">Product requests</div>`
+   +(reqs.length
+     ?`<table><thead><tr><th>Product</th><th>From</th><th>To</th><th>Qty</th><th>Status</th><th>Requested by</th><th></th></tr></thead><tbody>`
+      +reqs.map(q=>`<tr><td><b>${esc(q.ProductName||q.ProductId||"")}</b></td><td class="muted">${esc(q.SourceName||q.SourceLocationId||"")}</td><td class="muted">${esc(q.DestinationName||q.DestinationLocationId||"")}</td><td>${esc(String(q.Quantity??""))}</td><td>${fsReqPill(q.Status)}</td><td class="muted">${esc(q.RequestedBy||"")}</td><td>${canFulfill(q.Status)?`<button class="btn small" onclick="fsFulfillRequest('${q.Id}')">Fulfill</button>`:""}</td></tr>`).join("")
+      +`</tbody></table>`
+     :`<p class="muted">No product requests yet.</p>`)
+   +`</div>`;
+  const locOpts=sel=>locations.map(l=>`<option value="${l.Id}"${l.Id===sel?" selected":""}>${esc(l.Name||l.Id)}${l.LocationType?` (${esc(l.LocationType)})`:""}</option>`).join("");
+  html+=`<div class="card"><div class="section-title">New product request</div>`
+   +((fsProducts.length&&locations.length)
+     ?`<div class="btnrow" style="flex-wrap:wrap;align-items:flex-end">`
+      +`<div><div class="muted" style="font-size:12px">Product</div><select id="pr_prod" style="width:auto;max-width:200px">${fsProducts.map(p=>`<option value="${p.Id}">${esc(p.Name||p.Id)}</option>`).join("")}</select></div>`
+      +`<div><div class="muted" style="font-size:12px">From</div><select id="pr_src" style="width:auto;max-width:200px">${locOpts(wh&&wh.Id)}</select></div>`
+      +`<div><div class="muted" style="font-size:12px">To</div><select id="pr_dest" style="width:auto;max-width:200px">${locOpts()}</select></div>`
+      +`<div><div class="muted" style="font-size:12px">Qty</div><input id="pr_qty" type="number" min="1" step="1" value="1" style="width:70px"></div>`
+      +`<div><button class="btn small" onclick="fsCreateRequest()">Request</button></div></div>`
+     :`<p class="muted">Add products and locations before creating requests.</p>`)
+   +`</div>`;
+  document.getElementById("main").innerHTML=html;
+}
+async function fsFulfillRequest(id){
+  const r=await api("POST",`/api/field-service/product-requests/${id}/fulfill`);
+  if(r.ok){ toast("Request fulfilled.","ok"); showInventory(); }
+  else toast("Fulfill failed: "+((r.data||{}).error||r.status),"error");
+}
+async function fsCreateRequest(){
+  const pid=v("pr_prod"), src=v("pr_src"), dest=v("pr_dest"), qty=parseInt(v("pr_qty"),10);
+  if(!pid||!src||!dest){ toast("Select a product, source and destination.","error"); return; }
+  if(!(qty>0)){ toast("Enter a quantity greater than 0.","error"); return; }
+  const r=await api("POST","/api/field-service/product-requests",{product_id:pid,source_location_id:src,destination_location_id:dest,quantity:qty});
+  if(r.ok){ toast("Product request created.","ok"); showInventory(); }
+  else toast("Request failed: "+((r.data||{}).error||r.status),"error");
+}
+async function fsGenPlans(){
+  const r=await api("POST","/api/field-service/maintenance-plans/generate");
+  if(!r.ok){ toast("Generate failed: "+((r.data||{}).error||r.status),"error"); return; }
+  const n=(r.data.generated||[]).length;
+  toast(`Generated ${n} work orders.`,"ok");
+}
+
+/* ---- my schedule: van stock ---- */
+async function loadMyVanStock(){
+  const box=document.getElementById("mys_vanstock"); if(!box) return;
+  const [vs,prods,locs]=await Promise.all([
+    api("GET","/api/field-service/van-stock"),
+    fsLoadProducts(),
+    api("GET","/api/sobjects/Location")
+  ]);
+  if(!document.getElementById("mys_vanstock")) return;
+  const items=(vs.ok&&(vs.data.items||[]))||[];
+  const locations=(locs.ok&&locs.data)||[];
+  const wh=fsWarehouse(locations);
+  const vanLoc=items.length?items[0].LocationId:null;
+  let html=items.length
+    ?`<table style="margin:4px 0 8px"><thead><tr><th>Product</th><th>On hand</th><th>Location</th></tr></thead><tbody>${items.map(i=>`<tr><td>${esc(i.ProductName||i.ProductId||"")}</td><td>${esc(String(i.QuantityOnHand??""))}</td><td class="muted">${esc(i.LocationName||"")}</td></tr>`).join("")}</tbody></table>`
+    :`<p class="muted">No van stock on record.</p>`;
+  html+=`<div class="section-title" style="margin-top:6px">Request product</div>`;
+  if(fsProducts.length&&locations.length&&wh){
+    const locOpts=sel=>locations.map(l=>`<option value="${l.Id}"${l.Id===sel?" selected":""}>${esc(l.Name||l.Id)}${l.LocationType?` (${esc(l.LocationType)})`:""}</option>`).join("");
+    html+=`<div class="btnrow" style="flex-wrap:wrap;align-items:flex-end">`
+     +`<div><div class="muted" style="font-size:12px">Product</div><select id="vs_prod" style="width:auto;max-width:200px">${fsProducts.map(p=>`<option value="${p.Id}">${esc(p.Name||p.Id)}</option>`).join("")}</select></div>`
+     +`<div><div class="muted" style="font-size:12px">Qty</div><input id="vs_qty" type="number" min="1" step="1" value="1" style="width:70px"></div>`
+     +`<div><div class="muted" style="font-size:12px">Deliver to</div><select id="vs_dest" style="width:auto;max-width:200px">${locOpts(vanLoc)}</select></div>`
+     +`<div><button class="btn small" onclick="fsRequestVanProduct('${wh.Id}')">Request</button></div></div>`
+     +`<div class="muted" style="margin-top:4px">Source: ${esc(wh.Name||wh.Id)}</div>`;
+  }else{
+    html+=`<p class="muted">Add products, locations and a warehouse before requesting stock.</p>`;
+  }
+  box.innerHTML=html;
+}
+async function fsRequestVanProduct(srcId){
+  const pid=v("vs_prod"), dest=v("vs_dest"), qty=parseInt(v("vs_qty"),10);
+  if(!pid||!dest||!srcId){ toast("Select a product and destination.","error"); return; }
+  if(!(qty>0)){ toast("Enter a quantity greater than 0.","error"); return; }
+  const r=await api("POST","/api/field-service/product-requests",{product_id:pid,source_location_id:srcId,destination_location_id:dest,quantity:qty});
+  if(r.ok){ toast("Product requested.","ok"); loadMyVanStock(); }
+  else toast("Request failed: "+((r.data||{}).error||r.status),"error");
+}
+
+/* ---- my schedule: time entries ---- */
+function fsTimeEntryForm(a){
+  return `<div class="section-title">Log time</div>`
+   +`<div class="btnrow" style="flex-wrap:wrap;align-items:flex-end">`
+   +`<div><div class="muted" style="font-size:12px">Hours</div><input id="teh_${a.Id}" type="number" min="0.25" step="0.25" placeholder="Hours" style="width:90px" aria-label="Hours"></div>`
+   +`<div><div class="muted" style="font-size:12px">Type</div><select id="tet_${a.Id}" style="width:auto"><option>Work</option><option>Travel</option><option>Break</option></select></div>`
+   +`<div><div class="muted" style="font-size:12px">Date</div><input id="ted_${a.Id}" type="date" value="${mySchedDate||new Date().toISOString().slice(0,10)}" style="width:auto" aria-label="Work date"></div>`
+   +`<div><button class="btn small" onclick="fsSaveTimeEntry('${a.Id}')">Save</button></div></div>`
+   +`<textarea id="ten_${a.Id}" rows="2" placeholder="Notes (optional)" style="margin-top:6px"></textarea>`;
+}
+async function fsSaveTimeEntry(apptId){
+  const hours=parseFloat(v("teh_"+apptId));
+  if(!(hours>0)){ toast("Enter hours greater than 0.","error"); return; }
+  const r=await api("POST","/api/field-service/time-entries",{
+    appointment_id:apptId, hours,
+    work_date:v("ted_"+apptId)||null,
+    entry_type:document.getElementById("tet_"+apptId).value,
+    notes:v("ten_"+apptId)||null
+  });
+  if(r.ok){ toast("Time logged.","ok"); showMySchedule(); }
+  else toast("Save failed: "+((r.data||{}).error||r.status),"error");
+}
+
+/* ---- my schedule: service reports + signature pad ---- */
+function fsServiceReportForm(a,rep){
+  if(rep) return `<div class="section-title">Service report</div>`
+   +`<p><b>Signed by ${esc(rep.SignatureName||rep.signature_name||"")}</b> <span class="muted">at ${fmtDateTime(rep.SignedAt||rep.CreatedDate||rep.CreatedAt)}</span></p>`
+   +(rep.Summary||rep.summary?`<div class="muted">${esc(rep.Summary||rep.summary)}</div>`:"");
+  return `<div class="section-title">Service report</div>`
+   +`<textarea id="srs_${a.Id}" rows="3" placeholder="Work summary…"></textarea>`
+   +`<div class="btnrow" style="margin-top:8px;flex-wrap:wrap;align-items:center">`
+   +`<input id="srn_${a.Id}" placeholder="Signer name" style="max-width:200px" aria-label="Signer name">`
+   +`<button class="btn secondary small" onclick="fsClearSig('${a.Id}')">Clear signature</button>`
+   +`<button class="btn small" onclick="fsSaveReport('${a.Id}')">Save report</button></div>`
+   +`<canvas id="sig_${a.Id}" class="sigpad" width="340" height="120" aria-label="Signature pad"></canvas>`
+   +`<div class="muted" style="font-size:12px">Sign above with mouse or finger.</div>`;
+}
+function sigInit(canvasId){
+  const c=document.getElementById(canvasId);
+  if(!c||c._sigInit) return; c._sigInit=true;
+  const ctx=c.getContext("2d");
+  ctx.lineWidth=2; ctx.lineCap="round"; ctx.strokeStyle="#111";
+  let drawing=false, drawn=false;
+  const pos=e=>{
+    const r=c.getBoundingClientRect(), t=e.touches&&e.touches[0];
+    const x=((t?t.clientX:e.clientX)-r.left)*(c.width/Math.max(1,r.width));
+    const y=((t?t.clientY:e.clientY)-r.top)*(c.height/Math.max(1,r.height));
+    return [x,y];
+  };
+  const start=e=>{ e.preventDefault(); drawing=true; drawn=true; const [x,y]=pos(e); ctx.beginPath(); ctx.moveTo(x,y); };
+  const move=e=>{ if(!drawing) return; e.preventDefault(); const [x,y]=pos(e); ctx.lineTo(x,y); ctx.stroke(); };
+  const end=()=>{ drawing=false; };
+  c.addEventListener("mousedown",start); c.addEventListener("mousemove",move);
+  c.addEventListener("mouseup",end); c.addEventListener("mouseleave",end);
+  c.addEventListener("touchstart",start,{passive:false}); c.addEventListener("touchmove",move,{passive:false});
+  c.addEventListener("touchend",end);
+  c._sigDrawn=()=>drawn;
+  c._sigClear=()=>{ ctx.clearRect(0,0,c.width,c.height); drawn=false; };
+}
+function fsClearSig(apptId){ const c=document.getElementById("sig_"+apptId); if(c&&c._sigClear) c._sigClear(); }
+async function fsSaveReport(apptId){
+  const summary=v("srs_"+apptId), signer=v("srn_"+apptId);
+  if(!summary){ toast("Add a summary first.","error"); return; }
+  if(!signer){ toast("Enter the signer's name.","error"); return; }
+  const c=document.getElementById("sig_"+apptId);
+  if(!c||!c._sigDrawn||!c._sigDrawn()){ toast("Please capture a signature first.","error"); return; }
+  const r=await api("POST","/api/field-service/service-reports",{
+    appointment_id:apptId, summary, signature_name:signer,
+    signature_data:c.toDataURL("image/png")
+  });
+  if(r.ok){ toast("Service report saved.","ok"); showMySchedule(); }
+  else toast("Save failed: "+((r.data||{}).error||r.status),"error");
 }
 
 /* ============ inline editing in list views ============ */

@@ -18,9 +18,9 @@ from ..migrations import run_migrations
 
 from . import (
     admin, api_keys, approvals, apps, audit, auth, callouts, cdc, chatter,
-    datamodel, email, enhancements, files, flows, forecasts, impexp, jobs, kanban,
+    datamodel, email, enhancements, experience, field_service, files, flows, forecasts, impexp, jobs, kanban,
     metadata, notifications, oauth, packaging, platform, records, reports, scoring,
-    search, sla, activities, web_to, devops,
+    search, sla, activities, web_to, devops, dynamic_forms,
 )
 
 APP_VERSION = "0.7.0"
@@ -69,11 +69,16 @@ def create_app(db_path: str) -> Flask:
     @app.get("/r/<path:_subpath>")
     def _spa_record(_subpath):
         return send_from_directory(web_dir, "index.html")
+
+    @app.get("/portal")
+    def _portal():
+        """Standalone customer community portal page."""
+        return send_from_directory(web_dir, "portal.html")
     for mod in (admin, api_keys, approvals, apps, audit, auth, callouts, cdc,
-                chatter, datamodel, email, enhancements, files, flows, forecasts,
+                chatter, datamodel, email, enhancements, experience, field_service, files, flows, forecasts,
                 impexp, jobs, kanban, metadata, notifications, oauth, packaging,
                 platform, records, reports, scoring, search, sla, activities,
-                web_to, devops):
+                web_to, devops, dynamic_forms):
         mod.register(app)
 
     @app.get("/api/health")

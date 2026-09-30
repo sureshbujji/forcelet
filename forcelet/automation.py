@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import sys
 import threading
 import urllib.request
@@ -570,6 +571,144 @@ def run_due_scheduled_jobs(store, registry, security) -> list:
         job["last_run"] = now.isoformat(timespec="seconds")
         store.config_put("mf_scheduled_jobs", job)
         results.append({"job": job.get("name"), **res})
+    return results
+
+
+# ------------------------------------------------------------ scheduled flows
+SCHEDULED_FLOW_BATCH_CAP = 200
+_SCHED_TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def validate_schedule(schedule) -> str | None:
+    """Return an error message for a bad schedule dict, else None."""
+    if not isinstance(schedule, dict):
+        return "schedule must be an object"
+    freq = schedule.get("frequency")
+    if freq not in ("daily", "weekly"):
+        return "schedule.frequency must be 'daily' or 'weekly'"
+    if not _SCHED_TIME_RE.match(str(schedule.get("time") or "")):
+        return "schedule.time must be HH:MM (24-hour)"
+    if "day_of_week" in schedule:
+        dow = schedule.get("day_of_week")
+        if isinstance(dow, bool) or not isinstance(dow, int) or not 0 <= dow <= 6:
+            return "schedule.day_of_week must be an integer 0-6 (Monday=0)"
+    return None
+
+
+def validate_scheduled_flow(flow: dict, registry) -> str | None:
+    """Return an error message for a bad scheduled-flow definition, else None."""
+    if flow.get("flow_type") == "screen":
+        return "screen flows cannot use the scheduled trigger"
+    if not registry.get_object(flow.get("object") or ""):
+        return f"Unknown object '{flow.get('object')}'"
+    err = validate_schedule(flow.get("schedule"))
+    if err:
+        return err
+    cond = flow.get("condition")
+    if cond is not None and not isinstance(cond, dict):
+        return "condition must be an object"
+    if not isinstance(flow.get("actions") or [], list):
+        return "actions must be a list"
+    return None
+
+
+def compute_next_run(schedule: dict, from_dt=None) -> str:
+    """Next scheduled run as an ISO-8601 UTC string.
+
+    Schedule times are interpreted in UTC (consistent with cron-scheduled
+    jobs). For weekly, day_of_week is 0-6 with Monday=0 (matches
+    datetime.weekday()); a missing day_of_week defaults to Monday.
+    """
+    from datetime import datetime, timedelta, timezone
+    now = from_dt or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    m = _SCHED_TIME_RE.match(str(schedule.get("time") or "00:00"))
+    hh, mm = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+    def _at(day):
+        return day.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    if schedule.get("frequency") == "weekly":
+        dow = schedule.get("day_of_week", 1)
+        cand = _at(now + timedelta(days=(dow - now.weekday()) % 7))
+        if cand <= now:
+            cand += timedelta(days=7)
+        return cand.isoformat(timespec="seconds")
+    cand = _at(now)
+    if cand <= now:
+        cand += timedelta(days=1)
+    return cand.isoformat(timespec="seconds")
+
+
+def run_due_scheduled_flows(store, registry, security) -> list:
+    """Run active scheduled flows whose next_run has passed.
+
+    Queries up to SCHEDULED_FLOW_BATCH_CAP records per flow, evaluates the
+    flow's condition per record, and executes its actions (reusing the
+    record-triggered flow action executor) as the admin user. next_run is
+    claimed (advanced) BEFORE the batch executes so a second scheduler
+    runner cannot double-execute; combined with the scheduler's
+    single-runner lock this makes runs idempotent.
+    """
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    users = {u["username"]: u for u in store.meta_all("mf_users")}
+    run_as = users.get("admin")
+    if not run_as:
+        return []
+    results = []
+    for flow in store.config_all("mf_flows"):
+        if not flow.get("active", True) or flow.get("trigger") != "scheduled":
+            continue
+        if flow.get("flow_type") == "screen":
+            continue
+        obj_name = flow.get("object") or ""
+        if not registry.get_object(obj_name):
+            continue
+        nxt = flow.get("next_run")
+        if not nxt:
+            # First sighting: initialize the schedule without backfilling.
+            flow["next_run"] = compute_next_run(flow.get("schedule") or {}, now)
+            store.config_put("mf_flows", flow)
+            continue
+        try:
+            due_at = datetime.fromisoformat(nxt)
+        except Exception:
+            due_at = now
+        if due_at.tzinfo is None:
+            due_at = due_at.replace(tzinfo=timezone.utc)
+        if due_at > now:
+            continue
+        # Claim the next run before executing (idempotency).
+        flow["next_run"] = compute_next_run(flow.get("schedule") or {}, now)
+        store.config_put("mf_flows", flow)
+        matched = executed = errors = 0
+        try:
+            condition = flow.get("condition") or {}
+            for rec in store.query(obj_name, limit=SCHEDULED_FLOW_BATCH_CAP):
+                try:
+                    if not eval_expr(condition, record_context(rec)):
+                        continue
+                except Exception:
+                    continue
+                matched += 1
+                try:
+                    for action in flow.get("actions") or []:
+                        _run_flow_action(store, registry, security, action,
+                                         rec, run_as, 0, obj_name)
+                    executed += 1
+                except Exception:
+                    errors += 1
+            store.log_scheduled_run(
+                flow["id"], "ok",
+                f"matched={matched} executed={executed} errors={errors}")
+        except Exception as e:
+            errors += 1
+            store.log_scheduled_run(flow["id"], "error", str(e)[:2000])
+        results.append({"flow": flow.get("name"), "flow_id": flow["id"],
+                        "matched": matched, "executed": executed,
+                        "errors": errors, "next_run": flow["next_run"]})
     return results
 
 
