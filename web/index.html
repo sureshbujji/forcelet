@@ -31,6 +31,14 @@ header input#gsearch{background:var(--input-bg);color:var(--text)}
 .userbox{font-size:13px;display:flex;gap:12px;align-items:center}
 .iconbtn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:var(--header-text);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:14px}
 .iconbtn:hover{background:rgba(255,255,255,.22)}
+#appname{color:var(--header-text);font-weight:700;font-size:14px;white-space:nowrap}
+#launcher{position:absolute;top:56px;left:12px;z-index:200;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.25);padding:8px;display:none;min-width:300px;max-height:70vh;overflow:auto}
+#launcher .lapp{display:flex;gap:10px;align-items:center;width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;color:var(--text)}
+#launcher .lapp:hover{background:var(--hover)}
+#launcher .lapp.sel{background:var(--hover);outline:2px solid var(--blue)}
+#launcher .lapp-ic{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:none;color:#fff}
+#launcher .lapp small{display:block;color:var(--muted);font-size:11px}
+#launcher .lapp-def{margin-left:auto;font-size:10px;color:var(--blue);font-weight:700;text-transform:uppercase}
 nav{background:var(--surface);border-bottom:1px solid var(--line);padding:0 24px;display:flex;gap:4px;overflow-x:auto;position:sticky;top:0;z-index:50}
 nav button{border:0;background:none;padding:14px 14px;font-size:14px;cursor:pointer;color:var(--muted);border-bottom:3px solid transparent;white-space:nowrap}
 nav button:hover{color:var(--text)}
@@ -194,8 +202,12 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
 <div id="app" style="display:none">
   <header>
     <h1>⚡ Forcelet</h1>
+    <button class="iconbtn" id="launcherbtn" onclick="toggleLauncher(event)" title="App Launcher" style="display:none">▦</button>
+    <span id="appname"></span>
+    <div id="launcher"></div>
     <div class="hgroup">
       <input id="gsearch" placeholder="Search all records…  (⌘K)" onkeydown="if(event.key==='Enter')showSearch()" style="width:200px;margin:0">
+      <select id="gsearch_mode" title="Search mode" style="width:auto;margin:0;padding:4px"><option value="keyword">Keyword</option><option value="semantic">Semantic</option></select>
       <button class="iconbtn" onclick="openPalette()" title="Command palette (⌘K)">⌘K</button>
       <button class="iconbtn" id="bell" onclick="showNotifications()" title="Notifications">🔔<span id="bellcount" style="display:none"></span></button>
       <button class="iconbtn" onclick="showRecycleBin()" title="Recycle Bin">🗑</button>
@@ -212,7 +224,14 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
   <footer style="text-align:center;color:#999;font-size:12px;padding:16px">Built by Suresh Itha</footer>
 </div>
 <script>
-let token=null, me=null, objects=[], lookups={};
+let token=null, me=null, objects=[], lookups={}, curApp=null, userApps=[];
+const APP_UTILS={
+ reports:["__reports","showReports()","Reports"], dashboards:["__dashboards","showDashboards()","Dashboards"],
+ chatter:["__chatter","showChatter()","Chatter"], approvals:["__approvals","showApprovals()","Approvals"],
+ forecasts:["__forecasts","showForecasts()","Forecasts"], calendar:["__calendar","showCalendar()","Calendar"],
+ dispatch:["__dispatch","showDispatch()","Dispatch"], flows:["__flows","showFlows()","Flows"],
+ bulk:["__bulk","showBulk()","Bulk Jobs","admin"], admin:["__admin","showAdmin()","Admin Setup","admin"],
+};
 const H=()=>({"Authorization":"Bearer "+token,"Content-Type":"application/json"});
 const api=(m,p,b)=>fetch(p,{method:m,headers:H(),body:b?JSON.stringify(b):undefined}).then(async r=>({ok:r.ok,status:r.status,data:await r.json().catch(()=>({}))}));
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -326,7 +345,22 @@ async function loadObjects(){
   objects=r.data;
   const ap=await api("GET","/api/approvals");
   const pending=(ap.data||[]).length;
+  const ar=await api("GET","/api/apps").catch(()=>({data:{legacy:true}}));
+  if(ar.data&&!ar.data.legacy&&(ar.data.apps||[]).length){
+    userApps=ar.data.apps;
+    document.getElementById("launcherbtn").style.display="";
+    let saved=null; try{saved=localStorage.getItem("forcelet-app")}catch(e){}
+    curApp=userApps.find(a=>a.id===saved)||userApps.find(a=>a.id===ar.data.default_app_id)||userApps[0];
+    renderLauncher(); renderAppTabs(pending);
+  }else{
+    curApp=null; userApps=[];
+    document.getElementById("launcherbtn").style.display="none";
+    renderLegacyTabs(pending);
+  }
+}
+function renderLegacyTabs(pending){
   const tabs=document.getElementById("tabs");
+  document.getElementById("appname").textContent="";
   let html=objects.map(o=>`<button data-obj="${o.name}" onclick="showObject('${o.name}')">${esc(o.plural)}${o.is_custom?" ⚙":""}</button>`).join("");
   html+=`<button data-obj="__reports" onclick="showReports()">Reports</button>`;
   html+=`<button data-obj="__dashboards" onclick="showDashboards()">Dashboards</button>`;
@@ -343,6 +377,59 @@ async function loadObjects(){
 }
 function setActive(name){ document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("active",b.dataset.obj===name)); }
 
+// ------------------------------------------------------- custom applications
+function renderAppTabs(pending){
+  const tabs=document.getElementById("tabs");
+  document.getElementById("appname").textContent=curApp?curApp.label:"";
+  if(!curApp){ tabs.innerHTML=""; return; }
+  let html="";
+  for(const t of curApp.tabs){
+    if(t.kind==="object"){
+      const o=objects.find(x=>x.name===t.ref); if(!o) continue;
+      html+=`<button data-obj="${o.name}" onclick="showObject('${o.name}')">${esc(t.label||o.plural)}${o.is_custom?" ⚙":""}</button>`;
+    }else{
+      const u=APP_UTILS[t.ref]; if(!u) continue;
+      if(u[3]&&me.profile!=="System Administrator") continue;
+      const badge=(t.ref==="approvals"&&pending)?`<span class="badge">${pending}</span>`:"";
+      html+=`<button data-obj="${u[0]}" onclick="${u[1]}">${esc(t.label||u[2])}${badge}</button>`;
+    }
+  }
+  // safety: admins can always reach Setup, even if the app has no Admin tab
+  if(me.profile==="System Administrator"&&!curApp.tabs.some(t=>t.kind==="utility"&&t.ref==="admin"))
+    html+=`<button data-obj="__admin" onclick="showAdmin()">Admin Setup</button>`;
+  tabs.innerHTML=html;
+  const first=curApp.tabs.find(t=>t.kind==="object"&&objects.some(o=>o.name===t.ref));
+  if(first) showObject(first.ref);
+  else{ const b=tabs.querySelector("button"); if(b) b.click(); }
+}
+function renderLauncher(){
+  document.getElementById("launcher").innerHTML=userApps.map(a=>
+   `<button class="lapp${curApp&&a.id===curApp.id?" sel":""}" onclick="switchApp('${a.id}')">
+     <span class="lapp-ic" style="background:${esc(a.color)}">${esc(a.icon)}</span>
+     <span><b>${esc(a.label)}</b><small>${esc(a.description||"")}</small></span>
+     ${a.default?'<span class="lapp-def">default</span>':""}</button>`).join("")
+   ||'<p class="muted" style="padding:8px">No apps assigned.</p>';
+}
+function toggleLauncher(e){ e.stopPropagation(); const el=document.getElementById("launcher"); el.style.display=el.style.display==="block"?"none":"block"; }
+function switchApp(id){
+  try{localStorage.setItem("forcelet-app",id)}catch(e){}
+  curApp=userApps.find(a=>a.id===id)||curApp;
+  document.getElementById("launcher").style.display="none";
+  renderLauncher(); renderAppTabs();
+}
+document.addEventListener("click",e=>{ const el=document.getElementById("launcher"); if(el&&el.style.display==="block"&&!el.contains(e.target)) el.style.display="none"; });
+function curAppTab(objName){ return curApp?(curApp.tabs.find(t=>t.kind==="object"&&t.ref===objName)||null):null; }
+async function refreshUserApps(){
+  const ar=await api("GET","/api/apps").catch(()=>null);
+  if(!ar||!ar.data||ar.data.legacy||!ar.data.apps) return;
+  userApps=ar.data.apps;
+  const still=curApp&&userApps.find(a=>a.id===curApp.id);
+  const inMgr=!!document.getElementById("appmgr");
+  curApp=still||userApps.find(a=>a.id===ar.data.default_app_id)||userApps[0]||null;
+  renderLauncher();
+  if(!still&&curApp){ renderAppTabs(); if(inMgr) renderAppManager(); }
+}
+
 let curObj=null, curDesc=null, curLayout=null;
 let inlineEdit=false, splitMode=false, splitId=null;
 let curViews=[], curView=null, curSort=null, curDir="asc", curSearch="";
@@ -352,7 +439,7 @@ async function showObject(name){
   curView=null; curSort=null; curDir="asc"; curSearch=""; curQueue=null;
   splitMode=false; splitId=null;
   const d=await api("GET",`/api/describe/${name}`); curDesc=d.data;
-  const l=await api("GET",`/api/layout/${name}`); curLayout=l.data;
+  const l=await api("GET",`/api/layout/${name}${curApp?`?app=${curApp.id}`:""}`); curLayout=l.data;
   const vw=await api("GET",`/api/list-views/${name}`); curViews=vw.data||[];
   await renderList();
 }
@@ -389,7 +476,7 @@ async function renderList(){
   html+=`<button class="btn secondary small" onclick="showKanban()">Kanban</button>`;
   html+=`<button class="btn secondary small" onclick="exportCsv()">Export CSV</button>`;
   html+=`<button class="btn secondary small" onclick="toggleSplit()">${splitMode?"☰ List view":"◫ Split view"}</button>`;
-  if(curDesc.permissions.edit) html+=`<button class="btn secondary small" onclick="inlineEdit=!inlineEdit;renderList()">${inlineEdit?"✓ Inline edit":"✏️ Inline edit"}</button>`;
+  if(curDesc.permissions.edit&&!/__b$/.test(curObj)) html+=`<button class="btn secondary small" onclick="inlineEdit=!inlineEdit;renderList()">${inlineEdit?"✓ Inline edit":"✏️ Inline edit"}</button>`;
   if(curDesc.permissions.create) html+=`<button class="btn" onclick="showForm()">+ New ${esc(curDesc.label)}</button>`;
   html+=`</div>`;
   if(curObj==="Case"&&caseQueues.length){
@@ -447,12 +534,15 @@ async function kanbanMove(id,value){
   const u=await api("PATCH",`/api/sobjects/${curObj}/${id}`,{[curKanbanField]:value});
   u.ok?showKanban():toast("Move failed: "+(u.data.error||u.status),"error");
 }
-function fmtVal(f,v){ if(v==null||v==="")return"—"; if(f.type==="Checkbox")return v?"✓":"—"; if(f.type==="Date"&&String(v).length>10)return String(v).slice(0,10); if(typeof v==="number")return Math.round(v*100)/100; return v; }
+function fmtVal(f,v){ if(v==null||v==="")return"—"; if(f.type==="Checkbox")return v?"✓":"—"; if(f.type==="Date"&&String(v).length>10)return String(v).slice(0,10); if(f.type==="Time")return String(v).slice(0,8); if(f.type==="Geolocation"){const p=String(v).split(";");return p.length===2?`${p[0]}, ${p[1]}`:String(v);} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.join(", "):"—";}catch(e){return String(v);}} if(typeof v==="number")return Math.round(v*100)/100; return v; }
+function fmtValHtml(f,v){ if(v==null||v==="")return"—"; if(f.type==="Geolocation"){const p=String(v).split(";"); if(p.length===2) return `${esc(p[0])}, ${esc(p[1])} <a href="https://www.google.com/maps?q=${encodeURIComponent(p[0]+","+p[1])}" target="_blank" rel="noopener" title="Open in map">🗺️</a>`; return esc(String(v));} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.map(esc).join("<br>"):"—";}catch(e){return esc(String(v));}} return esc(fmtVal(f,v)); }
 
 async function showSearch(){
   const q=document.getElementById("gsearch").value.trim();
   if(!q) return;
   setActive(null);
+  const mode=(document.getElementById("gsearch_mode")||{}).value||"keyword";
+  if(mode==="semantic") return showSemanticSearch(q);
   const r=await api("GET","/api/search?q="+encodeURIComponent(q));
   const groups=r.data||[];
   let html=`<h2>Search results for "${esc(q)}"</h2>`;
@@ -467,19 +557,40 @@ async function showSearch(){
   }
   document.getElementById("main").innerHTML=html;
 }
+async function showSemanticSearch(q){
+  document.getElementById("main").innerHTML=`<h2>Semantic results for "${esc(q)}"</h2><p class="muted">Ranking by meaning, not just keywords…</p>`;
+  const r=await api("GET","/api/search/semantic?q="+encodeURIComponent(q)+"&limit=25");
+  const res=((r.data||{}).results)||[];
+  let html=`<h2>Semantic results for "${esc(q)}"</h2>`;
+  if(!res.length) html+=`<p class="muted">No matches.</p>`;
+  else html+=`<div class="card"><table><tr><th>Record</th><th>Object</th><th>Relevance</th><th>Snippet</th><th></th></tr>`+
+    res.map(x=>`<tr><td>${esc(String(x.name)).slice(0,60)}</td><td>${esc(x.label)}</td><td><div style="background:var(--track);border-radius:4px;min-width:90px"><div style="background:var(--accent);height:8px;border-radius:4px;width:${Math.round(x.score*100)}%"></div></div><span class="muted" style="font-size:11px">${x.score}</span></td><td class="muted" style="font-size:12px;max-width:340px">${esc(x.snippet)}</td><td><button class="btn secondary small" onclick="jumpTo('${x.object}','${x.id}')">Open</button></td></tr>`).join("")+`</table></div>`;
+  document.getElementById("main").innerHTML=html;
+}
 async function showDetail(id){
   document.getElementById("main").innerHTML=skel(4);
+  const dd=await api("GET",`/api/describe/${curObj}`); curDesc=dd.data;
+  const ll=await api("GET",`/api/layout/${curObj}`); curLayout=ll.data;
   const r=await api("GET",`/api/sobjects/${curObj}/${id}`);
   if(!r.ok){ document.getElementById("main").innerHTML=`<div class="err">Record not found.</div>`; return; }
   const rec=r.data, fmap={}; curDesc.fields.forEach(f=>fmap[f.name]=f);
-  let html=`<div class="btnrow"><button class="btn secondary" onclick="showObject('${curObj}')">\u2190 Back</button><span style="flex:1"></span>`;
+  const isBigObj=/__b$/.test(curObj);
+  const refNames={};
+  for(const f of curDesc.fields){
+    if((f.type==="Lookup"||f.type==="MasterDetail")&&f.reference_to&&rec[f.name]){
+      try{ const opts=await lookupOptions(f.reference_to); const hit=opts.find(o=>String(o.id)===String(rec[f.name])); if(hit) refNames[f.name]=hit; }catch(e){}
+    }
+  }
+  const recTitle=rec.Name||rec.Subject||rec.Id;
+  let html=`<div class="btnrow"><button class="btn secondary" onclick="showObject('${curObj}')">${"\u2190"} Back</button><span style="flex:1"></span>`;
   html+=`<button class="btn secondary" onclick="submitApproval('${rec.Id}')">Submit for Approval</button>`;
   if(curObj==="Lead"&&rec.Status!=="Converted") html+=`<button class="btn" onclick="convertLead('${rec.Id}')">Convert</button>`;
-  if(curDesc.permissions.edit) html+=`<button class="btn" onclick="showForm('${rec.Id}')">Edit</button>`;
+  if(curDesc.permissions.edit&&!isBigObj) html+=`<button class="btn" onclick="showForm('${rec.Id}')">Edit</button>`;
   if(curDesc.permissions.edit) html+=`<button class="btn secondary" onclick="findDuplicates('${curObj}','${rec.Id}')">Find duplicates</button>`;
-  if(curDesc.permissions.delete) html+=`<button class="btn danger" onclick="delRec('${rec.Id}')">Delete</button>`;
+  if(curDesc.permissions.delete&&!isBigObj) html+=`<button class="btn danger" onclick="delRec('${rec.Id}')">Delete</button>`;
   if(curObj==="Quote") html+=`<button class="btn secondary" onclick="dlQuotePdf('${rec.Id}')">⬇ PDF</button>`;
   html+=`</div>`;
+  html+=`<div class="btnrow" style="align-items:center;margin:2px 0 10px"><h2 style="margin:0">${esc(String(recTitle)).slice(0,80)}</h2>${curObj==="Account"&&rec.IsPersonAccount?' <span class="pill">👤 Person Account</span>':""}${isBigObj?' <span class="pill">Big Object · read-only</span>':""}</div>`;
   const tabs=[["details","Details"],["related","Related"],["activity","Activity"],["chatter","Chatter"],["files","Files"],["history","History"]];
   html+=`<div class="dtabs">${tabs.map((t,i)=>`<button data-t="${t[0]}" class="${i===0?"active":""}" onclick="detailTab('${t[0]}')">${t[1]}</button>`).join("")}</div>`;
   // details panel
@@ -487,9 +598,22 @@ async function showDetail(id){
   const sections=(curLayout.sections&&curLayout.sections.length)?curLayout.sections:[{title:"Details",columns:[curDesc.fields.map(f=>f.name)]}];
   for(const sec of sections){
     details+=`<div class="card"><div class="section-title">${esc(sec.title)}</div><div class="grid2">`;
-    for(const col of sec.columns){ details+=`<div>${col.map(fn=>{const f=fmap[fn]; if(!f)return"";return `<div class="field"><div class="fl">${esc(f.label)}${f.computed?" <span class='muted'>(computed)</span>":""}</div><div class="fv">${esc(fmtVal(f,rec[fn]))}</div></div>`;}).join("")}</div>`; }
+    for(const col of sec.columns){ details+=`<div>${col.map(fn=>{const f=fmap[fn]; if(!f)return""; let fv;
+      if(refNames[fn]) fv=`<a href="#" onclick="jumpTo('${f.reference_to}','${rec[fn]}');return false">${esc(refNames[fn].label)}</a>`;
+      else if(f.type==="Geolocation"||f.type==="Address") fv=fmtValHtml(f,rec[fn]);
+      else fv=esc(fmtVal(f,rec[fn]));
+      return `<div class="field"><div class="fl">${esc(f.label)}${f.computed?" <span class='muted'>(computed)</span>":""}${f.type==="MasterDetail"?' <span class="pill" title="Master-detail: cascade delete, inherits sharing">M-D</span>':""}</div><div class="fv">${fv}</div></div>`;}).join("")}</div>`; }
     details+=`</div></div>`;
   }
+  if(curObj==="Account"&&rec.IsPersonAccount){
+    const personName=[rec.FirstName,rec.LastName].filter(Boolean).join(" ")||rec.Name||"—";
+    details=`<div class="card"><div class="section-title">👤 Person</div><div class="grid2"><div>`+
+      `<div class="field"><div class="fl">Name</div><div class="fv">${esc(personName)}</div></div>`+
+      `<div class="field"><div class="fl">Email</div><div class="fv">${rec.PersonEmail?`<a href="mailto:${esc(rec.PersonEmail)}">${esc(rec.PersonEmail)}</a>`:"—"}</div></div></div><div>`+
+      `<div class="field"><div class="fl">Phone</div><div class="fv">${esc(rec.PersonPhone||"—")}</div></div>`+
+      `</div></div></div>`+details;
+  }
+  details+=await territoryCard(rec);
   details+=await pathBar(rec);
   if(curObj==="Lead") details+=await scoreCard(rec.Id);
   if(curObj==="Quote") details+=await quoteLinesCard(rec.Id);
@@ -750,21 +874,52 @@ async function delQuoteLine(recId,lid){
 }
 async function relatedLists(recId){
   let html="";
+  let only=null;
+  const tab=curAppTab(curObj);
+  if(tab&&tab.related_lists) only=new Set(tab.related_lists);
   for(const o of objects){
     if(o.name===curObj) continue;
+    if(only&&!only.has(o.name)) continue;
     const d=await getDesc(o.name);
     if(!d||!d.permissions||!d.permissions.read) continue;
-    const lks=d.fields.filter(f=>f.type==="Lookup"&&f.reference_to===curObj);
-    if(!lks.length) continue;
+    const rels=d.fields.filter(f=>(f.type==="Lookup"||f.type==="MasterDetail")&&f.reference_to===curObj);
+    if(!rels.length) continue;
     const r=await api("GET",`/api/sobjects/${o.name}`);
-    const rows=(r.data||[]).filter(x=>lks.some(lk=>String(x[lk.name])===String(recId)));
+    const rows=(r.data||[]).filter(x=>rels.some(rf=>String(x[rf.name])===String(recId)));
     if(!rows.length) continue;
     const nameF=(d.fields.find(f=>f.name==="Name")||d.fields[0]||{name:"Id",label:"Record"});
-    html+=`<div class="card"><div class="section-title">${esc(o.plural)} (${rows.length})</div><table><tr><th>${esc(nameF.label)}</th><th></th></tr>${rows.slice(0,5).map(x=>`<tr><td>${esc(fmtVal(nameF,x[nameF.name]))}</td><td><button class="btn secondary small" onclick="jumpTo('${o.name}','${x.Id}')">Open</button></td></tr>`).join("")}</table></div>`;
+    const badge=[...new Set(rels.map(rf=>rf.type))].map(k=>`<span class="pill">${k==="MasterDetail"?"Master-Detail":"Lookup"}</span>`).join(" ");
+    html+=`<div class="card"><div class="section-title">${esc(o.plural)} (${rows.length}) ${badge}</div><table><tr><th>${esc(nameF.label)}</th><th></th></tr>${rows.slice(0,5).map(x=>`<tr><td>${esc(fmtVal(nameF,x[nameF.name]))}</td><td><button class="btn secondary small" onclick="jumpTo('${o.name}','${x.Id}')">Open</button></td></tr>`).join("")}</table><div class="btnrow" style="margin-top:8px"><button class="btn secondary small" onclick="showRelatedAll('${o.name}','${esc(o.plural)}','${rels[0].name}','${recId}')">View all (${rows.length})</button>${d.permissions.create?`<button class="btn secondary small" onclick="newRelated('${o.name}','${rels[0].name}','${recId}')">+ New ${esc(d.label)}</button>`:""}</div></div>`;
   }
   return html;
 }
+async function showRelatedAll(childObj,childPlural,fieldName,parentId){
+  document.getElementById("main").innerHTML=skel(3);
+  const d=await getDesc(childObj);
+  const r=await api("GET",`/api/sobjects/${childObj}`);
+  const rows=(r.data||[]).filter(x=>String(x[fieldName])===String(parentId));
+  const nameF=(d.fields.find(f=>f.name==="Name")||d.fields[0]||{name:"Id",label:"Record"});
+  document.getElementById("main").innerHTML=
+    `<div class="btnrow"><button class="btn secondary" onclick="showDetail('${parentId}')">\\u2190 Back</button><span style="flex:1"></span>${d.permissions.create?`<button class="btn" onclick="newRelated('${childObj}','${fieldName}','${parentId}')">+ New ${esc(d.label)}</button>`:""}</div>`+
+    `<h2>${esc(childPlural)} (${rows.length})</h2>`+
+    `<div class="card"><table><tr><th>${esc(nameF.label)}</th><th></th></tr>${rows.map(x=>`<tr><td>${esc(fmtVal(nameF,x[nameF.name]))}</td><td><button class="btn secondary small" onclick="jumpTo('${childObj}','${x.Id}')">Open</button></td></tr>`).join("")||`<tr><td colspan="2" class="muted">No records.</td></tr>`}</table></div>`;
+}
+async function newRelated(childObj,fieldName,parentId){
+  await showObject(childObj);
+  await showForm();
+  const el=document.getElementById("f_"+fieldName);
+  if(el) el.value=parentId;
+}
 async function delRec(id){ if(!confirm("Delete this record?"))return; const r=await api("DELETE",`/api/sobjects/${curObj}/${id}`); r.ok?(toast("Record moved to Recycle Bin.","ok"),showObject(curObj)):toast("Delete failed: "+JSON.stringify(r.data),"error"); }
+async function territoryCard(rec){
+  if(curObj!=="Account"&&curObj!=="Opportunity") return "";
+  const aid=curObj==="Account"?rec.Id:rec.AccountId;
+  if(!aid) return "";
+  const r=await api("GET",`/api/sobjects/Account/${aid}/territories`).catch(()=>({data:[]}));
+  const ts=(r&&r.data)||[];
+  return `<div class="card"><div class="section-title">🗺️ Territories (${ts.length})</div>`+
+    (ts.length?`<table><tr><th>Name</th></tr>${ts.map(t=>`<tr><td>${esc(t.name)}</td></tr>`).join("")}</table>`:`<p class="muted">No territories assigned yet. Run assignment rules from Setup → Data Model → Territory Assignment.</p>`)+`</div>`;
+}
 
 async function lookupOptions(refObj){
   if(lookups[refObj]) return lookups[refObj];
@@ -775,6 +930,7 @@ async function lookupOptions(refObj){
   return lookups[refObj];
 }
 async function showForm(id){
+  if(id&&/__b$/.test(curObj)){ document.getElementById("main").innerHTML=`<div class="err">Big object records are append-only and cannot be edited.</div>`; return; }
   let rec={};
   if(id){ const r=await api("GET",`/api/sobjects/${curObj}/${id}`); rec=r.data; }
   const rtSel=(curDesc.record_types||[]).length>1?`<label>Record type</label><select id="f_RecordType">${curDesc.record_types.map(rt=>`<option value="${esc(rt.name)}" ${rt.name===(rec.RecordType||curDesc.default_record_type)?"selected":""}>${esc(rt.label)}</option>`).join("")}</select>`:"";
@@ -782,13 +938,17 @@ async function showForm(id){
   let html=`<div class="card"><h2>${id?"Edit":"New"} ${esc(curDesc.label)}</h2><div id="ferr"></div>${rtSel}`;
   for(const f of fields){
     if((!id&&!f.editable)||f.computed) continue;
-    html+=`<label>${esc(f.label)}${f.required?' <b style="color:#c0392b">*</b>':""}</label>`;
+    html+=`<label>${esc(f.label)}${f.required?' <b style="color:#c0392b">*</b>':""}${f.type==="MasterDetail"?' <span class="pill">Master-Detail</span>':""}</label>`;
     const val=rec[f.name]??"";
     if(f.type==="Picklist") html+=`<select id="f_${f.name}"><option value="">—</option>${(f.picklist_values||[]).map(v=>`<option ${v===val?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
     else if(f.type==="MultiPicklist") html+=`<select id="f_${f.name}" multiple size="4">${(f.picklist_values||[]).map(v=>`<option ${String(val).split(";").includes(v)?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
     else if(f.type==="Checkbox") html+=`<input type="checkbox" id="f_${f.name}" ${val?"checked":""} style="width:auto">`;
     else if(f.type==="TextArea") html+=`<textarea id="f_${f.name}" rows="3">${esc(val)}</textarea>`;
     else if(f.type==="Lookup"){ const opts=await lookupOptions(f.reference_to); html+=`<select id="f_${f.name}"><option value="">—</option>${opts.map(o=>`<option value="${o.id}" ${o.id===val?"selected":""}>${esc(o.label)}</option>`).join("")}</select>`; }
+    else if(f.type==="MasterDetail"){ const opts=await lookupOptions(f.reference_to); html+=`<select id="f_${f.name}" required><option value="">— select ${esc(f.reference_to)} —</option>${opts.map(o=>`<option value="${o.id}" ${o.id===val?"selected":""}>${esc(o.label)}</option>`).join("")}</select>`; }
+    else if(f.type==="Geolocation"){ const p=String(val||"").split(";"); html+=`<div class="grid2" style="gap:6px"><div><input id="f_${f.name}_lat" placeholder="Latitude" value="${esc(p[0]||"")}" style="margin:0"></div><div><input id="f_${f.name}_lng" placeholder="Longitude" value="${esc(p[1]||"")}" style="margin:0"></div></div>`; }
+    else if(f.type==="Address"){ let a={}; try{ a=typeof val==="string"&&val?JSON.parse(val):(val||{}); }catch(e){} html+=["street","city","state","postal_code","country"].map(k=>`<input id="f_${f.name}_${k}" placeholder="${k.replace("_"," ")}" value="${esc(a[k]||"")}" style="margin-bottom:6px">`).join(""); }
+    else if(f.type==="Time"){ html+=`<input id="f_${f.name}" type="time" value="${esc(String(val).slice(0,5))}">`; }
     else html+=`<input id="f_${f.name}" type="${f.type==="Date"?"date":f.type==="Email"?"email":f.type==="URL"?"url":"text"}" value="${esc(val)}">`;
   }
   html+=`<div class="btnrow" style="margin-top:14px"><button class="btn" onclick="saveForm('${id||""}')">Save</button><button class="btn secondary" onclick="showObject('${curObj}')">Cancel</button></div></div>`;
@@ -798,6 +958,8 @@ async function saveForm(id){
   const body={};
   const rtEl=document.getElementById("f_RecordType"); if(rtEl) body.RecordType=rtEl.value;
   for(const f of curDesc.fields){
+    if(f.type==="Geolocation"){ const la=document.getElementById("f_"+f.name+"_lat"), ln=document.getElementById("f_"+f.name+"_lng"); if(la&&ln&&(la.value.trim()||ln.value.trim())) body[f.name]=`${la.value.trim()};${ln.value.trim()}`; continue; }
+    if(f.type==="Address"){ const parts={}; let any=false; for(const k of ["street","city","state","postal_code","country"]){ const e=document.getElementById(`f_${f.name}_${k}`); if(e&&e.value.trim()){ parts[k]=e.value.trim(); any=true; } } if(any) body[f.name]=JSON.stringify(parts); continue; }
     const el=document.getElementById("f_"+f.name); if(!el) continue;
     if(f.type==="Checkbox") body[f.name]=el.checked;
     else if(f.type==="MultiPicklist") body[f.name]=[...el.selectedOptions].map(o=>o.value).join(";");
@@ -1042,6 +1204,7 @@ async function flowNext(runId, step, total){
 async function showAdmin(section, highlight){
   setActive("__admin");
   if(!section){ renderSetupHome(); return; }
+  if(highlight==="App Manager"){ renderAppManager(); return; }
   const [users,roles,profiles,ft]=await Promise.all([api("GET","/api/admin/users"),api("GET","/api/admin/roles"),api("GET","/api/admin/profiles"),api("GET","/api/field-types")]);
   const objs=objects.map(o=>`<option>${o.name}</option>`).join("");
   let html=`<h2>Admin Setup</h2>
@@ -1052,7 +1215,9 @@ async function showAdmin(section, highlight){
     <label>Object</label><select id="af_obj">${objs}</select><label>Field API name</label><input id="af_name"><label>Label</label><input id="af_label">
     <label>Type</label><select id="af_type">${ft.data.map(t=>`<option value="${t.name}">${t.name} — ${esc(t.description)}</option>`).join("")}</select>
     <label>Picklist values (comma-separated, for picklists)</label><input id="af_pick">
-    <label>Lookup target object (for Lookup)</label><input id="af_ref" placeholder="Account">
+    <label>Lookup target object (for Lookup and MasterDetail types)</label><input id="af_ref" placeholder="Account">
+    <label><input type="checkbox" id="af_reparent" style="width:auto" checked> Reparentable (master-detail only — allow changing the parent)</label>
+    <label><input type="checkbox" id="af_inherit" style="width:auto"> Detail inherits sharing from master (master-detail only)</label>
     <label>Formula expression JSON (optional — makes it a computed formula field)</label><input id="af_formula" placeholder='{"days_between":[{"field":"CreatedDate"},{"today":true}]}'>
     <label>Roll-up summary JSON (optional — makes it a computed roll-up)</label><input id="af_rollup" placeholder='{"object":"Opportunity","via":"AccountId","func":"sum","field":"Amount"}'>
     <label><input type="checkbox" id="af_req" style="width:auto"> Required</label>
@@ -1102,11 +1267,11 @@ async function showAdmin(section, highlight){
     <div><label>URL</label><input id="wh_url" placeholder="https://example.com/hook"><label>Events (comma-separated)</label><input id="wh_ev" placeholder="create, update, delete"></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="wh_submit" onclick="submitSetupForm('webhooks')">Create webhook</button><button class="btn secondary" id="wh_cancel" style="display:none" onclick="cancelSetupEdit('webhooks')">Cancel</button><button class="btn secondary" onclick="showDeliveries()">View deliveries</button></div><div id="wh_del"><div id="wh_list"></div></div></div>
   <div class="card"><div class="section-title">Scheduled job</div><div id="sjerr"></div>
-    <p class="muted">Python on a schedule. Context: <code>query(obj, **filters)</code>, <code>create(obj, fields)</code>, <code>update(obj, id, fields)</code>, <code>today()</code>, <code>timedelta</code>, <code>user</code>, <code>errors</code>. A background thread runs due jobs every minute; "Run now" executes immediately.</p>
-    <div class="grid2"><div><label>Name</label><input id="sj_name"><label>Every N minutes</label><input id="sj_int" type="number" value="1440"><label>Run as user</label><input id="sj_run" value="admin"></div>
+    <p class="muted">Python on a schedule. Context: <code>query(obj, **filters)</code>, <code>create(obj, fields)</code>, <code>update(obj, id, fields)</code>, <code>today()</code>, <code>timedelta</code>, <code>user</code>, <code>errors</code>. A background thread runs due jobs every minute; "Run now" executes immediately. Set a cron expression <b>or</b> an interval — cron wins when both are set.</p>
+    <div class="grid2"><div><label>Name</label><input id="sj_name"><label>Every N minutes</label><input id="sj_int" type="number" value="1440"><label>Cron expression (optional)</label><input id="sj_cron" placeholder="0 9 * * *" oninput="validateCronInput('sj_cron','sj_cron_desc')"><div id="sj_cron_desc" class="muted" style="font-size:12px"></div><label>Run as user</label><input id="sj_run" value="admin"></div>
     <div><label>Code</label><textarea id="sj_code" rows="4" placeholder="for o in query('Opportunity'):&#10;    pass"></textarea></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="sj_submit" onclick="submitSetupForm('scheduled-jobs')">Create job</button><button class="btn secondary" id="sj_cancel" style="display:none" onclick="cancelSetupEdit('scheduled-jobs')">Cancel</button><button class="btn secondary" onclick="listJobs()">Refresh list</button></div>
-    <div id="sj_list"></div></div>
+    <div id="sj_list"></div><div id="sj_runs"></div></div>
   <div class="card"><div class="section-title">Assignment rule</div><div id="aruleerr"></div>
     <p class="muted">First matching active rule (lowest order) assigns new records; evaluated before triggers. Assignee: <code>{"type":"user","username":"leo"}</code> or <code>{"type":"round_robin","usernames":["leo","maya"]}</code>.</p>
     <div class="grid2"><div><label>Object</label><select id="aru_obj">${objs}</select><label>Name</label><input id="aru_name"><label>Order</label><input id="aru_ord" type="number" value="10"></div>
@@ -1150,6 +1315,33 @@ async function showAdmin(section, highlight){
     <div class="grid2"><div><label>Object</label><select id="pa_obj">${objs}</select><label>Stage field (picklist API name)</label><input id="pa_field" placeholder="Stage"></div>
     <div><label>Guidance JSON (stage → tip)</label><textarea id="pa_guide" rows="3" placeholder='{"Prospecting":"Confirm fit..."}'></textarea></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createPath()">Save path</button><button class="btn secondary" onclick="listPaths()">Refresh list</button></div><div id="pa_list"></div></div>
+  <div class="card"><div class="section-title">Relationships</div><div id="relerr"></div>
+    <p class="muted">Lookup and master-detail relationships across objects. Master-detail cascades deletes to children and can inherit sharing from the parent; non-reparentable details cannot change parents.</p>
+    <div class="btnrow"><button class="btn secondary" onclick="listRelationships()">Refresh</button></div><div id="rel_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Person Accounts</div><div id="pa2err"></div>
+    <p class="muted">One-time org setting. Enabling adds FirstName, LastName, PersonEmail, PersonPhone and IsPersonAccount to Account plus the PersonAccount record type; Account Name is derived from the person name.</p>
+    <div class="btnrow"><button class="btn" onclick="enablePersonAccounts()">Enable Person Accounts</button></div><div id="pa2_info" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Territories</div><div id="terrerr"></div>
+    <p class="muted">Territory hierarchy with user assignments and criteria-based assignment rules. Assigning a user to a territory includes its descendants; matching accounts can be opened to territory members through sharing.</p>
+    <div class="grid2"><div><label>Name</label><input id="terr_name" placeholder="West"><label>Parent territory</label><select id="terr_parent"><option value="">— none (top) —</option></select><label>Description</label><input id="terr_desc"></div>
+    <div><label>Add user to territory</label><select id="terrm_user"></select><label>Territory</label><select id="terrm_terr"></select><label>Role</label><input id="terrm_role" placeholder="Sales Rep"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createTerritory()">Create territory</button><button class="btn secondary" onclick="addTerritoryMember()">Add member</button></div>
+    <div id="terr_list" style="margin-top:8px"></div>
+    <h4 style="margin-top:14px">Assignment rules</h4>
+    <div class="grid2"><div><label>Rule name</label><input id="trule_name"><label>Criteria JSON (blank = all accounts)</label><textarea id="trule_crit" rows="2" placeholder='{"==":[{"field":"BillingState"},"CA"]}'></textarea></div>
+    <div><label>Territory</label><select id="trule_terr"></select><label>Priority (lower runs first)</label><input id="trule_prio" type="number" value="10"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createTerrRule()">Create rule</button><button class="btn secondary" onclick="runTerrAssignment()">Run assignment now</button></div>
+    <div id="trule_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Big Objects &amp; Archival</div><div id="boerr"></div>
+    <p class="muted">Big objects (<code>__b</code>) are append-only stores for massive record volumes — inserts only, no updates or deletes. Archive rules move old records into a mirrored <code>&lt;Object&gt;Archive__b</code> big object.</p>
+    <div class="grid2"><div><label>Big object label</label><input id="bo_label" placeholder="Audit Log"><label>API name (must end <code>__b</code>)</label><input id="bo_api" placeholder="AuditLog__b"></div>
+    <div><label>&nbsp;</label><div class="btnrow"><button class="btn" onclick="createBigObject()">Create big object</button><button class="btn secondary" onclick="listBigObjects()">Refresh</button></div></div></div>
+    <div id="bo_list" style="margin-top:8px"></div>
+    <h4 style="margin-top:14px">Archive rules</h4>
+    <div class="grid2"><div><label>Rule name</label><input id="ar_name"><label>Source object</label><select id="ar_obj">${objs}</select></div>
+    <div><label>Age (days)</label><input id="ar_age" type="number" value="365"><label>Target big object (blank = auto <code>&lt;Object&gt;Archive__b</code>)</label><input id="ar_target"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createArchiveRule()">Create rule</button></div>
+    <div id="arule_list" style="margin-top:8px"></div></div>
   <div class="card"><div class="section-title">AI lead scoring</div><div id="mlerr"></div>
     <p class="muted">Trains a logistic-regression model on your historical leads (Converted vs Unqualified) using email/phone presence, rating, and lead source. Needs at least 10 labeled leads.</p>
     <div class="btnrow"><button class="btn" onclick="trainScoring()">Train scoring model</button></div><div id="ml_info" style="margin-top:8px"></div></div>
@@ -1157,9 +1349,21 @@ async function showAdmin(section, highlight){
     <p class="muted">Every setup change is logged with who and when. Record creates/updates/deletes stream into a replayable change log (<code>GET /api/change-events?since=&lt;seq&gt;</code>).</p>
     <div class="btnrow"><button class="btn secondary" onclick="showAudit()">Setup audit trail</button><button class="btn secondary" onclick="showChanges()">Change events</button></div>
     <div id="audit_view"></div><div id="chg_view"></div></div>
+  <div class="card"><div class="section-title">Field history tracking</div><div id="hterr"></div>
+    <p class="muted">Control which objects log field-level changes into the record History timeline. Blank fields = track all fields. "Purge old history" deletes entries older than each object's retention window.</p>
+    <div class="btnrow"><button class="btn secondary" onclick="loadHistoryTracking()">Refresh</button><button class="btn secondary" onclick="purgeHistory()">Purge old history now</button><button class="btn" onclick="saveHistoryTracking()">Save all</button></div>
+    <div id="ht_list"></div></div>
   <div class="card"><div class="section-title">Metadata package</div><div id="pkgerr"></div>
-    <p class="muted">Export custom objects, extra fields, layouts, and all automation as a versioned package; import it into another Forcelet org.</p>
-    <div class="btnrow"><button class="btn secondary" onclick="exportPkg()">Export package</button><input type="file" id="pkg_file" accept=".json" style="max-width:220px"><button class="btn" onclick="importPkg()">Import</button></div></div>
+    <p class="muted">Export custom objects, extra fields, layouts, and all automation as a versioned package; import it into another Forcelet org. Add a namespace + version to publish it as a managed package — installs are version-guarded (downgrades rejected).</p>
+    <div class="grid2"><div><label>Namespace (managed packages)</label><input id="pkg_ns" placeholder="acme"><label>Version</label><input id="pkg_ver" placeholder="1.0"></div>
+    <div><label><input type="checkbox" id="pkg_managed" style="width:auto"> Managed package</label><div class="btnrow" style="margin-top:12px"><button class="btn secondary" onclick="exportPkgManaged()">Export package</button><input type="file" id="pkg_file" accept=".json" style="max-width:220px"><button class="btn" onclick="importPkg()">Import</button></div></div></div>
+    <div id="pkg_installed" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Change sets</div><div id="cserr"></div>
+    <p class="muted">Bundle <i>selected</i> metadata (objects, fields, flows, rules, layouts, templates) into a named change set — download it, upload it into another org, validate without applying, then deploy. Every validation and deploy is recorded in the deployment history.</p>
+    <div class="grid2"><div><label>Name</label><input id="cs_name" placeholder="Sprint 12"></div>
+    <div><label>Description</label><input id="cs_desc" placeholder="What this ships"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createChangeSet()">Create change set</button><button class="btn secondary" onclick="listChangeSets()">Refresh</button><span style="flex:1"></span><input type="file" id="cs_file" accept=".json" style="max-width:220px"><button class="btn secondary" onclick="uploadChangeSet()">Upload</button></div>
+    <div id="cs_list"></div><div id="cs_detail"></div></div>
   <div class="card"><div class="section-title">API keys</div><div id="akerr"></div>
     <p class="muted">Long-lived keys for integrations — use as <code>Authorization: Bearer &lt;key&gt;</code>. The raw key is shown once; copy it immediately.</p>
     <label>Key name</label><input id="ak_name" placeholder="ci pipeline">
@@ -1179,24 +1383,65 @@ async function showAdmin(section, highlight){
   <div class="card"><div class="section-title">Page layout (JSON)</div><div id="alerr"></div>
     <div class="grid2"><div><label>Object</label><select id="al_obj">${objs}</select><label>Profile</label><select id="al_prof">${profiles.data.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select></div>
     <div><label>Record type (blank = Default)</label><input id="al_rt" placeholder="Default"><label>Layout JSON</label><textarea id="al_json" rows="4" placeholder='{"sections":[{"title":"Details","columns":[["Name","Phone"]]}]}'></textarea></div></div>
-    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveLayout()">Save layout</button></div></div>`;
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveLayout()">Save layout</button></div></div>
+  <div class="card"><div class="section-title">Bulk API 2.0</div><div id="bulkerr"></div>
+    <p class="muted">CSV ingest jobs: create (Open) → paste CSV → Close &amp; run. Operations: insert / update / upsert / delete. Per-row success &amp; error files download when done. Update/delete rows need an <code>Id</code> column; upsert needs an external ID field.</p>
+    <div class="grid2"><div><label>Object</label><select id="bulk_obj">${objs}</select><label>Operation</label><select id="bulk_op"><option>insert</option><option>update</option><option>upsert</option><option>delete</option></select><label>External ID field (upsert)</label><input id="bulk_ext" placeholder="External_Id"></div>
+    <div><label>CSV data (headers = field names)</label><textarea id="bulk_csv" rows="4" placeholder="Name&#10;Acme Corp"></textarea></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createBulkJob()">Create &amp; upload</button><button class="btn secondary" onclick="listBulkJobs()">Refresh</button></div><div id="bulk_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Streaming events</div>
+    <p class="muted">Live change-data-capture and platform events over Server-Sent Events, with replay. Topics look like <code>/data/AccountChangeEvent</code> and <code>/event/OrderShipped__e</code>.</p>
+    <div class="grid2"><div><label>Topics (comma-separated, blank = all)</label><input id="st_topics" placeholder="/data/AccountChangeEvent"><div class="btnrow" style="margin-top:12px"><button class="btn" onclick="startStream()">Listen</button><button class="btn secondary" onclick="stopStream()">Stop</button></div></div>
+    <div><label>Publish platform event</label><input id="pe_name" placeholder="OrderShipped"><label>Payload JSON</label><input id="pe_payload" placeholder='{"order":"42"}'><div class="btnrow" style="margin-top:12px"><button class="btn secondary" onclick="publishPlatformEvent()">Publish</button></div></div></div>
+    <div id="stream_log" style="max-height:220px;overflow:auto;margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Sandboxes</div><div id="sberr"></div>
+    <p class="muted">Full database copies of this org. <b>Developer</b> = metadata only, <b>Partial</b> = metadata + sample data, <b>Full</b> = everything. Scratch orgs expire automatically. "How to open" shows the command to serve a sandbox on its own port.</p>
+    <div class="grid2"><div><label>Name</label><input id="sb_name" placeholder="dev-sprint12"><label>Kind</label><select id="sb_kind"><option>developer</option><option>partial</option><option>full</option></select></div>
+    <div><label><input type="checkbox" id="sb_scratch" style="width:auto"> Scratch org</label><label>Expires in (days)</label><input id="sb_exp" type="number" value="7" min="1" max="30"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createSandbox()">Create sandbox</button><button class="btn secondary" onclick="listSandboxes()">Refresh</button></div><div id="sb_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Source tracking</div>
+    <p class="muted">Every metadata change since a timestamp, from the setup audit trail — the basis of a source-pull workflow. The timestamp field auto-advances to the server time of each pull.</p>
+    <div class="grid2"><div><label>Since (ISO timestamp, blank = beginning)</label><input id="src_since" placeholder="2026-09-01T00:00:00"></div>
+    <div><div class="btnrow" style="margin-top:22px"><button class="btn" onclick="showSourceChanges()">Pull changes</button></div></div></div>
+    <div id="src_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Custom metadata types</div><div id="cmdterr"></div>
+    <p class="muted">Deployable typed configuration (<code>__mdt</code>). Read values from formulas and flows with <code>{"custom_metadata":{"type":"Tier__mdt","record":"Gold","field":"SlaHours"}}</code>. Types and records travel in metadata packages.</p>
+    <div class="grid2"><div><label>Label</label><input id="cmdt_label" placeholder="Support Tier"><label>API name</label><input id="cmdt_api" placeholder="SupportTier__mdt"></div>
+    <div><label>Description</label><input id="cmdt_desc"><label>Fields JSON</label><textarea id="cmdt_fields" rows="3" placeholder='[{"name":"SlaHours","label":"SLA hours","type":"Number"}]'></textarea></div></div>
+    <p class="muted">Field types: Text, TextArea, Number, Percent, Currency, Checkbox, Date, DateTime, Picklist, URL, Email.</p>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createCmdt()">Create type</button><button class="btn secondary" onclick="listCmdt()">Refresh</button></div><div id="cmdt_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Custom settings</div><div id="cseterr"></div>
+    <p class="muted">Org-wide key/value configuration. Read from formulas and flows with <code>{"custom_setting":{"name":"OrgDefaults","field":"sla_hours"}}</code>.</p>
+    <div class="grid2"><div><label>Name (API)</label><input id="cs_name" placeholder="OrgDefaults"><label>Label</label><input id="cs_label"></div>
+    <div><label>Values JSON</label><textarea id="cs_values" rows="3" placeholder='{"sla_hours":8}'></textarea></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="upsertSetting()">Save setting</button><button class="btn secondary" onclick="listSettings()">Refresh</button></div><div id="cs_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">External objects</div><div id="xoerr"></div>
+    <p class="muted">Read-only virtual objects (<code>__x</code>) backed by an OData v4 service — queried live through a named credential (or anonymously). OData query options ($top, $filter, $select…) pass through.</p>
+    <div class="grid2"><div><label>Label</label><input id="xo_label" placeholder="Products"><label>API name</label><input id="xo_api" placeholder="Products__x"><label>Named credential (optional)</label><input id="xo_cred" placeholder="erp-cred"></div>
+    <div><label>OData service root</label><input id="xo_url" placeholder="https://example.com/odata"><label>Entity set</label><input id="xo_entity" placeholder="Products"><label>Key field</label><input id="xo_key" value="Id"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createXObject()">Save object</button><button class="btn secondary" onclick="listXObjects()">Refresh</button></div><div id="xo_list" style="margin-top:8px"></div></div>`;
   document.getElementById("main").innerHTML=html;
   setupAfterRender(section, highlight);
 }
 /* ================= Admin Setup: organized home + sections ================= */
 const SETUP_SECTIONS=[
  {id:"datamodel",icon:"🧱",title:"Data Model",desc:"Objects, fields, record types, layouts, paths"},
+ {id:"apps",icon:"📱",title:"Apps",desc:"Custom applications, tabs & navigation"},
  {id:"automation",icon:"⚙️",title:"Automation",desc:"Flows, triggers, approvals, assignment, SLA"},
  {id:"security",icon:"🔐",title:"Security & Access",desc:"Users, roles, sharing, API keys"},
  {id:"integrations",icon:"🔌",title:"Integrations",desc:"Webhooks, email, callouts, import / export"},
+ {id:"devops",icon:"🚀",title:"DevOps",desc:"Bulk API, streaming, sandboxes, source tracking, packages"},
  {id:"monitoring",icon:"📊",title:"Monitoring",desc:"Jobs, audit trail, AI scoring"},
 ];
 const CARD_SECTION={
  "Create custom object":"datamodel","Add field to object":"datamodel","Record type":"datamodel","Page layout (JSON)":"datamodel","Sales path":"datamodel",
+ "Relationships":"datamodel","Person Accounts":"datamodel","Territories":"datamodel","Big Objects & Archival":"datamodel",
+ "App Manager":"apps",
  "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Approval process":"automation","Assignment rule":"automation","Case SLA policy":"automation","Escalation rule":"automation","Auto-response rule":"automation",
  "Create user":"security","Create role":"security","Permission set":"security","Sharing rule (criteria-based)":"security","Duplicate matching rule":"security","API keys":"security",
- "Webhook":"integrations","Named credential (HTTP callouts)":"integrations","Email template":"integrations","CSV import":"integrations","Metadata package":"integrations",
- "Scheduled job":"monitoring","Audit trail & change events":"monitoring","AI lead scoring":"monitoring",
+ "Webhook":"integrations","Named credential (HTTP callouts)":"integrations","Email template":"integrations","CSV import":"integrations","Metadata package":"integrations","Change sets":"integrations",
+ "Bulk API 2.0":"devops","Streaming events":"devops","Sandboxes":"devops","Source tracking":"devops","Custom metadata types":"devops","Custom settings":"devops","External objects":"devops",
+ "Scheduled job":"monitoring","Field history tracking":"monitoring","Audit trail & change events":"monitoring","AI lead scoring":"monitoring",
 };
 const SETUP_TILES=[
  {section:"datamodel",card:"Create custom object",icon:"🧱",desc:"Define custom objects",url:"/api/objects"},
@@ -1204,6 +1449,11 @@ const SETUP_TILES=[
  {section:"datamodel",card:"Record type",icon:"🗂️",desc:"Per-type picklists & defaults",kind:"record-types"},
  {section:"datamodel",card:"Page layout (JSON)",icon:"🖼️",desc:"Per-profile page layouts"},
  {section:"datamodel",card:"Sales path",icon:"🛤️",desc:"Stage guidance paths"},
+ {section:"datamodel",card:"Relationships",icon:"🔗",desc:"Lookup & master-detail, cascade delete"},
+ {section:"datamodel",card:"Person Accounts",icon:"👤",desc:"B2C person records on Account"},
+ {section:"datamodel",card:"Territories",icon:"🗺️",desc:"Hierarchy, assignment rules, sharing"},
+ {section:"datamodel",card:"Big Objects & Archival",icon:"📦",desc:"Append-only __b stores & archive rules"},
+ {section:"apps",card:"App Manager",icon:"📱",desc:"Custom apps: tabs, layouts, related lists, profile access",url:"/api/admin/apps"},
  {section:"automation",card:"Flow (workflow automation)",icon:"🌊",desc:"Record-triggered automation",kind:"flows",flowFilter:"record"},
  {section:"automation",card:"Screen flow",icon:"🖥️",desc:"Guided multi-step wizards",kind:"flows",flowFilter:"screen"},
  {section:"automation",card:"Code trigger (Apex-style)",icon:"⚡",desc:"Sandboxed Python triggers",kind:"triggers"},
@@ -1224,7 +1474,16 @@ const SETUP_TILES=[
  {section:"integrations",card:"Email template",icon:"✉️",desc:"Merge-field templates",kind:"email-templates"},
  {section:"integrations",card:"CSV import",icon:"📥",desc:"Bulk insert / upsert"},
  {section:"integrations",card:"Metadata package",icon:"📦",desc:"Export / import org config"},
+ {section:"integrations",card:"Change sets",icon:"🚚",desc:"Deploy selected metadata"},
+ {section:"devops",card:"Bulk API 2.0",icon:"📦",desc:"CSV ingest jobs with per-row results"},
+ {section:"devops",card:"Streaming events",icon:"📡",desc:"Live CDC & platform events (SSE)"},
+ {section:"devops",card:"Sandboxes",icon:"🏖️",desc:"Full DB copies; scratch orgs"},
+ {section:"devops",card:"Source tracking",icon:"🧬",desc:"Metadata changes since a timestamp"},
+ {section:"devops",card:"Custom metadata types",icon:"🗄️",desc:"Deployable typed config (__mdt)"},
+ {section:"devops",card:"Custom settings",icon:"🎛️",desc:"Org-wide key/value config"},
+ {section:"devops",card:"External objects",icon:"🌐",desc:"OData-backed virtual objects (__x)"},
  {section:"monitoring",card:"Scheduled job",icon:"🕐",desc:"Python on a schedule",kind:"scheduled-jobs"},
+ {section:"monitoring",card:"Field history tracking",icon:"📜",desc:"Per-object change log control"},
  {section:"monitoring",card:"Audit trail & change events",icon:"📋",desc:"Who changed what"},
  {section:"monitoring",card:"AI lead scoring",icon:"🤖",desc:"Train the scoring model"},
 ];
@@ -1278,13 +1537,16 @@ function setupAfterRender(section, highlight){
   // lists + builders for the visible section
   if(sec.id==="automation"){ listAutoResponses(); }
   if(sec.id==="datamodel"){ listPaths(); }
+  if(sec.id==="datamodel"){ listRelationships(); loadPersonStatus(); listTerritories(); listTerrRules(); listBigObjects(); listArchiveRules(); }
+  if(sec.id==="devops"){ listBulkJobs(); listSandboxes(); listCmdt(); listSettings(); listXObjects(); }
+  if(sec.id==="integrations"){ listInstalledPkgs(); }
   for(const [kind,cfg] of Object.entries(SETUP_KINDS)){ if(cfg.cardSection===sec.id) refreshSetupList(kind); }
   for(const b of COND_BUILDERS){ if(b.section===sec.id) cbInit(b.id,b.objSel,b.target); }
   // custom read-only lists
   if(sec.id==="security"){ listSetupUsers(); listSetupRoles(); }
   if(sec.id==="datamodel"){ listSetupObjects(); }
-  if(sec.id==="integrations"){ listNamedCreds(); }
-  if(sec.id==="monitoring"){ listJobs(); }
+  if(sec.id==="integrations"){ listNamedCreds(); listChangeSets(); }
+  if(sec.id==="monitoring"){ listJobs(); loadHistoryTracking(); }
   if(highlight){
     const card=[...host.children].find(c=>{const t=c.querySelector(":scope > .section-title");return t&&t.textContent.trim()===highlight;});
     if(card){ card.classList.add("flash"); card.scrollIntoView({behavior:"smooth",block:"start"}); setTimeout(()=>card.classList.remove("flash"),2300); }
@@ -1320,8 +1582,8 @@ const SETUP_KINDS={
    fields:[["name","rt_name"],["label","rt_label"],["object","rt_obj"],["picklist_overrides","rt_over","json",{}],["is_default","rt_def","check"]]},
  "webhooks":{cardTitle:"Webhook",cardSection:"integrations",listEl:"wh_list",errEl:"wherr",submit:"wh_submit",cancel:"wh_cancel",cols:[["Name","name"],["Object","object"],["URL","url"]],
    fields:[["name","wh_name"],["object","wh_obj"],["url","wh_url"],["events","wh_ev","csv"],["active",null,"const",true]]},
- "scheduled-jobs":{cardTitle:"Scheduled job",cardSection:"monitoring",listEl:"sj_list",errEl:"sjerr",submit:"sj_submit",cancel:"sj_cancel",cols:[["Name","name"],["Every (min)","interval_minutes"],["Run as","run_as"],["Last run","last_run"]],extra:"runJob",
-   fields:[["name","sj_name"],["interval_minutes","sj_int","int",1440],["run_as","sj_run"],["code","sj_code"],["active",null,"const",true]]},
+ "scheduled-jobs":{cardTitle:"Scheduled job",cardSection:"monitoring",listEl:"sj_list",errEl:"sjerr",submit:"sj_submit",cancel:"sj_cancel",cols:[["Name","name"],["Schedule","cron"],["Every (min)","interval_minutes"],["Run as","run_as"],["Last run","last_run"]],extra:"runJob",
+   fields:[["name","sj_name"],["interval_minutes","sj_int","int",1440],["cron","sj_cron"],["run_as","sj_run"],["code","sj_code"],["active",null,"const",true]]},
  "assignment-rules":{cardTitle:"Assignment rule",cardSection:"automation",listEl:"aru_list",errEl:"aruleerr",submit:"aru_submit",cancel:"aru_cancel",cols:[["Name","name"],["Object","object"],["Order","order"]],
    fields:[["name","aru_name"],["object","aru_obj"],["order","aru_ord","int",10],["criteria","aru_crit","json",{}],["assignee","aru_asg","json",{}],["active",null,"const",true]]},
  "email-templates":{cardTitle:"Email template",cardSection:"integrations",listEl:"et_list",errEl:"etemerr",submit:"et_submit",cancel:"et_cancel",cols:[["Name","name"],["Subject","subject"]],noActive:true,
@@ -1424,7 +1686,7 @@ async function refreshSetupList(kind){
   if(!rows.length){ el.innerHTML=`<p class="muted">None yet.</p>`; return; }
   const acts=cfg.actions||{edit:!cfg.noEdit,toggle:!cfg.noActive,del:true};
   el.innerHTML=`<table style="margin-top:10px"><tr>${cfg.cols.map(c=>`<th>${c[0]}</th>`).join("")}${cfg.noActive?"":`<th>Status</th>`}<th></th></tr>`+
-   rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> `:""}${cfg.extra==="flowCanvas"?`<button class="btn secondary small" onclick="openFlowBuilder('${kind}','${x.id}')">🎨 Canvas</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`;
+   rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> <button class=\"btn secondary small\" onclick=\"viewJobRuns(\'${x.id}\')\">Runs</button> `:""}${cfg.extra==="flowCanvas"?`<button class="btn secondary small" onclick="openFlowBuilder('${kind}','${x.id}')">🎨 Canvas</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`;
 }
 // legacy shims
 async function listConfigs(kind,elId,withRun){ const map={"assignment-rules":"assignment-rules","email-templates":"email-templates","sla-policies":"sla-policies","escalation-rules":"escalation-rules"}; if(map[kind]) return refreshSetupList(kind); }
@@ -1546,6 +1808,10 @@ async function addField(){
   const body={name:v("af_name"),label:v("af_label"),type:v("af_type"),required:document.getElementById("af_req").checked};
   const pk=v("af_pick"); if(pk) body.picklist_values=pk.split(",").map(s=>s.trim()).filter(Boolean);
   if(v("af_ref")) body.reference_to=v("af_ref");
+  if(v("af_type")==="MasterDetail"){
+    body.reparentable=document.getElementById("af_reparent").checked;
+    if(document.getElementById("af_inherit").checked) body.sharing_inherits_master=true;
+  }
   if(document.getElementById("af_enc").checked) body.encrypted=true;
   if(document.getElementById("af_ext").checked) body.external_id=true;
   try{ const f=v("af_formula"); if(f) body.formula=JSON.parse(f); }catch(e){ document.getElementById("aferr").innerHTML=`<div class="err">Formula is not valid JSON.</div>`; return; }
@@ -1604,6 +1870,150 @@ async function delPath(pid){
   const r=await api("DELETE",`/api/admin/paths/${pid}`);
   r.ok?listPaths():toast("Failed: "+(r.data.error||r.status),"error");
 }
+/* ============ Data Model batch: relationships, person accounts, territories, big objects ============ */
+async function listRelationships(){
+  const r=await api("GET","/api/admin/relationships");
+  const host=document.getElementById("rel_list"); if(!host) return;
+  host.innerHTML=(r.data||[]).map(x=>`<div class="rowline"><b>${esc(x.object)}</b>.<code>${esc(x.field)}</code>
+    <span class="pill">${esc(x.type)}</span> → <code>${esc(x.reference_to)}</code>
+    ${x.type==="MasterDetail"?`<span class="muted">${x.reparentable?"reparentable":"not reparentable"}${x.sharing_inherits_master?", inherits sharing":""}</span>`:""}
+    <span class="muted">${x.required?"required":"optional"}</span></div>`).join("")||`<p class="muted">No lookup or master-detail relationships yet. Add one via “Add field to object”.</p>`;
+}
+async function loadPersonStatus(){
+  const host=document.getElementById("pa2_info"); if(!host) return;
+  const r=await api("GET","/api/admin/person-accounts");
+  host.innerHTML=r.ok?(r.data.enabled?`<div class="ok">Person Accounts are <b>enabled</b> for this org.</div>`:`<p class="muted">Person Accounts are <b>disabled</b>. Enabling is one-way.</p>`):"";
+}
+async function enablePersonAccounts(){
+  if(!confirm("Enable Person Accounts? This cannot be undone.")) return;
+  const r=await api("POST","/api/admin/person-accounts/enable");
+  document.getElementById("pa2err").innerHTML=r.ok?`<div class="ok">Person Accounts enabled.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  loadPersonStatus();
+}
+async function refreshTerrSelects(){
+  const [t,u]=await Promise.all([api("GET","/api/admin/territories"),api("GET","/api/admin/users")]);
+  const ts=flattenTerrs(t.data||[]), us=u.data||[];
+  const opts=(arr,fn)=>arr.map(fn).join("");
+  const tp=document.getElementById("terr_parent"), tm=document.getElementById("terrm_terr"), tr=document.getElementById("trule_terr");
+  const thtml=`<option value="">— none (top) —</option>`+opts(ts,x=>`<option value="${x.id}">${"&nbsp;".repeat(x.depth*2)}${esc(x.name)}</option>`);
+  if(tp) tp.innerHTML=thtml;
+  if(tm) tm.innerHTML=opts(ts,x=>`<option value="${x.id}">${"&nbsp;".repeat(x.depth*2)}${esc(x.name)}</option>`);
+  if(tr) tr.innerHTML=opts(ts,x=>`<option value="${x.id}">${"&nbsp;".repeat(x.depth*2)}${esc(x.name)}</option>`);
+  const mu=document.getElementById("terrm_user");
+  if(mu) mu.innerHTML=opts(us,x=>`<option value="${x.id}">${esc(x.username||x.name)}</option>`);
+}
+async function listTerritories(){
+  const host=document.getElementById("terr_list"); if(!host) return;
+  const r=await api("GET","/api/admin/territories");
+  const ts=flattenTerrs(r.data||[]);
+  host.innerHTML=ts.map(t=>`<div class="rowline"><span style="padding-left:${t.depth*16}px"><b>${esc(t.name)}</b></span>
+    <span class="muted">${esc(t.description||"")}</span><span style="margin-left:auto"></span>
+    <button class="btn secondary small" onclick="viewTerritory('${t.id}')">Members</button>
+    <button class="btn secondary small" onclick="delTerritory('${t.id}')">✕</button></div>`).join("")||`<p class="muted">No territories yet.</p>`;
+  host.innerHTML+=`<div id="terrmembers" style="margin-top:8px"></div>`;
+  refreshTerrSelects();
+}
+function flattenTerrs(nodes, depth=0, out=[]){
+  for(const n of nodes){ out.push({...n, depth}); flattenTerrs(n.children||[], depth+1, out); }
+  return out;
+}
+async function createTerritory(){
+  const r=await api("POST","/api/admin/territories",{name:document.getElementById("terr_name").value.trim(),
+    parent_id:document.getElementById("terr_parent").value||null, description:document.getElementById("terr_desc").value.trim()});
+  document.getElementById("terrerr").innerHTML=r.ok?`<div class="ok">Territory created.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok){ document.getElementById("terr_name").value=""; listTerritories(); }
+}
+async function delTerritory(id){
+  if(!confirm("Delete this territory and its child territories?")) return;
+  const r=await api("DELETE",`/api/admin/territories/${id}`);
+  r.ok?listTerritories():toast("Failed: "+(r.data.error||r.status),"error");
+}
+async function addTerritoryMember(){
+  const r=await api("POST",`/api/admin/territories/${document.getElementById("terrm_terr").value}/users`,
+    {user_id:document.getElementById("terrm_user").value, role:document.getElementById("terrm_role").value.trim()||"member"});
+  document.getElementById("terrerr").innerHTML=r.ok?`<div class="ok">Member added.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+async function viewTerritory(id){
+  const r=await api("GET",`/api/admin/territories/${id}/users`);
+  const host=document.getElementById("terrmembers");
+  host.innerHTML=`<h4>Members</h4>`+((r.data||[]).map(m=>`<div class="rowline"><b>${esc(m.user_name||m.user_id)}</b><span class="muted">${esc(m.role||"")}</span>
+    <span style="margin-left:auto"></span><button class="btn secondary small" onclick="rmTerrMember('${id}','${m.user_id}')">✕</button></div>`).join("")||`<p class="muted">No members.</p>`);
+}
+async function rmTerrMember(tid,uid){
+  const r=await api("DELETE",`/api/admin/territories/${tid}/users/${uid}`);
+  r.ok?viewTerritory(tid):toast("Failed: "+(r.data.error||r.status),"error");
+}
+async function createTerrRule(){
+  let crit={}; try{ const c=v("trule_crit"); if(c) crit=JSON.parse(c); }catch(e){ document.getElementById("terrerr").innerHTML=`<div class="err">Criteria is not valid JSON.</div>`; return; }
+  const r=await api("POST","/api/admin/territory-rules",{name:document.getElementById("trule_name").value.trim(), criteria:crit,
+    territory_id:document.getElementById("trule_terr").value,
+    priority:parseInt(document.getElementById("trule_prio").value||"10",10), active:true});
+  document.getElementById("terrerr").innerHTML=r.ok?`<div class="ok">Rule created.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listTerrRules();
+}
+async function listTerrRules(){
+  const host=document.getElementById("trule_list"); if(!host) return;
+  const [r,t]=await Promise.all([api("GET","/api/admin/territory-rules"),api("GET","/api/admin/territories")]);
+  const names={}; flattenTerrs(t.data||[]).forEach(x=>names[x.id]=x.name);
+  host.innerHTML=(r.data||[]).map(x=>`<div class="rowline"><b>${esc(x.name)}</b><span class="muted">prio ${x.priority} → ${esc(names[x.territory_id]||x.territory_id||"")}</span>
+    <span class="pill">${x.active?"active":"inactive"}</span><span style="margin-left:auto"></span>
+    <button class="btn secondary small" onclick="toggleTerrRule('${x.id}',${!x.active})">${x.active?"Deactivate":"Activate"}</button>
+    <button class="btn secondary small" onclick="delTerrRule('${x.id}')">✕</button></div>`).join("")||`<p class="muted">No assignment rules yet.</p>`;
+}
+async function toggleTerrRule(id,active){
+  const r=await api("PATCH",`/api/admin/territory-rules/${id}`,{active});
+  r.ok?listTerrRules():toast("Failed: "+(r.data.error||r.status),"error");
+}
+async function delTerrRule(id){
+  const r=await api("DELETE",`/api/admin/territory-rules/${id}`);
+  r.ok?listTerrRules():toast("Failed: "+(r.data.error||r.status),"error");
+}
+async function runTerrAssignment(){
+  const r=await api("POST","/api/admin/territory-rules/run");
+  document.getElementById("terrerr").innerHTML=r.ok?`<div class="ok">Assigned ${r.data.accounts_assigned} account(s) across ${r.data.rules_run} rule(s).</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+async function listBigObjects(){
+  const host=document.getElementById("bo_list"); if(!host) return;
+  const r=await api("GET","/api/admin/big-objects");
+  host.innerHTML=(r.data||[]).map(o=>`<div class="rowline"><b>${esc(o.label)}</b><code>${esc(o.name)}</code>
+    <span class="muted">${o.fields} fields · ${o.records} records</span>
+    <span style="margin-left:auto"></span>
+    <button class="btn secondary small" onclick="showObject('${o.name}')">View records</button></div>`).join("")||`<p class="muted">No big objects yet.</p>`;
+}
+async function createBigObject(){
+  const r=await api("POST","/api/admin/big-objects",{label:document.getElementById("bo_label").value.trim()||document.getElementById("bo_api").value.trim(),
+    name:document.getElementById("bo_api").value.trim()});
+  document.getElementById("boerr").innerHTML=r.ok?`<div class="ok">Big object created.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok){ document.getElementById("bo_api").value=""; listBigObjects(); }
+}
+async function createArchiveRule(){
+  const r=await api("POST","/api/admin/archive-rules",{name:document.getElementById("ar_name").value.trim(),
+    object:document.getElementById("ar_obj").value, age_days:parseInt(document.getElementById("ar_age").value||"365",10),
+    target:document.getElementById("ar_target").value.trim()||undefined, active:true});
+  document.getElementById("boerr").innerHTML=r.ok?`<div class="ok">Archive rule created.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listArchiveRules();
+}
+async function listArchiveRules(){
+  const host=document.getElementById("arule_list"); if(!host) return;
+  const r=await api("GET","/api/admin/archive-rules");
+  host.innerHTML=(r.data||[]).map(x=>`<div class="rowline"><b>${esc(x.name)}</b><span class="muted">${esc(x.object)} older than ${x.age_days}d → <code>${esc(x.target)}</code></span>
+    <span class="pill">${x.active?"active":"inactive"}</span>
+    ${x.last_run?`<span class="muted">last run ${esc(x.last_run)} · moved ${x.moved||0}</span>`:""}
+    <span style="margin-left:auto"></span>
+    <button class="btn secondary small" onclick="runArchive('${x.id}')">Run now</button>
+    <button class="btn secondary small" onclick="showObject('${x.target}')">View archived</button>
+    <button class="btn secondary small" onclick="delArchiveRule('${x.id}')">✕</button></div>`).join("")||`<p class="muted">No archive rules yet.</p>`;
+}
+async function runArchive(id){
+  if(!confirm("Archive matching records now? Archived records move to the big object and are removed from the source.")) return;
+  const r=await api("POST",`/api/admin/archive-rules/${id}/run`);
+  document.getElementById("boerr").innerHTML=r.ok?`<div class="ok">Moved ${r.data.moved} record(s) to ${esc(r.data.target)}.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listArchiveRules();
+}
+async function delArchiveRule(id){
+  const r=await api("DELETE",`/api/admin/archive-rules/${id}`);
+  r.ok?listArchiveRules():toast("Failed: "+(r.data.error||r.status),"error");
+}
 async function trainScoring(){
   const r=await api("POST","/api/admin/ml/train-lead-scoring",{});
   if(!r.ok){ document.getElementById("mlerr").innerHTML=`<div class="err">${esc(r.data.error||"Training failed")}</div>`; return; }
@@ -1617,6 +2027,55 @@ async function listConfigs(kind,elId,withRun){
 async function delConfig(kind,id,elId,withRun){ if(!confirm("Delete?"))return; await api("DELETE","/api/admin/"+kind+"/"+id); listConfigs(kind,elId,withRun); }
 async function listJobs(){ return refreshSetupList("scheduled-jobs"); }
 async function runJob(id){ const r=await api("POST",`/api/admin/scheduled-jobs/${id}/run`); toast(r.ok?("Job finished: "+(r.data.ok?"OK":"errors — "+r.data.detail)):("Failed: "+(r.data.error||r.status)), r.ok&&r.data.ok?"ok":"error"); listJobs(); }
+let _cronTimer=null;
+async function validateCronInput(inputId,descId){
+  const el=document.getElementById(descId); if(!el) return;
+  const v=(document.getElementById(inputId).value||"").trim();
+  if(!v){ el.textContent=""; return; }
+  clearTimeout(_cronTimer);
+  _cronTimer=setTimeout(async()=>{
+    const r=await api("POST","/api/admin/scheduled-jobs/validate-cron",{cron:v});
+    el.textContent=r.data&&r.data.ok?("✓ "+r.data.description):("✗ "+((r.data&&r.data.error)||"invalid"));
+    el.style.color=r.data&&r.data.ok?"var(--ok)":"var(--danger)";
+  },350);
+}
+async function viewJobRuns(id){
+  const box=document.getElementById("sj_runs"); if(!box) return;
+  const job=(SETUP_CACHE["scheduled-jobs"]||[]).find(j=>j.id===id);
+  const r=await api("GET",`/api/admin/scheduled-jobs/${id}/runs?limit=20`);
+  const rows=r.data||[];
+  box.innerHTML=`<div class="card" style="margin-top:10px"><div class="section-title">Run history — ${esc((job&&job.name)||id)}</div>`+
+   (rows.length?`<table><tr><th>When (UTC)</th><th>Status</th><th>Detail</th></tr>${rows.map(x=>`<tr><td>${esc((x.ran_at||"").slice(0,19).replace("T"," "))}</td><td>${x.status==="ok"?'<span class="pill pill-on">ok</span>':'<span class="pill pill-off">'+esc(x.status)+"</span>"}</td><td>${esc(x.detail||"")}</td></tr>`).join("")}</table>`:`<p class="muted">No runs recorded yet.</p>`)+`</div>`;
+  box.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+/* ============ field history tracking ============ */
+let HT_ROWS=[];
+async function loadHistoryTracking(){
+  const host=document.getElementById("ht_list"); if(!host) return;
+  const r=await api("GET","/api/admin/history-tracking");
+  const rows=r.data||[]; HT_ROWS=rows;
+  host.innerHTML=`<table style="margin-top:10px"><tr><th>Object</th><th>Track</th><th>Fields (comma-separated, blank = all)</th><th>Retention (days)</th><th>History rows</th></tr>`+
+   rows.map((o,i)=>`<tr><td>${esc(o.label)}<br><span class="muted" style="font-size:11px">${esc(o.object_name)}</span></td><td><input type="checkbox" id="ht_en_${i}" ${o.enabled?"checked":""} style="width:auto"></td><td><input id="ht_f_${i}" value="${esc((o.fields||[]).join(", "))}" placeholder="all fields" style="min-width:220px"></td><td><input id="ht_r_${i}" type="number" min="1" value="${o.retention_days}" style="width:80px"></td><td>${o.history_rows}</td></tr>`).join("")+`</table>`;
+}
+async function saveHistoryTracking(){
+  for(let i=0;i<HT_ROWS.length;i++){
+    const o=HT_ROWS[i];
+    const body={enabled:document.getElementById("ht_en_"+i).checked,
+      fields:document.getElementById("ht_f_"+i).value.split(",").map(s=>s.trim()).filter(Boolean),
+      retention_days:parseInt(document.getElementById("ht_r_"+i).value||"180",10)};
+    const r=await api("PUT","/api/admin/history-tracking/"+encodeURIComponent(o.object_name),body);
+    if(!r.ok){ toast("Failed on "+o.object_name+": "+((r.data&&r.data.error)||r.status),"error"); return; }
+  }
+  toast("History tracking settings saved.","ok"); loadHistoryTracking();
+}
+async function purgeHistory(){
+  if(!confirm("Delete history entries older than each object's retention window?")) return;
+  const r=await api("POST","/api/admin/history-tracking/purge");
+  const p=(r.data&&r.data.purged)||{};
+  const n=Object.values(p).reduce((a,b)=>a+b,0);
+  toast(n?("Purged "+n+" old history row(s)."):"Nothing old enough to purge.","ok");
+  loadHistoryTracking();
+}
 async function showAudit(){
   const r=await api("GET","/api/admin/audit-trail?limit=50");
   document.getElementById("audit_view").innerHTML=`<table style="margin-top:10px"><tr><th>When</th><th>Who</th><th>Action</th><th>What</th></tr>${(r.data||[]).map(a=>`<tr><td>${esc((a.at||"").slice(0,19).replace("T"," "))}</td><td>${esc(a.username)}</td><td>${esc(a.action)}</td><td>${esc(a.entity_type+": "+a.entity_name)}</td></tr>`).join("")}</table>`;
@@ -1640,6 +2099,402 @@ async function importPkg(){
   let pkg; try{ pkg=JSON.parse(await f.text()); }catch(e){ document.getElementById("pkgerr").innerHTML=`<div class="err">Not valid JSON.</div>`; return; }
   const r=await api("POST","/api/admin/packages/import",{package:pkg});
   document.getElementById("pkgerr").innerHTML=r.ok?`<div class="ok">Imported: ${esc(JSON.stringify(r.data))}</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+/* ============ change sets ============ */
+/* ============ App Manager (custom applications) ============ */
+let APPMGR={apps:[],profiles:[],editing:null};
+async function renderAppManager(){
+  setActive("__admin");
+  document.getElementById("main").innerHTML=
+   `<div class="setup-breadcrumb"><a onclick="showAdmin()">← Setup Home</a><span>›</span><b>📱 Apps</b></div><div id="appmgr"></div>`;
+  await refreshAppMgr();
+}
+async function refreshAppMgr(){
+  const [ar,pr]=await Promise.all([api("GET","/api/admin/apps"),api("GET","/api/admin/profiles")]);
+  APPMGR.apps=ar.data||[]; APPMGR.profiles=(pr.data||[]).map(p=>p.name||p);
+  document.getElementById("appmgr").innerHTML=
+   `<div class="card"><div class="section-title">📱 App Manager <span class="muted" style="font-weight:400">— custom applications: tabs, layouts, related lists, profile access</span></div>
+    <p class="muted">Apps group navigation tabs per team. Users switch apps from the ▦ launcher in the header. Leave profile access empty to show an app to everyone.</p>
+    <div class="btnrow"><button class="btn" onclick="editApp(null)">+ New app</button>
+    <button class="btn secondary" onclick="seedApps()">Seed Sales &amp; Service apps</button></div>
+    <div id="appmgr_err"></div><div id="appmgr_list"></div><div id="appmgr_edit"></div></div>`;
+  renderAppList();
+}
+function renderAppList(){
+  document.getElementById("appmgr_list").innerHTML=
+   `<table><tr><th></th><th>Label</th><th>API name</th><th>Tabs</th><th>Visible to</th><th>Active</th><th></th></tr>`+
+   APPMGR.apps.map(a=>{
+     const pa=a.profile_access||{}, vis=Object.keys(pa).filter(p=>pa[p].visible);
+     const def=Object.keys(pa).filter(p=>pa[p].default);
+     return `<tr><td><span class="lapp-ic" style="background:${esc(a.color)};width:28px;height:28px;font-size:15px">${esc(a.icon)}</span></td>
+      <td><b>${esc(a.label)}</b>${def.length?` <span class="muted" style="font-size:11px">default: ${esc(def.join(", "))}</span>`:""}</td>
+      <td>${esc(a.name)}</td><td>${(a.tabs||[]).length}</td>
+      <td>${Object.keys(pa).length?esc(vis.join(", ")||"none"):"All profiles"}</td>
+      <td>${a.active?"✅":"—"}</td>
+      <td style="white-space:nowrap"><button class="btn secondary small" onclick="editApp('${a.id}')">Edit</button>
+      <button class="btn secondary small" onclick="delApp('${a.id}')">Delete</button></td></tr>`;
+   }).join("")+`</table>`||"";
+  if(!APPMGR.apps.length) document.getElementById("appmgr_list").innerHTML='<p class="muted">No apps yet — create one or seed the standard Sales &amp; Service apps.</p>';
+}
+function editApp(id){
+  const a=id?APPMGR.apps.find(x=>x.id===id):{name:"",label:"",description:"",icon:"📱",color:"#1f6feb",active:true,sort_order:0,tabs:[],profile_access:{}};
+  if(id&&!a) return;
+  APPMGR.editing={id,app:JSON.parse(JSON.stringify(a))};
+  const e=APPMGR.editing.app;
+  const objOpts=objects.map(o=>`<option value="object:${o.name}">${esc(o.plural)} (object)</option>`).join("");
+  const utilOpts=Object.entries(APP_UTILS).map(([k,v])=>`<option value="utility:${k}">${esc(v[2])} (utility)</option>`).join("")
+   +`<option value="utility:bulk">Bulk Jobs (utility, admin)</option><option value="utility:admin">Admin Setup (utility, admin)</option>`;
+  const host=document.getElementById("appmgr_edit");
+  host.innerHTML=`<div class="card" style="border:2px solid var(--blue)"><div class="section-title">${id?"Edit app":"New app"}</div><div id="ae_err"></div>
+   <div class="grid2"><div>
+     <label>Label</label><input id="ae_label" value="${esc(e.label)}">
+     <label>API name</label><input id="ae_name" value="${esc(e.name)}" ${id?"disabled":""}>
+     <label>Description</label><input id="ae_desc" value="${esc(e.description)}">
+   </div><div>
+     <label>Icon (emoji)</label><input id="ae_icon" value="${esc(e.icon)}">
+     <label>Color</label><input id="ae_color" type="color" value="${esc(e.color||"#1f6feb")}">
+     <label>Sort order</label><input id="ae_sort" type="number" value="${e.sort_order||0}">
+     <label><input type="checkbox" id="ae_active" style="width:auto" ${e.active?"checked":""}> Active</label>
+   </div></div>
+   <div class="section-title" style="margin-top:8px">Tabs <span class="muted" style="font-weight:400">— order, layout override &amp; related lists per tab</span></div>
+   <div id="ae_tabs"></div>
+   <div class="btnrow"><select id="ae_addref" style="width:auto;max-width:280px">${objOpts}${utilOpts}</select>
+   <button class="btn secondary small" onclick="appAddTab()">+ Add tab</button></div>
+   <div class="section-title" style="margin-top:8px">Profile access <span class="muted" style="font-weight:400">— empty = visible to everyone</span></div>
+   <div id="ae_profiles" class="grid2">${APPMGR.profiles.map(p=>{const c=(e.profile_access||{})[p]||{};
+     return `<label style="font-weight:400"><input type="checkbox" data-prof="${esc(p)}" data-k="visible" style="width:auto" ${c.visible?"checked":""}> ${esc(p)}
+     <span class="muted">· default <input type="radio" name="ae_def" data-prof="${esc(p)}" style="width:auto" ${c.default?"checked":""}></span></label>`}).join("")||'<p class="muted">No profiles found.</p>'}</div>
+   <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveApp()">Save app</button>
+   <button class="btn secondary" onclick="document.getElementById('appmgr_edit').innerHTML=''">Cancel</button></div></div>`;
+  renderAppTabRows();
+  host.scrollIntoView({behavior:"smooth"});
+}
+function renderAppTabRows(){
+  const e=APPMGR.editing.app, host=document.getElementById("ae_tabs");
+  if(!e.tabs.length){ host.innerHTML='<p class="muted">No tabs yet — add one above.</p>'; return; }
+  host.innerHTML=e.tabs.map((t,i)=>{
+    const isObj=t.kind==="object";
+    const lbl=isObj?((objects.find(o=>o.name===t.ref)||{}).plural||t.ref):(APP_UTILS[t.ref]?APP_UTILS[t.ref][2]:t.ref);
+    const relOpts=objects.map(o=>`<option value="${o.name}" ${(t.related_lists||[]).includes(o.name)?"selected":""}>${esc(o.plural)}</option>`).join("");
+    const profOpts=`<option value="">— profile default layout —</option>`+APPMGR.profiles.map(p=>`<option ${t.layout&&t.layout.profile===p?"selected":""}>${esc(p)}</option>`).join("");
+    return `<div class="card" style="margin:6px 0;padding:10px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+     <b>${i+1}. ${esc(t.label||lbl)}</b><span class="muted">${t.kind}: ${esc(t.ref)}</span><span style="margin-left:auto"></span>
+     <button class="btn secondary small" onclick="appTabMove(${i},-1)" ${i===0?"disabled":""}>↑</button>
+     <button class="btn secondary small" onclick="appTabMove(${i},1)" ${i===e.tabs.length-1?"disabled":""}>↓</button>
+     <button class="btn secondary small" onclick="appTabDel(${i})">✕</button></div>
+     <div class="grid2" style="margin-top:8px"><div>
+       <label>Tab label override</label><input data-tab="${i}" data-k="label" value="${esc(t.label||"")}" placeholder="${esc(lbl)}">
+       ${isObj?`<label>Page layout override (use another profile's layout)</label><select data-tab="${i}" data-k="layout_profile">${profOpts}</select>`:'<p class="muted">Layout &amp; related lists apply to object tabs.</p>'}
+     </div><div>${isObj?`<label>Related lists <span class="muted">— none selected = all</span></label><select multiple data-tab="${i}" data-k="related_lists" style="height:96px">${relOpts}</select>`:""}</div></div></div>`;
+  }).join("");
+}
+function appAddTab(){
+  const v=document.getElementById("ae_addref").value, [kind,ref]=v.split(":");
+  collectAppTabEdits();
+  APPMGR.editing.app.tabs.push({kind,ref,label:null,layout:null,related_lists:null});
+  renderAppTabRows();
+}
+function appTabMove(i,d){ collectAppTabEdits(); const t=APPMGR.editing.app.tabs, j=i+d; if(j<0||j>=t.length) return; [t[i],t[j]]=[t[j],t[i]]; renderAppTabRows(); }
+function appTabDel(i){ collectAppTabEdits(); APPMGR.editing.app.tabs.splice(i,1); renderAppTabRows(); }
+function collectAppTabEdits(){
+  const ed=APPMGR.editing; if(!ed) return; const e=ed.app;
+  document.querySelectorAll("#ae_tabs [data-tab]").forEach(el=>{
+    const i=+el.dataset.tab, k=el.dataset.k, t=e.tabs[i]; if(!t) return;
+    if(k==="label") t.label=el.value.trim()||null;
+    if(k==="layout_profile") t.layout=el.value?{profile:el.value,record_type:"Default"}:null;
+    if(k==="related_lists"){ const s=[...el.selectedOptions].map(o=>o.value); t.related_lists=s.length?s:null; }
+  });
+  e.profile_access={};
+  document.querySelectorAll("#ae_profiles [data-prof]").forEach(el=>{
+    const p=el.dataset.prof; e.profile_access[p]=e.profile_access[p]||{visible:false,default:false};
+    if(el.dataset.k==="visible") e.profile_access[p].visible=el.checked;
+    else e.profile_access[p].default=el.checked;
+  });
+  for(const p of Object.keys(e.profile_access))
+    if(!e.profile_access[p].visible&&!e.profile_access[p].default) delete e.profile_access[p];
+}
+async function saveApp(){
+  collectAppTabEdits();
+  const e=APPMGR.editing.app, err=document.getElementById("ae_err");
+  const body={name:document.getElementById("ae_name").value.trim(), label:document.getElementById("ae_label").value.trim(),
+    description:document.getElementById("ae_desc").value.trim(), icon:document.getElementById("ae_icon").value.trim()||"📱",
+    color:document.getElementById("ae_color").value, sort_order:+document.getElementById("ae_sort").value||0,
+    active:document.getElementById("ae_active").checked, tabs:e.tabs, profile_access:e.profile_access};
+  const id=APPMGR.editing.id;
+  const r=id?await api("PUT",`/api/admin/apps/${id}`,body):await api("POST","/api/admin/apps",body);
+  if(!r.ok){ err.innerHTML=`<div class="err">${esc(r.data.error||("HTTP "+r.status))}</div>`; return; }
+  toast("App saved.","ok"); await refreshAppMgr(); await refreshUserApps();
+}
+async function delApp(id){ if(!confirm("Delete this app? Users fall back to their next visible app."))return;
+  const r=await api("DELETE",`/api/admin/apps/${id}`); if(r.ok){toast("App deleted.","ok"); await refreshAppMgr(); await refreshUserApps();}else toast("Delete failed.","error"); }
+async function seedApps(){ const r=await api("POST","/api/admin/apps/seed");
+  if(r.ok){toast(`Seeded: ${(r.data.created||[]).join(", ")||"already present"}.`,"ok"); await refreshAppMgr(); await refreshUserApps();}
+  else toast("Seed failed: "+(r.data.error||r.status),"error"); }
+/* ============ DevOps: Bulk API, streaming, sandboxes, source tracking, CMDT ============ */
+async function createBulkJob(){
+  const body={object:document.getElementById("bulk_obj").value, operation:document.getElementById("bulk_op").value,
+    externalIdFieldName:document.getElementById("bulk_ext").value.trim()||undefined};
+  const r=await api("POST","/api/bulk/jobs",body);
+  if(!r.ok){ document.getElementById("bulkerr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  const csv=document.getElementById("bulk_csv").value;
+  if(csv.trim()){
+    const up=await fetch(`/api/bulk/jobs/${r.data.id}`,{method:"PUT",headers:{...H(),"Content-Type":"text/csv"},body:csv});
+    if(!up.ok){ document.getElementById("bulkerr").innerHTML=`<div class="err">Upload failed.</div>`; }
+  }
+  document.getElementById("bulk_csv").value="";
+  await listBulkJobs();
+}
+async function listBulkJobs(){
+  const r=await api("GET","/api/bulk/jobs");
+  const host=document.getElementById("bulk_list"); if(!host) return;
+  host.innerHTML=(r.data||[]).map(j=>`<div class="rowline"><b>${esc(j.object)}</b><span class="muted">${esc(j.operation)} · ${esc(j.state)} · ${j.state==="Open"?(j.row_count||0)+" uploaded":(j.processed||0)+" processed"} (${j.succeeded||0} ok, ${j.failed||0} failed)</span><span style="margin-left:auto"></span>
+    ${j.state==="Open"?`<button class="btn secondary small" onclick="closeBulkJob('${j.id}')">Close &amp; run</button>`:""}
+    ${["Open","UploadComplete","InProgress"].includes(j.state)?`<button class="btn secondary small" onclick="abortBulkJob('${j.id}')">Abort</button>`:""}
+    ${j.state==="JobComplete"?`<button class="btn secondary small" onclick="dlBulk('${j.id}','successful')">✓ CSV</button><button class="btn secondary small" onclick="dlBulk('${j.id}','failed')">✗ CSV</button>`:""}
+    </div>`).join("")||`<p class="muted">No jobs yet.</p>`;
+}
+async function closeBulkJob(id){ const r=await api("PATCH",`/api/bulk/jobs/${id}`,{state:"UploadComplete"});
+  if(!r.ok) toast(r.data.error||"Close failed.","error"); await listBulkJobs(); }
+async function abortBulkJob(id){ await api("DELETE",`/api/bulk/jobs/${id}`); await listBulkJobs(); }
+async function dlBulk(id,kind){
+  const r=await fetch(`/api/bulk/jobs/${id}/${kind}`,{headers:H()});
+  const blob=await r.blob(); const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=`bulk-${id}-${kind}.csv`; a.click();
+}
+let STREAM_SRC=null;
+function startStream(){
+  stopStream();
+  const topics=document.getElementById("st_topics").value.trim();
+  const log=document.getElementById("stream_log");
+  log.innerHTML=`<p class="muted">Listening…</p>`;
+  const es=new EventSource(`/api/streaming?access_token=${encodeURIComponent(token)}${topics?`&topics=${encodeURIComponent(topics)}`:""}`);
+  STREAM_SRC=es;
+  const show=e=>{
+    const div=document.createElement("div"); div.className="rowline";
+    div.innerHTML=`<b>${esc(e.type==="message"?"event":e.type)}</b> <code>${esc(""+(e.lastEventId||""))}</code><span class="muted" style="word-break:break-all">${esc(e.data.slice(0,300))}</span>`;
+    log.prepend(div);
+    while(log.children.length>60) log.lastChild.remove();
+  };
+  es.onmessage=show; // unnamed events
+  topics.split(",").forEach(t=>{ t=t.trim(); if(t) es.addEventListener(t,show); }); // named topic events
+  es.onerror=()=>{ const d=document.createElement("div"); d.innerHTML=`<div class="err">Stream error / disconnected.</div>`; log.prepend(d); stopStream(); };
+}
+function stopStream(){ if(STREAM_SRC){ STREAM_SRC.close(); STREAM_SRC=null; } }
+async function publishPlatformEvent(){
+  const r=await api("POST","/api/streaming/events",{name:document.getElementById("pe_name").value.trim(),
+    payload:JSON.parse(document.getElementById("pe_payload").value.trim()||"{}")});
+  toast(r.ok?"Published.":"Publish failed: "+(r.data.error||r.status), r.ok?"ok":"error");
+}
+async function createSandbox(){
+  const body={name:document.getElementById("sb_name").value.trim(), kind:document.getElementById("sb_kind").value,
+    scratch:document.getElementById("sb_scratch").checked, expires_in_days:+document.getElementById("sb_exp").value||7};
+  const r=await api("POST","/api/admin/sandboxes",body);
+  if(!r.ok){ document.getElementById("sberr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  document.getElementById("sberr").innerHTML=""; await listSandboxes();
+}
+async function listSandboxes(){
+  const r=await api("GET","/api/admin/sandboxes");
+  const host=document.getElementById("sb_list"); if(!host) return;
+  host.innerHTML=(r.data||[]).map(s=>`<div class="rowline"><b>${esc(s.name)}</b><span class="muted">${esc(s.kind)}${s.scratch?` · scratch, expires ${esc(s.expires_at||"")}`:""} · created ${esc(s.created_at||"")}</span><span style="margin-left:auto"></span>
+    <button class="btn secondary small" onclick="refreshSandbox('${s.id}')">Refresh</button>
+    <button class="btn secondary small" onclick="sandboxLogin('${s.id}')">How to open</button>
+    <button class="btn secondary small" onclick="deleteSandbox('${s.id}')">Delete</button></div>`).join("")||`<p class="muted">No sandboxes yet.</p>`;
+}
+async function refreshSandbox(id){ const r=await api("POST",`/api/admin/sandboxes/${id}/refresh`);
+  toast(r.ok?"Sandbox refreshed.":"Refresh failed: "+(r.data.error||r.status), r.ok?"ok":"error"); await listSandboxes(); }
+async function deleteSandbox(id){ if(!confirm("Delete this sandbox and its database copy?"))return;
+  await api("DELETE",`/api/admin/sandboxes/${id}`); await listSandboxes(); }
+async function sandboxLogin(id){ const r=await api("GET",`/api/admin/sandboxes/${id}/login`);
+  if(r.ok) document.getElementById("sberr").innerHTML=`<div class="ok" style="word-break:break-all">${esc(r.data.hint)}</div>`; }
+async function showSourceChanges(){
+  const since=document.getElementById("src_since").value.trim();
+  const r=await api("GET","/api/admin/source/changes"+(since?`?since=${encodeURIComponent(since)}`:""));
+  const host=document.getElementById("src_list");
+  if(!r.ok){ host.innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  document.getElementById("src_since").value=r.data.server_time;
+  host.innerHTML=(r.data.changes||[]).map(c=>`<div class="rowline"><b>${esc(c.type)}</b><span>${esc(c.name)}</span><span class="muted">${esc(c.action)} · ${esc(c.at)} · ${esc(c.user||"")}</span></div>`).join("")
+    ||`<p class="muted">No changes since ${esc(since||"the beginning")}.</p>`;
+}
+async function createCmdt(){
+  let fields; try{ fields=JSON.parse(document.getElementById("cmdt_fields").value.trim()||"[]"); }
+  catch(e){ document.getElementById("cmdterr").innerHTML=`<div class="err">Fields must be valid JSON.</div>`; return; }
+  const r=await api("POST","/api/admin/metadata-types",{label:document.getElementById("cmdt_label").value.trim(),
+    api_name:document.getElementById("cmdt_api").value.trim(), description:document.getElementById("cmdt_desc").value.trim(), fields});
+  if(!r.ok){ document.getElementById("cmdterr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  document.getElementById("cmdterr").innerHTML=""; await listCmdt();
+}
+async function listCmdt(){
+  const r=await api("GET","/api/admin/metadata-types");
+  const host=document.getElementById("cmdt_list"); if(!host) return;
+  let html="";
+  for(const t of (r.data||[])){
+    const d=await api("GET",`/api/admin/metadata-types/${t.id}`);
+    const recs=(d.data&&d.data.records)||[];
+    html+=`<div class="rowline" style="align-items:flex-start;flex-direction:column"><div style="display:flex;gap:8px;align-items:center;width:100%"><b>${esc(t.label)}</b><code>${esc(t.api_name)}</code><span class="muted">${(t.fields||[]).map(f=>esc(f.name+":"+f.type)).join(", ")}</span><span style="margin-left:auto"></span><button class="btn secondary small" onclick="delCmdt('${t.id}')">Delete type</button></div>
+    <div style="margin-top:6px;width:100%">${recs.map(x=>`<div class="rowline"><code>${esc(x.developer_name)}</code><span class="muted">${esc(JSON.stringify(x.values))}</span><span style="margin-left:auto"></span><button class="btn secondary small" onclick="delCmdtRecord('${x.id}')">✕</button></div>`).join("")}
+    <div class="grid2" style="margin-top:6px"><div><input id="cmdtr_name_${t.id}" placeholder="DeveloperName"></div><div><input id="cmdtr_vals_${t.id}" placeholder='Values JSON, e.g. {"Discount":15}'></div></div>
+    <div class="btnrow" style="margin-top:6px"><button class="btn secondary small" onclick="addCmdtRecord('${t.id}')">Add record</button></div></div></div>`;
+  }
+  host.innerHTML=html||`<p class="muted">No custom metadata types yet.</p>`;
+}
+async function addCmdtRecord(tid){
+  let values={}; try{ values=JSON.parse(document.getElementById(`cmdtr_vals_${tid}`).value.trim()||"{}"); }
+  catch(e){ toast("Values must be valid JSON.","error"); return; }
+  const r=await api("POST",`/api/admin/metadata-types/${tid}/records`,
+    {developer_name:document.getElementById(`cmdtr_name_${tid}`).value.trim(), values});
+  if(!r.ok) toast(r.data.error||"Failed","error"); else await listCmdt();
+}
+async function delCmdt(tid){ if(!confirm("Delete this type and all its records?"))return;
+  await api("DELETE",`/api/admin/metadata-types/${tid}`); await listCmdt(); }
+async function delCmdtRecord(rid){ await api("DELETE",`/api/admin/metadata-records/${rid}`); await listCmdt(); }
+async function upsertSetting(){
+  let values; try{ values=JSON.parse(document.getElementById("cs_values").value.trim()||"{}"); }
+  catch(e){ document.getElementById("cseterr").innerHTML=`<div class="err">Values must be valid JSON.</div>`; return; }
+  const r=await api("POST","/api/admin/custom-settings",{name:document.getElementById("cs_name").value.trim(),
+    label:document.getElementById("cs_label").value.trim(), values});
+  if(!r.ok){ document.getElementById("cseterr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  document.getElementById("cseterr").innerHTML=""; await listSettings();
+}
+async function listSettings(){
+  const r=await api("GET","/api/admin/custom-settings");
+  const host=document.getElementById("cs_list"); if(!host) return;
+  host.innerHTML=(r.data||[]).map(s=>`<div class="rowline"><b>${esc(s.label||s.name)}</b><code>${esc(s.name)}</code><span class="muted">${esc(JSON.stringify(s.values))}</span><span style="margin-left:auto"></span><button class="btn secondary small" onclick="delSetting('${s.id}')">✕</button></div>`).join("")||`<p class="muted">No custom settings yet.</p>`;
+}
+async function delSetting(sid){ await api("DELETE",`/api/admin/custom-settings/${sid}`); await listSettings(); }
+async function createXObject(){
+  const r=await api("POST","/api/admin/external-objects",{label:document.getElementById("xo_label").value.trim(),
+    api_name:document.getElementById("xo_api").value.trim(), odata_url:document.getElementById("xo_url").value.trim(),
+    entity_set:document.getElementById("xo_entity").value.trim(), named_credential:document.getElementById("xo_cred").value.trim(),
+    key_field:document.getElementById("xo_key").value.trim()||"Id"});
+  if(!r.ok){ document.getElementById("xoerr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  document.getElementById("xoerr").innerHTML=""; await listXObjects();
+}
+async function listXObjects(){
+  const r=await api("GET","/api/admin/external-objects");
+  const host=document.getElementById("xo_list"); if(!host) return;
+  host.innerHTML=(r.data||[]).map(o=>`<div class="rowline"><b>${esc(o.label)}</b><code>${esc(o.api_name)}</code><span class="muted">${esc(o.odata_url)}/${esc(o.entity_set)}${o.named_credential?` via ${esc(o.named_credential)}`:""}</span><span style="margin-left:auto"></span>
+    <button class="btn secondary small" onclick="queryXObject('${esc(o.api_name)}')">Query</button>
+    <button class="btn secondary small" onclick="delXObject('${o.id}')">✕</button></div>`).join("")||`<p class="muted">No external objects yet.</p>`;
+}
+async function queryXObject(apiName){
+  const r=await api("GET",`/api/xdata/${encodeURIComponent(apiName)}?$top=5`);
+  document.getElementById("xoerr").innerHTML=r.ok
+    ?`<div class="ok" style="word-break:break-all">${esc(JSON.stringify(r.data.records).slice(0,600))}</div>`
+    :`<div class="err">${esc(r.data.error||"Query failed")}</div>`;
+}
+async function delXObject(oid){ await api("DELETE",`/api/admin/external-objects/${oid}`); await listXObjects(); }
+async function exportPkgManaged(){
+  const qs=new URLSearchParams();
+  const ns=document.getElementById("pkg_ns").value.trim(), v=document.getElementById("pkg_ver").value.trim();
+  if(ns) qs.set("namespace",ns); if(v) qs.set("version",v);
+  if(document.getElementById("pkg_managed").checked) qs.set("managed","1");
+  const r=await fetch("/api/admin/packages/export?"+qs.toString(),{headers:H()});
+  const blob=await r.blob(); const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=`forcelet-package${ns?`-`+ns:""}.json`; a.click();
+  await listInstalledPkgs();
+}
+async function listInstalledPkgs(){
+  const r=await api("GET","/api/admin/packages/installed");
+  const host=document.getElementById("pkg_installed"); if(!host) return;
+  host.innerHTML=(r.data||[]).map(p=>`<div class="rowline"><b>${esc(p.namespace)}</b><span class="muted">${esc(p.name)} · v${esc(p.version)}${p.managed?" · managed":""} · ${esc(p.installed_at||"")}</span><span style="margin-left:auto"></span><button class="btn secondary small" onclick="deregisterPkg('${esc(p.namespace)}')">Deregister</button></div>`).join("")||`<p class="muted">No managed packages installed.</p>`;
+}
+async function deregisterPkg(ns){ if(!confirm(`Deregister package '${ns}'? Installed metadata stays in place.`))return;
+  await api("DELETE",`/api/admin/packages/installed/${encodeURIComponent(ns)}`); await listInstalledPkgs(); }
+const CS_TYPES=[["custom_object","Custom object"],["object_field","Object field"],["validation_rule","Validation rule"],["flow","Flow"],["trigger","Code trigger"],["approval_process","Approval process"],["assignment_rule","Assignment rule"],["layout","Page layout"],["email_template","Email template"],["list_view","List view"],["record_type","Record type"],["scheduled_job","Scheduled job"],["app","Application"]];
+let CS_AVAIL=null;
+function csErr(m){ const el=document.getElementById("cserr"); if(el) el.innerHTML=m?`<div class="err">${esc(m)}</div>`:""; }
+async function listChangeSets(){
+  const host=document.getElementById("cs_list"); if(!host) return;
+  const r=await api("GET","/api/admin/change-sets");
+  const rows=r.data||[];
+  host.innerHTML=rows.length?`<table style="margin-top:10px"><tr><th>Name</th><th>Status</th><th>Components</th><th>Created</th><th></th></tr>`+
+   rows.map(c=>`<tr><td>${esc(c.name)}<br><span class="muted" style="font-size:11px">${esc(c.description||"")}</span></td><td><span class="pill ${c.status==="Outbound"?"pill-on":""}">${esc(c.status)}</span></td><td>${(c.components||[]).length}</td><td>${esc((c.created_at||"").slice(0,16).replace("T"," "))}</td><td><button class="btn secondary small" onclick="openChangeSet('${c.id}')">Open</button></td></tr>`).join("")+`</table>`:`<p class="muted">No change sets yet.</p>`;
+}
+async function createChangeSet(){
+  csErr(null);
+  const name=document.getElementById("cs_name").value.trim();
+  if(!name){ csErr("Name is required."); return; }
+  const r=await api("POST","/api/admin/change-sets",{name,description:document.getElementById("cs_desc").value.trim()});
+  if(!r.ok){ csErr(r.data.error||"Failed"); return; }
+  document.getElementById("cs_name").value=""; document.getElementById("cs_desc").value="";
+  listChangeSets(); openChangeSet(r.data.id);
+}
+async function openChangeSet(id){
+  const [cs,avail]=await Promise.all([api("GET","/api/admin/change-sets/"+id),api("GET","/api/admin/change-sets/components/available")]);
+  if(!cs.ok){ csErr((cs.data&&cs.data.error)||"Not found"); return; }
+  const c=cs.data; CS_AVAIL=avail.data||{};
+  const box=document.getElementById("cs_detail");
+  const comps=(c.components||[]).map(x=>`<tr><td>${esc(x.label||x.type)}</td><td><code>${esc(x.ref)}</code></td><td><button class="btn danger small" onclick="csRemoveComponent('${id}','${esc(x.type)}','${esc(x.ref)}')">Remove</button></td></tr>`).join("");
+  box.innerHTML=`<div class="card" style="margin-top:10px"><div class="section-title">${esc(c.name)} <span class="pill ${c.status==="Outbound"?"pill-on":""}">${esc(c.status)}</span></div>
+   <p class="muted">${esc(c.description||"")}${c.source_org?(" · from "+esc(c.source_org)):""}</p>
+   <table><tr><th>Component</th><th>Reference</th><th></th></tr>${comps||'<tr><td colspan="3" class="muted">No components yet — add some below.</td></tr>'}</table>
+   <div class="grid2" style="margin-top:8px"><div><label>Component type</label><select id="cs_ctype">${CS_TYPES.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join("")}</select></div>
+   <div><label>Component</label><select id="cs_cref"></select></div></div>
+   <div class="btnrow" style="margin-top:8px"><button class="btn secondary" onclick="csAddComponent('${id}')">Add component</button></div>
+   <div class="btnrow" style="margin-top:8px"><button class="btn secondary" onclick="csSetStatus('${id}','Outbound')">Mark outbound</button><button class="btn secondary" onclick="csSetStatus('${id}','Inbound')">Mark inbound</button><button class="btn secondary" onclick="csDownload('${id}')">Download</button><button class="btn secondary" onclick="csValidate('${id}')">Validate</button><button class="btn" onclick="csDeploy('${id}')">Deploy</button><button class="btn secondary" onclick="csDeployments('${id}')">Deployment history</button></div>
+   <div id="cs_result" style="margin-top:8px"></div></div>`;
+  const typeSel=document.getElementById("cs_ctype");
+  const fillRefs=()=>{ const t=typeSel.value; document.getElementById("cs_cref").innerHTML=((CS_AVAIL||{})[t]||[]).map(o=>`<option value="${esc(o.ref)}">${esc(o.label)}</option>`).join("")||`<option value="">— none —</option>`; };
+  typeSel.onchange=fillRefs; fillRefs();
+  box.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+async function csAddComponent(id){
+  const type=document.getElementById("cs_ctype").value, ref=document.getElementById("cs_cref").value;
+  if(!ref){ csErr("Pick a component to add."); return; }
+  const r=await api("POST",`/api/admin/change-sets/${id}/components`,{action:"add",type,ref});
+  if(!r.ok){ csErr(r.data.error||"Failed"); return; }
+  openChangeSet(id); listChangeSets();
+}
+async function csRemoveComponent(id,type,ref){
+  await api("POST",`/api/admin/change-sets/${id}/components`,{action:"remove",type,ref});
+  openChangeSet(id); listChangeSets();
+}
+async function csSetStatus(id,status){
+  const r=await api("POST",`/api/admin/change-sets/${id}/status`,{status});
+  if(!r.ok){ csErr(r.data.error||"Failed"); return; }
+  openChangeSet(id); listChangeSets();
+}
+async function csDownload(id){
+  const r=await fetch(`/api/admin/change-sets/${id}/download`,{headers:{"Authorization":"Bearer "+token}});
+  const blob=await r.blob();
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`changeset-${id}.json`; a.click();
+}
+async function uploadChangeSet(){
+  csErr(null);
+  const f=document.getElementById("cs_file").files[0];
+  if(!f){ csErr("Choose a change set file first."); return; }
+  let doc; try{ doc=JSON.parse(await f.text()); }catch(e){ csErr("Not valid JSON."); return; }
+  const r=await api("POST","/api/admin/change-sets/upload",{changeset:doc});
+  if(!r.ok){ csErr(r.data.error||"Failed"); return; }
+  document.getElementById("cs_file").value="";
+  toast("Change set uploaded as Inbound.","ok"); listChangeSets(); openChangeSet(r.data.id);
+}
+async function csValidate(id){
+  const box=document.getElementById("cs_result");
+  box.innerHTML=`<p class="muted">Validating…</p>`;
+  const r=await api("POST",`/api/admin/change-sets/${id}/validate`);
+  const v=r.data||{};
+  box.innerHTML=r.ok?`<div class="${v.valid?"ok":"err"}"><b>${v.valid?"✓ Valid":"✗ Invalid"}</b> — ${v.component_count} component(s)`+
+   (v.errors&&v.errors.length?`<br>Errors:<ul>${v.errors.map(e=>`<li>${esc(e)}</li>`).join("")}</ul>`:"")+
+   (v.warnings&&v.warnings.length?`<br>Warnings:<ul>${v.warnings.map(e=>`<li>${esc(e)}</li>`).join("")}</ul>`:"")+`</div>`
+   :`<div class="err">${esc(v.error||"Failed")}</div>`;
+}
+async function csDeploy(id){
+  if(!confirm("Deploy this change set into the current org?")) return;
+  const box=document.getElementById("cs_result");
+  box.innerHTML=`<p class="muted">Deploying…</p>`;
+  const r=await api("POST",`/api/admin/change-sets/${id}/deploy`);
+  const d=r.data||{};
+  box.innerHTML=r.ok?`<div class="${d.status==="Deployed"?"ok":"err"}"><b>${esc(d.status)}</b><pre style="white-space:pre-wrap">${esc(d.log||"")}</pre></div>`
+   :`<div class="err">${esc(d.error||"Failed")}</div>`;
+}
+async function csDeployments(id){
+  const box=document.getElementById("cs_result");
+  const r=await api("GET",`/api/admin/change-sets/${id}/deployments`);
+  const rows=r.data||[];
+  box.innerHTML=rows.length?`<table><tr><th>When</th><th>Direction</th><th>Status</th><th>By</th><th>Log</th></tr>`+
+   rows.map(d=>`<tr><td>${esc((d.created_at||"").slice(0,16).replace("T"," "))}</td><td>${esc(d.direction)}</td><td>${esc(d.status)}</td><td>${esc(d.created_by||"")}</td><td><pre style="white-space:pre-wrap;max-width:420px">${esc((d.log||"").slice(0,600))}</pre></td></tr>`).join("")+`</table>`
+   :`<p class="muted">No deployments yet.</p>`;
 }
 async function createApiKey(){
   const r=await api("POST","/api/api-keys",{name:v("ak_name")||"api key"});

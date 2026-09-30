@@ -84,7 +84,14 @@ def register(app: Flask):
                 compile(body.get("code") or "", "<scheduled>", "exec")
             except SyntaxError as e:
                 return jsonify({"error": "Job code has a syntax error", "details": str(e)}), 422
-            if int(body.get("interval_minutes") or 0) <= 0:
+            cron_expr = (body.get("cron") or "").strip()
+            if cron_expr:
+                from .. import cron as _cron
+                try:
+                    _cron.parse(cron_expr)
+                except ValueError as e:
+                    return jsonify({"error": f"Bad cron expression: {e}"}), 422
+            elif int(body.get("interval_minutes") or 0) <= 0:
                 return jsonify({"error": "interval_minutes must be positive"}), 422
         rid = store.config_put(table, body)
         _audit("create", kind, body.get("name") or rid)
@@ -103,6 +110,12 @@ def register(app: Flask):
             return jsonify({"error": "Not found"}), 404
         body = request.json or {}
         body.pop("id", None)
+        if kind == "scheduled-jobs" and (body.get("cron") or "").strip():
+            from .. import cron as _cron
+            try:
+                _cron.parse(body["cron"].strip())
+            except ValueError as e:
+                return jsonify({"error": f"Bad cron expression: {e}"}), 422
         if kind == "flows":
             # snapshot the pre-change definition for version history
             from .enhancements import _snapshot_flow_version
@@ -132,7 +145,8 @@ def register(app: Flask):
         body = request.json or {}
         try:
             obj = registry.create_object(body.get("name", ""), body.get("label", ""),
-                                         body.get("plural", ""))
+                                         body.get("plural", ""),
+                                         big_object=bool(body.get("big_object")))
         except ValueError as e:
             return jsonify({"error": str(e)}), 422
         _audit("create", "object", obj["name"])

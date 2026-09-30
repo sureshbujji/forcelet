@@ -149,7 +149,8 @@ class Security:
         subtree = self._role_subtree(user.get("role"))
         return [u["id"] for u in self.list_users() if u.get("role") in subtree]
 
-    def can_see_record(self, user: dict, record: dict, obj_name: str | None = None) -> bool:
+    def can_see_record(self, user: dict, record: dict, obj_name: str | None = None,
+                       _seen: set | None = None) -> bool:
         if self.is_admin(user):
             return True
         if obj_name:
@@ -159,6 +160,27 @@ class Security:
         owner_ids = self.visible_owner_ids(user)
         if record.get("owner_id") in (owner_ids or []):
             return True
+        # master-detail sharing inheritance: access to the master grants
+        # access to the detail
+        if obj_name:
+            from .datamodel import md_parents, territory_grants_access
+            _seen = _seen or set()
+            obj_def = self.store.meta_get("mf_objects", obj_name)
+            if obj_def:
+                for parent_obj, parent_id in md_parents(obj_def, record):
+                    key = (parent_obj, parent_id)
+                    if key in _seen:
+                        continue
+                    _seen.add(key)
+                    parent = self.store.get(parent_obj, parent_id)
+                    if parent and self.can_see_record(user, parent, parent_obj, _seen):
+                        return True
+            # territory-based sharing for accounts (and their opportunities)
+            try:
+                if territory_grants_access(self.store, user, obj_name, record):
+                    return True
+            except Exception:
+                pass
         # criteria-based sharing rules
         if obj_name:
             for rule in self.store.config_all("mf_sharing_rules"):

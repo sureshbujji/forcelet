@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forcelet"
-version = "0.3.0"
+version = "0.7.0"
 description = "Forcelet — a metadata-driven, Salesforce-style CRM platform"
 readme = "README.md"
 license = { text = "MIT" }

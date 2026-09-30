@@ -6,6 +6,7 @@ and returns (ok, normalized_value, error_message).
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 
@@ -24,6 +25,10 @@ FIELD_TYPES = {
     "Phone":         {"sql": "TEXT",    "desc": "Phone number"},
     "URL":           {"sql": "TEXT",    "desc": "Web link"},
     "Lookup":        {"sql": "TEXT",    "desc": "Relationship to another object's record"},
+    "MasterDetail":  {"sql": "TEXT",    "desc": "Master-detail: required parent, cascade delete, inherits sharing"},
+    "Geolocation":   {"sql": "TEXT",    "desc": "Latitude/longitude pair (stored 'lat;lng')"},
+    "Address":       {"sql": "TEXT",    "desc": "Compound street/city/state/postal/country (stored as JSON)"},
+    "Time":          {"sql": "TEXT",    "desc": "Time of day (HH:MM:SS)"},
 }
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -100,5 +105,56 @@ def validate_value(field: dict, value):
 
     if ftype == "Lookup":
         return True, str(value), None
+
+    if ftype == "MasterDetail":
+        v = str(value).strip()
+        if not v:
+            return False, None, f"{label} is required (master-detail cannot be empty)"
+        return True, v, None
+
+    if ftype == "Geolocation":
+        lat = lng = None
+        if isinstance(value, dict):
+            lat = value.get("latitude", value.get("lat"))
+            lng = value.get("longitude", value.get("lng"))
+        elif isinstance(value, (list, tuple)) and len(value) == 2:
+            lat, lng = value
+        elif isinstance(value, str):
+            parts = re.split(r"[;,]", value.strip())
+            if len(parts) == 2:
+                lat, lng = parts
+        try:
+            lat, lng = float(lat), float(lng)
+        except (TypeError, ValueError):
+            return False, None, f"{label} must be 'latitude;longitude' (e.g. '37.77;-122.41')"
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            return False, None, f"{label} is out of range (lat -90..90, lng -180..180)"
+        return True, f"{lat};{lng}", None
+
+    if ftype == "Address":
+        if isinstance(value, str):
+            # idempotent: accept an already-normalized JSON address string
+            try:
+                parsed = json.loads(value)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                value = parsed
+        if not isinstance(value, dict):
+            return False, None, f"{label} must be an object with street/city/state/postal_code/country"
+        keys = ("street", "city", "state", "postal_code", "country")
+        addr = {k: str(value.get(k) or "") for k in keys}
+        if not any(addr.values()):
+            return False, None, f"{label} needs at least one address component"
+        return True, json.dumps(addr), None
+
+    if ftype == "Time":
+        m = re.match(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$", str(value).strip())
+        if not m:
+            return False, None, f"{label} must be a time like 14:30 or 14:30:00"
+        hh, mm, ss = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
+            return False, None, f"{label} is not a valid time"
+        return True, f"{hh:02d}:{mm:02d}:{ss:02d}", None
 
     return False, None, f"Unhandled field type '{ftype}'"

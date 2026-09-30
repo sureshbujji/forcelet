@@ -39,13 +39,17 @@ class MetadataRegistry:
         return {f["name"]: f for f in obj_def.get("fields", [])}
 
     # ----------------------------------------------------------------- write
-    def create_object(self, name: str, label: str, plural: str, is_custom: bool = True):
+    def create_object(self, name: str, label: str, plural: str, is_custom: bool = True,
+                      big_object: bool = False):
         if not is_valid_api_name(name):
             raise ValueError("Object API name must start with a letter and contain only letters, digits, underscores")
         if self.get_object(name):
             raise ValueError(f"Object '{name}' already exists")
+        if big_object and not name.endswith("__b"):
+            raise ValueError("Big Object API names must end with __b")
         obj = {"name": name, "label": label or name, "plural": plural or f"{label}s",
-               "is_custom": is_custom, "fields": []}
+               "is_custom": is_custom, "fields": [],
+               "is_big_object": bool(big_object)}
         self.store.meta_put("mf_objects", name, obj)
         self.store.ensure_object_table(obj)
         return obj
@@ -66,6 +70,9 @@ class MetadataRegistry:
             raise ValueError(f"Unknown field type '{ftype}'. Valid: {sorted(FIELD_TYPES)}")
         if ftype == "Lookup" and not field.get("reference_to"):
             raise ValueError("Lookup fields require 'reference_to' (target object)")
+        if ftype == "MasterDetail":
+            from .datamodel import validate_master_detail
+            validate_master_detail(self, obj_name, field)
         if ftype in ("Picklist", "MultiPicklist") and not field.get("picklist_values"):
             raise ValueError("Picklist fields require 'picklist_values'")
         full = {
@@ -82,7 +89,10 @@ class MetadataRegistry:
             "rollup": field.get("rollup"),    # {"object","via","field","func","filter?"}; computed
             "encrypted": bool(field.get("encrypted")),  # encrypted at rest (Text-ish types)
             "external_id": bool(field.get("external_id")),  # unique external identifier for upserts
+            "reparentable": field.get("reparentable", True) if ftype == "MasterDetail" else None,
         }
+        if ftype == "MasterDetail":
+            full["required"] = True  # a detail record must always have its master
         if full["external_id"]:
             if ftype not in ("Text", "Email", "Phone", "URL", "Number"):
                 raise ValueError("Only Text, Email, Phone, URL, and Number fields can be external IDs")

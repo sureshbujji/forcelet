@@ -30,7 +30,11 @@ def register(app: Flask):
     @require_auth
     @require_admin
     def export_package():
-        pkg = automation.build_package(store, registry)
+        pkg = automation.build_package(
+            store, registry,
+            namespace=request.args.get("namespace"),
+            version=request.args.get("version"),
+            managed=request.args.get("managed") == "1")
         return Response(json.dumps(pkg, indent=1), mimetype="application/json",
                         headers={"Content-Disposition":
                                  "attachment; filename=forcelet-package.json"})

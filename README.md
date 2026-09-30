@@ -21,6 +21,7 @@ configurable at runtime — no code changes needed:
 | Approval processes | Entry conditions, manager/role/user approvers, record locking, inbox UI |
 | Record types | Per-type picklist values + layout overrides |
 | Reports & dashboards | Filter/group/aggregate engine with bar charts |
+| Custom applications | App Manager: named apps with tabs, per-tab layout overrides, related lists, profile access, app launcher |
 | Field history | Every change logged with who/when |
 | Duplicate management | Matching rules block (or warn on) duplicates |
 | Data import/export | CSV download + bulk CSV import |
@@ -195,7 +196,10 @@ executes immediately; `run_due_scheduled_jobs()` runs everything overdue
 (`run.py` starts a background thread that calls it every 60s), and
 `GET /api/admin/scheduled-runs` shows the run log. Seeded: **Close-date
 reminders** creates a Task for the owner of every open Opportunity closing
-within 7 days.
+within 7 days. Jobs also accept a five-field **cron expression** (`minute
+hour day-of-month month day-of-week`, e.g. `0 9 * * mon-fri`) instead of
+`interval_minutes`; `POST /api/admin/scheduled-jobs/validate-cron` checks
+syntax and `GET /api/admin/scheduled-jobs/:id/runs` shows per-job history.
 
 ## Assignment rules
 
@@ -208,7 +212,10 @@ leo and maya.
 ## Global search, activities & email
 
 `GET /api/search?q=` searches text fields across every readable object (top 5
-per object), with a search box in the header. Detail pages carry an **activity
+per object), with a search box in the header. The header box also offers a
+**Semantic** mode: `GET /api/search/semantic?q=` ranks records with
+dependency-free TF-IDF vectors and cosine similarity (relevance scores +
+snippets), so word order and extra terms don't break the match. Detail pages carry an **activity
 timeline** (`GET/POST /api/sobjects/:obj/:id/activities`, types note/call/task/
 email). `mf_email_templates` support `{{Record.Field}}` / `{{User.Name}}` merge;
 `POST /api/sobjects/:obj/:id/send-email` merges, logs to `mf_email_log`, and
@@ -221,6 +228,14 @@ extra standard-object fields, layouts, and all automation config);
 `POST /api/admin/packages/import` installs one into another org, upserting by
 natural key (list views are re-owned by the importer).
 
+For *selective* deployment, **change sets** (`/api/admin/change-sets`)
+bundle named components — custom objects, fields, validation rules, flows,
+triggers, approval processes, assignment rules, layouts, email templates,
+list views, record types, scheduled jobs — into a Draft set you mark
+Outbound, download as JSON, upload into another org as Inbound, validate
+without applying, then deploy. Every validation and deployment is recorded
+in the deployment history.
+
 ## Audit trail & change data capture
 
 Every setup change (objects, fields, rules, users, roles, profiles, layouts,
@@ -228,7 +243,11 @@ permission sets, packages...) is written to `mf_audit_trail` with who/when
 (`GET /api/admin/audit-trail`). Every record create/update/delete emits an
 event with a monotonic `seq` (`GET /api/change-events?since=&object=
 &record_id=`) for replay-style subscribers; encrypted values are omitted from
-snapshots.
+snapshots. **Field History Tracking** is configurable per object
+(`GET/PUT /api/admin/history-tracking`, Setup → Monitoring): enable or
+disable tracking per object, track only selected fields, and set a
+per-object retention window; `POST /api/admin/history-tracking/purge`
+deletes history older than each object's retention.
 
 ## OAuth2 tokens, API keys & field encryption
 
@@ -385,7 +404,7 @@ exportable/importable via metadata packages (values stay encrypted).
 pytest -q
 ```
 
-132 tests covering metadata CRUD, validation rules, formula fields, flows,
+207 tests covering metadata CRUD, validation rules, formula fields, flows,
 approvals + record locking, record types, reports, field history,
 criteria-based sharing, duplicate rules, permission sets, webhooks,
 CSV import/export, triggers, roll-ups, list views, scheduled jobs, assignment
@@ -398,7 +417,65 @@ forecasting, screen flows, HTTP callouts + named credentials, vehicle
 definitions / vehicles / assets / orders / order items / deliveries,
 work orders, service appointments, events, campaigns + members, contracts,
 knowledge articles, the recycle bin, duplicate find + merge, the assistant,
+custom applications, Bulk API 2.0, streaming events, sandboxes + scratch
+orgs, source tracking, custom metadata types + custom settings, managed
+packages, external objects (OData), master-detail relationships, Person
+Accounts, territory management, Big Objects + archival, geolocation /
+address / time field types,
 and API round-trips.
+
+## What's new in 0.7.0
+
+**App data-model batch** — master-detail relationships, Person Accounts,
+territory management, Big Objects + archival, and Geolocation / Address /
+Time field types, each with a Setup → Data Model card and tests (suite now
+210 passing). The batch also ships an **app UI**: record pages render
+Lookup/Master-Detail related lists with type badges, View-all and pre-linked
+New-child actions, parent links, a Person Account card, a Territories card,
+read-only Big Object browsing, and form inputs for the new field types. **Master-detail relationships** cascade deletes to children
+(recycle bin + CDC), enforce parent existence, reject self-references and
+cycles, support non-reparentable details, and can inherit sharing from the
+master. **Person Accounts** is a one-time org enable that adds person fields
+and the PersonAccount record type to Account, deriving the name from the
+person. **Territories** bring a protected hierarchy, user memberships with
+roles, criteria-based assignment rules with priorities, and territory-based
+Account/Opportunity visibility. **Big Objects** (`__b`) are append-only
+stores (inserts only — updates/deletes rejected), and **archive rules** move
+aging records into a mirrored `<Object>Archive__b` with `OriginalId`
+preserved. New **field types**: Geolocation (range-validated `lat;lng`),
+compound Address (JSON), and Time (`HH:MM:SS`).
+
+## What's new in 0.6.0
+
+**DevOps batch** — eight platform capabilities, each with a Setup → DevOps
+card and tests (suite now 195 passing). **Bulk API 2.0** ingests CSV through
+a Salesforce-style job lifecycle (Open → upload → close → JobComplete) with
+per-row success/error downloads. **Streaming events** deliver CDC and
+platform events over Server-Sent Events with replay. **Sandboxes** are full
+SQLite org copies (developer/partial/full) plus expiring scratch orgs.
+**Source tracking** lists metadata changes since any timestamp. **Custom
+Metadata Types** (`__mdt`) and **Custom Settings** give deployable typed
+configuration readable from formulas and flows. **Managed packages** add
+namespace/version with install/upgrade guards. **External Objects** (`__x`)
+expose OData v4 services as read-only virtual objects.
+
+## What's new in 0.4.0
+
+**Platform batch** — four enhancements, each with UI and tests (suite now
+166 passing). **Field History Tracking** is now configurable per object:
+enable/disable tracking, pick exactly which fields are tracked (empty means
+all), and set a per-object retention window — with a Setup → Monitoring
+card showing an editable per-object table and a purge action. **Scheduled
+jobs** accept five-field cron expressions (steps, lists, ranges, month and
+weekday names) alongside the old `interval_minutes`, with live syntax
+validation, a human-readable schedule column, and per-job run history.
+**Change sets** bundle *selected* metadata (objects, fields, rules, flows,
+triggers, approvals, assignment, layouts, templates, record types, jobs)
+into a named Draft → Outbound → download → upload as Inbound → validate
+without applying → deploy flow, with a full deployment history. **Semantic
+search** adds dependency-free TF-IDF vector search (`GET
+/api/search/semantic`) with cosine-similarity ranking, relevance scores,
+and snippets — the header search box now has a Keyword/Semantic toggle.
 
 ## What's new in 0.3.0
 

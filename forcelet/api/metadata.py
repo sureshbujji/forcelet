@@ -14,6 +14,7 @@ from flask import Flask, jsonify, request, Response, send_file
 from werkzeug.utils import secure_filename
 
 from .. import automation
+from .. import apps as apps_mod
 from .. import crypto as _crypto
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
@@ -77,5 +78,12 @@ def register(app: Flask):
         if not security.can(user, "read", obj_name):
             return jsonify({"error": "Unknown object or no access"}), 404
         rt = request.args.get("record_type") or "Default"
-        lay = store.layout_get(obj_name, user.get("profile"), rt) or {"sections": [], "related_lists": []}
+        lay = None
+        app_id = request.args.get("app")
+        if app_id:
+            lay = apps_mod.resolve_layout(store, app_id, obj_name,
+                                          user.get("profile"), rt)
+        if lay is None:
+            lay = store.layout_get(obj_name, user.get("profile"), rt) or \
+                {"sections": [], "related_lists": []}
         return jsonify(lay)

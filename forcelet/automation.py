@@ -11,6 +11,7 @@ import urllib.request
 
 from .expressions import eval_expr, record_context, render_value
 from . import crypto as _crypto
+from . import history_tracking as _history_tracking
 from .store import new_id, utcnow
 
 MAX_FLOW_DEPTH = 3
@@ -54,7 +55,12 @@ def check_duplicates(store, obj_name: str, values: dict, exclude_id: str | None 
 
 # ------------------------------------------------------------ field history
 def log_history(store, obj_name: str, record_id: str, old: dict, new: dict, user: dict):
+    tracked = _history_tracking.tracked_field_names(store, obj_name)
+    if tracked is not None and not tracked:
+        return  # field history tracking disabled for this object
     for key, new_val in new.items():
+        if tracked is not None and key not in tracked:
+            continue  # field not selected for tracking
         old_val = old.get(key)
         if old_val != new_val:
             store._execute(
@@ -537,15 +543,26 @@ def run_due_scheduled_jobs(store, registry, security) -> list:
     for job in store.config_all("mf_scheduled_jobs"):
         if not job.get("active", True):
             continue
-        interval = int(job.get("interval_minutes") or 1440)
+        cron_expr = (job.get("cron") or "").strip()
         last = job.get("last_run")
-        due = True
-        if last:
+        if cron_expr:
+            # cron-scheduled job: due when the schedule has an unconsumed occurrence
+            from . import cron as _cron
             try:
-                elapsed = (now - datetime.fromisoformat(last)).total_seconds() / 60
-                due = elapsed >= interval
-            except Exception:
-                due = True
+                due = _cron.is_due(cron_expr, last, now)
+            except ValueError as e:
+                store.log_scheduled_run(job["id"], "error",
+                                        f"bad cron expression {cron_expr!r}: {e}"[:2000])
+                continue
+        else:
+            interval = int(job.get("interval_minutes") or 1440)
+            due = True
+            if last:
+                try:
+                    elapsed = (now - datetime.fromisoformat(last)).total_seconds() / 60
+                    due = elapsed >= interval
+                except Exception:
+                    due = True
         if not due:
             continue
         run_as = users.get(job.get("run_as") or "admin") or admin
@@ -599,10 +616,14 @@ PACKAGE_TABLES = {
     "escalation_rules": ("mf_escalation_rules", ("object", "name")),
     "named_credentials": ("mf_named_credentials", ("name",)),
     "forecast_quotas": ("mf_forecast_quotas", ("user_id", "period")),
+    "apps": ("mf_apps", ("name",)),
+    "custom_settings": ("mf_custom_settings", ("name",)),
+    "external_objects": ("mf_external_objects", ("api_name",)),
 }
 
 
-def build_package(store, registry) -> dict:
+def build_package(store, registry, namespace=None, version=None,
+                  managed: bool = False) -> dict:
     """Export customizations as a versioned package installable on another org."""
     import os
     std_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -623,11 +644,16 @@ def build_package(store, registry) -> dict:
                 extra_fields[name] = extra
     pkg = {"package_version": 1, "name": "forcelet-package",
            "exported_at": utcnow(),
+           "namespace": (namespace or "").strip() or None,
+           "version": (version or "").strip() or None,
+           "managed": bool(managed),
            "custom_objects": custom_objects,
            "standard_object_fields": extra_fields,
            "layouts": store.layouts_all(),
            "config": {kind: store.config_all(table)
                       for kind, (table, _keys) in PACKAGE_TABLES.items()}}
+    from . import devops as _devops  # lazy: devops imports automation
+    pkg["custom_metadata"] = _devops.export_custom_metadata_package(store)
     return pkg
 
 
@@ -635,6 +661,8 @@ def import_package(store, registry, pkg: dict, user: dict) -> dict:
     """Install a package: upserts objects, fields, layouts and config by natural key."""
     if not isinstance(pkg, dict) or pkg.get("package_version") != 1:
         raise ValueError("Not a forcelet package (package_version must be 1)")
+    from . import devops as _devops  # lazy: devops imports automation
+    install = _devops.check_package_install(store, pkg)  # raises on downgrade
     summary = {"objects": 0, "fields": 0, "layouts": 0, "config": {}}
 
     def add_missing_fields(obj_name, fields):
@@ -688,6 +716,12 @@ def import_package(store, registry, pkg: dict, user: dict) -> dict:
             store.config_put(table, d)
             n += 1
         summary["config"][kind] = n
+    if pkg.get("custom_metadata"):
+        summary["custom_metadata"] = _devops.import_custom_metadata_package(
+            store, user, pkg["custom_metadata"])
+    if install:
+        summary["installed_package"] = _devops.record_package_install(
+            store, user, pkg, {k: v for k, v in summary.items()})
     return summary
 
 

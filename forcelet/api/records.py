@@ -15,6 +15,7 @@ from werkzeug.utils import secure_filename
 
 from .. import automation
 from .. import crypto as _crypto
+from .. import datamodel
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
 from ._shared import (
@@ -161,6 +162,10 @@ def register(app: Flask):
             return jsonify({"error": "Not found"}), 404
         if automation.pending_request_for(store, obj_name, rid) and not security.is_admin(user):
             return jsonify({"error": "Record is locked: an approval request is pending"}), 423
+        try:
+            datamodel.assert_mutable(obj)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 422
         automation.dispatch_webhooks(store, obj_name, "delete", serialize(user, obj, rec), user)
         terr = automation.run_triggers(store, registry, security, obj_name,
                                       "before_delete", rec, None, user)
@@ -169,14 +174,16 @@ def register(app: Flask):
         store.emit_change(obj_name, rid, "delete", user,
                           snapshot={k: v for k, v in rec.items()
                                     if not _crypto.is_encrypted(v)})
+        cascaded = datamodel.cascade_delete(store, registry, user, obj_name, rid)
         store.recycle_put(obj_name, rec, user["id"])
         store.delete(obj_name, rid)
         terr = automation.run_triggers(store, registry, security, obj_name,
                                       "after_delete", rec, None, user)
         # after_delete cannot roll back; errors are surfaced as warnings
         if terr:
-            return jsonify({"deleted": True, "warnings": terr})
-        return jsonify({"deleted": True})
+            return jsonify({"deleted": True, "warnings": terr,
+                            "cascaded": cascaded})
+        return jsonify({"deleted": True, "cascaded": cascaded})
 
     # ------------------------------------------------------- recycle bin
     @app.get("/api/openapi.json")

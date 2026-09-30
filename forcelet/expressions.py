@@ -35,6 +35,23 @@ def _today():
     return datetime.now(timezone.utc).date().isoformat()
 
 
+# Resolvers for $CustomMetadata / $CustomSetting in formulas and flows.
+# Registered by forcelet.devops.register_expression_resolvers(store); kept here
+# (rather than threading a store through eval_expr) so every evaluation path
+# — validation rules, flows, formula fields, report filters — picks them up.
+_custom_metadata_resolver = None
+_custom_setting_resolver = None
+
+
+def set_custom_metadata_resolver(fn):
+    global _custom_metadata_resolver
+    _custom_metadata_resolver = fn
+
+
+def set_custom_setting_resolver(fn):
+    global _custom_setting_resolver
+    _custom_setting_resolver = fn
+
 def eval_expr(expr, record: dict, old_record: dict | None = None, user: dict | None = None):
     if isinstance(expr, dict):
         if "field" in expr:
@@ -47,6 +64,17 @@ def eval_expr(expr, record: dict, old_record: dict | None = None, user: dict | N
             return datetime.now(timezone.utc).isoformat(timespec="seconds")
         if expr.get("user_id"):
             return (user or {}).get("id")
+        if "custom_metadata" in expr:
+            spec = expr["custom_metadata"] or {}
+            if _custom_metadata_resolver is None:
+                raise ValueError("Custom metadata is not available in this context")
+            return _custom_metadata_resolver(spec.get("type"), spec.get("record"),
+                                             spec.get("field"))
+        if "custom_setting" in expr:
+            spec = expr["custom_setting"] or {}
+            if _custom_setting_resolver is None:
+                raise ValueError("Custom settings are not available in this context")
+            return _custom_setting_resolver(spec.get("name"), spec.get("field"))
         if len(expr) == 1:
             op, args = next(iter(expr.items()))
             return _apply_op(op, args, record, old_record, user)

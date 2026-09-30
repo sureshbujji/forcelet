@@ -11,6 +11,7 @@ from flask import current_app, jsonify, request
 
 from .. import automation
 from .. import crypto as _crypto
+from .. import datamodel as _datamodel
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
 
@@ -24,9 +25,15 @@ def ctx():
 def current_user():
     store, registry, security = ctx()
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
+    token = None
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+    elif request.args.get("access_token"):
+        # query-param tokens exist for browser EventSource streams, which
+        # cannot set an Authorization header.
+        token = request.args["access_token"]
+    if not token:
         return None
-    token = auth[7:]
     if token.startswith("mf-"):
         return security.get_user(token[3:])
     if token.startswith("mf_live_"):
@@ -91,6 +98,10 @@ def serialize(user, obj_def, record):
         else:
             v = record.get(f["name"])
             data[f["name"]] = _crypto.decrypt(v) if f.get("encrypted") else v
+    if obj_def["name"] == "Account":
+        person_name = _datamodel.person_display_name(record)
+        if person_name:
+            data["Name"] = person_name
     return data
 
 
@@ -112,9 +123,18 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
     editable = set(security.editable_fields(user, obj))
     values = {k: v for k, v in body.items()
               if k in editable and k not in ("RecordType",)}
+    is_person = values.get("IsPersonAccount") or rt == "PersonAccount"
+    if obj_name == "Account" and is_person and "Name" in editable:
+        values["IsPersonAccount"] = True
+        if not values.get("Name"):
+            # person accounts derive their display name from the person fields
+            values["Name"] = _datamodel.person_display_name(values) or "Person Account"
     clean, errors = registry.validate_record(obj, values)
     if errors:
         return 422, {"error": "Validation failed", "details": errors}
+    md_err = _datamodel.validate_md_parents_exist(store, obj, clean)
+    if md_err:
+        return 422, {"error": "Validation failed", "details": [md_err]}
     dups = automation.check_duplicates(store, obj_name, clean)
     if dups and not allow_duplicates:
         return 409, {"error": "Possible duplicates found", "duplicates": dups}
@@ -173,11 +193,22 @@ def _do_update(user, obj_name, rid, body, allow_duplicates=False):
         return 404, {"error": "Not found"}
     if automation.pending_request_for(store, obj_name, rid) and not security.is_admin(user):
         return 423, {"error": "Record is locked: an approval request is pending"}
+    try:
+        _datamodel.assert_mutable(obj)
+    except ValueError as e:
+        return 422, {"error": str(e)}
     editable = set(security.editable_fields(user, obj))
     values = {k: v for k, v in body.items() if k in editable}
     clean, errors = registry.validate_record(obj, values, partial=True)
     if errors:
         return 422, {"error": "Validation failed", "details": errors}
+    for f in _datamodel.md_fields(obj):
+        if f["name"] in clean and clean[f["name"]] != rec.get(f["name"]) \
+                and not f.get("reparentable", True):
+            return 422, {"error": f"{f.get('label', f['name'])} is not reparentable"}
+    md_err = _datamodel.validate_md_parents_exist(store, obj, clean)
+    if md_err:
+        return 422, {"error": "Validation failed", "details": [md_err]}
     working = {**rec, **clean}
     terr = automation.run_triggers(store, registry, security, obj_name,
                                   "before_update", working, rec, user)

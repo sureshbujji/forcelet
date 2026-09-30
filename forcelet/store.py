@@ -67,8 +67,14 @@ class Store:
                       "mf_auto_responses", "mf_paths", "mf_ml_models",
                       "mf_sla_policies", "mf_case_milestones", "mf_escalation_rules",
                       "mf_named_credentials", "mf_forecast_quotas", "mf_flow_runs",
+                      "mf_apps",
                       "mf_dashboards", "mf_case_queues", "mf_macros",
-                      "mf_bulk_jobs", "mf_report_subs", "mf_flow_versions"):
+                      "mf_bulk_jobs", "mf_report_subs", "mf_flow_versions",
+                      "mf_bulk_api_jobs", "mf_sandboxes", "mf_cmdt",
+                      "mf_cmdt_records", "mf_custom_settings",
+                      "mf_installed_packages", "mf_external_objects",
+                      "mf_territories", "mf_territory_rules",
+                      "mf_person_accounts", "mf_archive_rules"):
             c.execute(f"""CREATE TABLE IF NOT EXISTS {table}
                           (id TEXT PRIMARY KEY, definition TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS mf_history
@@ -425,6 +431,12 @@ class Store:
              json.dumps(changed_fields or []), json.dumps(snapshot or {})),
         )
         self._commit()
+        try:  # streaming broker mirrors every change event; never break DML
+            from . import devops as _devops
+            _devops.publish_change_event(object_name, record_id, event, user,
+                                         changed_fields, snapshot)
+        except Exception:
+            pass
 
     def change_events(self, since=0, object_name=None, record_id=None, limit=200):
         where, params = ["seq > ?"], [int(since)]
