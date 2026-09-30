@@ -35,6 +35,16 @@ def _queue_table(store):
 def register(app: Flask):
     store, registry, security = app.mf_store, app.mf_registry, app.mf_security
 
+    # ------------------------------------------------------------ user names
+    # Minimal id -> display-name map so the UI can show owner names instead
+    # of raw user ids (e.g. in the record System card). Authenticated users
+    # only; never exposes password hashes.
+    @app.get("/api/users/names")
+    @require_auth
+    def user_names():
+        return jsonify({u["id"]: (u.get("name") or u.get("username") or u["id"])
+                        for u in security.list_users()})
+
     # ------------------------------------------------------------ case queues
     @app.get("/api/case-queues")
     @require_auth
