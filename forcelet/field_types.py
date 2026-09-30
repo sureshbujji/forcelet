@@ -57,7 +57,9 @@ def validate_value(field: dict, value):
         return True, None, None
 
     if ftype in ("Text", "TextArea", "Phone", "URL"):
-        v = str(value)
+        # A dict/list submitted for a text field (e.g. a condition-builder
+        # expression for a Criteria textarea) is stored as JSON, not str().
+        v = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
         max_len = field.get("length")
         if max_len and len(v) > max_len:
             return False, None, f"{label} exceeds max length of {max_len}"

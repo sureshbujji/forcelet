@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import os
+import secrets
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -18,6 +19,9 @@ from .. import automation
 from .. import crypto as _crypto
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
+from ..security import reset_login_attempts_for_user
+from ..settings import (CHATTER_KEY, ORG_KEY, PORTAL_KEY, SECURITY_KEY,
+                        check_password_policy, get_settings, save_settings)
 from ._shared import (
     _audit, _do_create, _do_update, _visible_records,
     current_user, rate_limit, require_admin, require_auth, serialize, ctx,
@@ -57,7 +61,16 @@ def register(app: Flask):
         table = CONFIG_TABLES.get(kind)
         if not table:
             return jsonify({"error": "Unknown config type"}), 404
-        return jsonify(store.config_all(table))
+        rows = store.config_all(table)
+        if "limit" in request.args or "offset" in request.args:
+            # Paginated envelope; without these params the legacy array
+            # shape is returned unchanged.
+            limit = max(1, min(500, int(request.args.get("limit", 50))))
+            offset = max(0, int(request.args.get("offset", 0)))
+            return jsonify({"rows": rows[offset:offset + limit],
+                            "total": len(rows), "limit": limit,
+                            "offset": offset})
+        return jsonify(rows)
 
     # ------------------------------------------------------------ backups
     @app.get("/api/admin/backups")
@@ -94,6 +107,18 @@ def register(app: Flask):
             os.remove(os.path.join(bdir, old))
         _audit("backup_create", "Database", os.path.basename(dest))
         return jsonify({"backup": os.path.basename(dest)}), 201
+
+    @app.get("/api/admin/<kind>/<rid>")
+    @require_auth
+    @require_admin
+    def admin_get_config(kind, rid):
+        table = CONFIG_TABLES.get(kind)
+        if not table:
+            return jsonify({"error": "Unknown config type"}), 404
+        row = store.config_get(table, rid)
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify(row)
 
     @app.post("/api/admin/<kind>")
     @require_auth
@@ -232,6 +257,71 @@ def register(app: Flask):
         _audit("create", "field", f"{obj_name}.{field['name']}")
         return jsonify(field), 201
 
+    # ------------------------------------------------- field & object manager
+    @app.get("/api/admin/objects/<obj_name>/fields")
+    @require_auth
+    @require_admin
+    def admin_list_fields(obj_name):
+        """Admin field list — includes deactivated fields hidden from describe."""
+        try:
+            obj = registry._managed_object(obj_name)
+        except KeyError:
+            return jsonify({"error": f"Unknown object '{obj_name}'"}), 404
+        except PermissionError as e:
+            return jsonify({"error": str(e)}), 403
+        out = []
+        for f in obj.get("fields", []):
+            f2 = dict(f)
+            if not (f.get("formula") or f.get("rollup")):
+                f2["value_count"] = registry.field_value_count(obj_name, f["name"])
+            out.append(f2)
+        return jsonify(out)
+
+    @app.put("/api/admin/objects/<obj_name>/fields/<fname>")
+    @require_auth
+    @require_admin
+    def admin_update_field(obj_name, fname):
+        try:
+            field = registry.update_field(obj_name, fname, request.json or {})
+        except KeyError:
+            return jsonify({"error": f"Unknown field '{fname}' on {obj_name}"}), 404
+        except PermissionError as e:
+            return jsonify({"error": str(e)}), 403
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 422
+        _audit("update", "field", f"{obj_name}.{fname}")
+        return jsonify(field)
+
+    @app.delete("/api/admin/objects/<obj_name>/fields/<fname>")
+    @require_auth
+    @require_admin
+    def admin_delete_field(obj_name, fname):
+        try:
+            registry.delete_field(obj_name, fname)
+        except KeyError:
+            return jsonify({"error": f"Unknown field '{fname}' on {obj_name}"}), 404
+        except PermissionError as e:
+            return jsonify({"error": str(e)}), 403
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 409
+        _audit("delete", "field", f"{obj_name}.{fname}")
+        return jsonify({"deleted": True})
+
+    @app.delete("/api/admin/objects/<obj_name>")
+    @require_auth
+    @require_admin
+    def admin_delete_object(obj_name):
+        try:
+            registry.delete_object(obj_name)
+        except KeyError:
+            return jsonify({"error": f"Unknown object '{obj_name}'"}), 404
+        except PermissionError as e:
+            return jsonify({"error": str(e)}), 403
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 409
+        _audit("delete", "object", obj_name)
+        return jsonify({"deleted": True})
+
     @app.get("/api/admin/users")
     @require_auth
     @require_admin
@@ -244,15 +334,98 @@ def register(app: Flask):
     @require_admin
     def admin_create_user():
         body = request.json or {}
+        password = body.get("password") or "forcelet"
+        sec = get_settings(store, SECURITY_KEY)
+        perr = check_password_policy(password, body.get("username", ""), sec)
+        if perr:
+            return jsonify({"error": perr}), 422
         try:
             user = security.create_user(body.get("username", ""), body.get("name", ""),
                                         body.get("profile", ""), body.get("role"),
-                                        body.get("password", "forcelet"))
+                                        password, email=body.get("email", ""))
         except ValueError as e:
             return jsonify({"error": str(e)}), 422
         user = {k: v for k, v in user.items() if k != "password_hash"}
         _audit("create", "user", user["username"])
         return jsonify(user), 201
+
+    @app.put("/api/admin/users/<uid>")
+    @require_auth
+    @require_admin
+    def admin_update_user(uid):
+        target = security.get_user(uid)
+        if not target:
+            return jsonify({"error": "Unknown user"}), 404
+        body = request.json or {}
+        if target["id"] == request.mf_user["id"] and "is_active" in body \
+                and not body["is_active"]:
+            return jsonify({"error": "You cannot deactivate your own account"}), 422
+        patch = {k: body[k] for k in ("name", "email", "role", "profile", "is_active")
+                 if k in body}
+        try:
+            user = security.update_user(uid, patch)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 422
+        if "is_active" in patch and not patch["is_active"]:
+            # Deactivation takes effect immediately: kill all sessions.
+            store.delete_user_sessions(uid)
+        _audit("update", "user", user["username"])
+        return jsonify({k: v for k, v in user.items() if k != "password_hash"})
+
+    @app.delete("/api/admin/users/<uid>")
+    @require_auth
+    @require_admin
+    def admin_delete_user(uid):
+        target = security.get_user(uid)
+        if not target:
+            return jsonify({"error": "Unknown user"}), 404
+        if target["id"] == request.mf_user["id"]:
+            return jsonify({"error": "You cannot delete your own account"}), 422
+        try:
+            rows, _total = store.login_history(user_id=uid, success=True, limit=1)
+        except Exception:
+            rows = []
+        if rows:
+            return jsonify({"error": "This user has signed in before — "
+                                     "deactivate the account instead of deleting it"}), 422
+        security.delete_user(uid)
+        store.delete_user_sessions(uid)
+        _audit("delete", "user", target["username"])
+        return jsonify({"deleted": True})
+
+    @app.post("/api/admin/users/<uid>/reset-password")
+    @require_auth
+    @require_admin
+    def admin_reset_password(uid):
+        target = security.get_user(uid)
+        if not target:
+            return jsonify({"error": "Unknown user"}), 404
+        if target["id"] == request.mf_user["id"]:
+            return jsonify({"error": "Use Change Password for your own account"}), 422
+        temp = secrets.token_urlsafe(12)
+        security.set_password(uid, temp)
+        fresh = security.get_user(uid)
+        fresh["must_change_password"] = True
+        store.meta_put("mf_users", uid, fresh)
+        # A password reset invalidates every existing session.
+        store.delete_user_sessions(uid)
+        _audit("reset-password", "user", target["username"])
+        return jsonify({"temporary_password": temp,
+                        "message": "Copy this now — it is shown only once. "
+                                   "The user must change it at next sign-in."})
+
+    @app.post("/api/admin/users/<uid>/unlock")
+    @require_auth
+    @require_admin
+    def admin_unlock_user(uid):
+        target = security.get_user(uid)
+        if not target:
+            return jsonify({"error": "Unknown user"}), 404
+        if target["id"] == request.mf_user["id"]:
+            return jsonify({"error": "You cannot unlock your own account"}), 422
+        reset_login_attempts_for_user(target["username"])
+        _audit("unlock", "user", target["username"])
+        return jsonify({"unlocked": True})
 
     @app.post("/api/admin/users/<uid>/permission-sets")
     @require_auth
@@ -265,6 +438,32 @@ def register(app: Flask):
         _audit("assign", "permission-set", (request.json or {}).get("permission_set", ""),
                f"user={user['username']}")
         return jsonify({k: v for k, v in user.items() if k != "password_hash"})
+
+    @app.get("/api/admin/users/<uid>/permission-sets")
+    @require_auth
+    @require_admin
+    def admin_user_ps(uid):
+        user = security.get_user(uid)
+        if not user:
+            return jsonify({"error": "Unknown user"}), 404
+        out = []
+        for pid in user.get("permission_sets", []):
+            ps = store.config_get("mf_permission_sets", pid)
+            out.append({"id": pid, "name": (ps or {}).get("name", pid),
+                        "label": (ps or {}).get("label", ""),
+                        "missing": ps is None})
+        return jsonify(out)
+
+    @app.delete("/api/admin/users/<uid>/permission-sets/<psid>")
+    @require_auth
+    @require_admin
+    def admin_unassign_ps(uid, psid):
+        try:
+            user = security.unassign_permission_set(uid, psid)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 422
+        _audit("unassign", "permission-set", psid, f"user={user['username']}")
+        return jsonify({"unassigned": psid})
 
     @app.get("/api/admin/roles")
     @require_auth
@@ -283,6 +482,37 @@ def register(app: Flask):
             return jsonify({"error": str(e)}), 422
         _audit("create", "role", role["name"])
         return jsonify(role), 201
+
+    @app.put("/api/admin/roles/<name>")
+    @require_auth
+    @require_admin
+    def admin_update_role(name):
+        body = request.json or {}
+        try:
+            role = security.update_role(
+                name,
+                body.get("name"),
+                body["parent"] if "parent" in body else security._UNSET,
+            )
+        except KeyError as e:
+            return jsonify({"error": str(e)}), 404
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 422
+        _audit("update", "role", role["name"])
+        return jsonify(role)
+
+    @app.delete("/api/admin/roles/<name>")
+    @require_auth
+    @require_admin
+    def admin_delete_role(name):
+        try:
+            security.delete_role(name)
+        except KeyError as e:
+            return jsonify({"error": str(e)}), 404
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 409
+        _audit("delete", "role", name)
+        return jsonify({"deleted": name})
 
     @app.get("/api/admin/profiles")
     @require_auth
@@ -317,6 +547,181 @@ def register(app: Flask):
                          body.get("record_type", "Default"))
         _audit("save", "layout", f"{body['object']}/{body.get('profile', 'Default')}")
         return jsonify({"saved": True})
+
+    @app.get("/api/admin/layouts")
+    @require_auth
+    @require_admin
+    def admin_list_layouts():
+        """Every saved page layout with its assignment (object/profile/record type)."""
+        return jsonify([{"object": l["object"], "profile": l["profile"],
+                         "record_type": l.get("record_type", "Default"),
+                         "sections": len(l.get("sections", [])),
+                         "related_lists": len(l.get("related_lists", []))}
+                        for l in store.layouts_all()])
+
+    @app.delete("/api/admin/layouts")
+    @require_auth
+    @require_admin
+    def admin_delete_layout():
+        obj = request.args.get("object", "")
+        profile = request.args.get("profile", "Default")
+        rt = request.args.get("record_type", "Default")
+        if not obj:
+            return jsonify({"error": "object is required"}), 422
+        ok = store.layout_delete(obj, profile, rt)
+        if ok:
+            _audit("delete", "layout", f"{obj}/{profile}/{rt}")
+        return jsonify({"deleted": ok})
+
+    @app.get("/api/admin/profiles/<name>")
+    @require_auth
+    @require_admin
+    def admin_get_profile(name):
+        prof = security.get_profile(name)
+        if not prof:
+            return jsonify({"error": "Unknown profile"}), 404
+        return jsonify(prof)
+
+    @app.put("/api/admin/profiles/<name>")
+    @require_auth
+    @require_admin
+    def admin_update_profile(name):
+        prof = security.get_profile(name)
+        if not prof:
+            return jsonify({"error": "Unknown profile"}), 404
+        body = request.json or {}
+        if body.get("name") and body["name"] != name:
+            return jsonify({"error": "Renaming a profile is not supported"}), 422
+        obj_perms = body.get("object_permissions", prof.get("object_permissions") or {})
+        field_perms = body.get("field_permissions", prof.get("field_permissions") or {})
+        # Structured validation: objects and fields must exist.
+        for obj_name, perms in (obj_perms or {}).items():
+            if obj_name != "*" and not registry.get_object(obj_name):
+                return jsonify({"error": f"Unknown object '{obj_name}'"}), 422
+            for act in (perms or {}):
+                if act not in ("create", "read", "edit", "delete"):
+                    return jsonify({"error": f"Unknown permission '{act}'"}), 422
+        for obj_name, fields in (field_perms or {}).items():
+            obj = registry.get_object(obj_name)
+            if not obj:
+                return jsonify({"error": f"Unknown object '{obj_name}'"}), 422
+            fmap = registry.field_map(obj)
+            for fname, fp in (fields or {}).items():
+                if fname not in fmap:
+                    return jsonify({"error": f"Unknown field '{obj_name}.{fname}'"}), 422
+                for k in (fp or {}):
+                    if k not in ("read", "edit"):
+                        return jsonify({"error": f"Unknown field permission '{k}'"}), 422
+        prof["object_permissions"] = {o: {a: bool(v) for a, v in (p or {}).items()}
+                                     for o, p in (obj_perms or {}).items()}
+        prof["field_permissions"] = {o: {f: {k: bool(v) for k, v in (fp or {}).items()}
+                                         for f, fp in (fs or {}).items()}
+                                     for o, fs in (field_perms or {}).items()}
+        store.meta_put("mf_profiles", name, prof)
+        _audit("update", "profile", name)
+        return jsonify(prof)
+
+    # ------------------------------------------------- org & admin settings
+    _SETTING_BLOBS = {"org": ORG_KEY, "security": SECURITY_KEY,
+                      "portal": PORTAL_KEY, "chatter": CHATTER_KEY}
+
+    @app.get("/api/admin/settings/<blob>")
+    @require_auth
+    @require_admin
+    def admin_get_settings(blob):
+        key = _SETTING_BLOBS.get(blob)
+        if not key:
+            return jsonify({"error": "Unknown settings area"}), 404
+        return jsonify(get_settings(store, key))
+
+    @app.put("/api/admin/settings/<blob>")
+    @require_auth
+    @require_admin
+    def admin_put_settings(blob):
+        key = _SETTING_BLOBS.get(blob)
+        if not key:
+            return jsonify({"error": "Unknown settings area"}), 404
+        try:
+            merged = save_settings(store, key, request.json or {})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 422
+        _audit("update", "settings", blob)
+        return jsonify(merged)
+
+    # ------------------------------------------------------- login history
+    @app.get("/api/admin/login-history")
+    @require_auth
+    @require_admin
+    def admin_login_history():
+        args = request.args
+        success = args.get("success")
+        if success in ("1", "true", "True"):
+            success_b = True
+        elif success in ("0", "false", "False"):
+            success_b = False
+        else:
+            success_b = None
+        try:
+            limit = max(1, min(int(args.get("limit", 50)), 200))
+            offset = max(0, int(args.get("offset", 0)))
+        except ValueError:
+            return jsonify({"error": "limit/offset must be numbers"}), 422
+        rows, total = store.login_history(
+            username=args.get("username") or None,
+            user_id=args.get("user_id") or None,
+            success=success_b,
+            since=args.get("from") or None,
+            until=args.get("to") or None,
+            limit=limit, offset=offset)
+        return jsonify({"rows": rows, "total": total,
+                        "limit": limit, "offset": offset})
+
+    # ------------------------------------------------------------- storage
+    @app.get("/api/admin/storage")
+    @require_auth
+    @require_admin
+    def admin_storage():
+        objects = []
+        total_records = 0
+        for obj in registry.list_objects():
+            try:
+                n = store.count(obj["name"])
+            except Exception:
+                n = None
+            if isinstance(n, int):
+                total_records += n
+            objects.append({"object": obj["name"], "label": obj.get("label"),
+                            "records": n, "custom": bool(obj.get("is_custom"))})
+        objects.sort(key=lambda o: (o["records"] is None, -(o["records"] or 0)))
+
+        def _fsize(p):
+            try:
+                return os.path.getsize(p)
+            except OSError:
+                return 0
+
+        def _dir_size(p):
+            total = 0
+            if os.path.isdir(p):
+                for _root, _dirs, files in os.walk(p):
+                    for f in files:
+                        total += _fsize(os.path.join(_root, f))
+            return total
+
+        db_path = store.db_path
+        db_bytes = _fsize(db_path) + _fsize(db_path + "-wal") + _fsize(db_path + "-shm")
+        files_bytes = _dir_size(os.path.join(os.path.dirname(os.path.abspath(db_path)), "files"))
+        bdir = _backup_dir()
+        backups = []
+        if os.path.isdir(bdir):
+            for bname in sorted(os.listdir(bdir), reverse=True):
+                if bname.startswith("forcelet-") and bname.endswith(".db"):
+                    backups.append({"name": bname,
+                                    "size_bytes": _fsize(os.path.join(bdir, bname))})
+        backups_bytes = sum(b["size_bytes"] for b in backups)
+        return jsonify({"objects": objects, "total_records": total_records,
+                        "database_bytes": db_bytes, "files_bytes": files_bytes,
+                        "backups": backups, "backups_bytes": backups_bytes})
 
     @app.get("/api/admin/webhook-deliveries")
     @require_auth

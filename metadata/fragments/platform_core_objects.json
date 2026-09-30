@@ -119,6 +119,12 @@
           ],
           "type": "Picklist",
           "default": "Both"
+        },
+        {
+          "label": "Criteria (expression JSON \u2014 rule fires only when true)",
+          "name": "Criteria",
+          "type": "TextArea",
+          "help_text": "Optional expression JSON evaluated against the record being saved. The rule only fires when the criteria evaluates to true; blank means always."
         }
       ],
       "is_custom": true,

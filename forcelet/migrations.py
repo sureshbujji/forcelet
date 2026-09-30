@@ -40,6 +40,57 @@ def _m001_baseline(store):
     assert _table_exists(store, "mf_objects")
 
 
+@migration(2, "login history: per-attempt sign-in audit table")
+def _m002_login_history(store):
+    store._execute(
+        """CREATE TABLE IF NOT EXISTS mf_login_history
+           (id TEXT PRIMARY KEY, user_id TEXT, username TEXT, at TEXT,
+            ip TEXT, user_agent TEXT, success INTEGER DEFAULT 0,
+            failure_reason TEXT DEFAULT '')""")
+    store._execute(
+        "CREATE INDEX IF NOT EXISTS idx_login_history_user "
+        "ON mf_login_history (user_id, at)")
+    store._execute(
+        "CREATE INDEX IF NOT EXISTS idx_login_history_at "
+        "ON mf_login_history (at)")
+    store._commit()
+
+
+@migration(3, "duplicate rules: Criteria expression field")
+def _m003_duplicate_rule_criteria(store):
+    # Add the Criteria field definition to the DuplicateRule object and its
+    # column to the data table, for databases seeded before the field existed.
+    obj = store.meta_get("mf_objects", "DuplicateRule")
+    if obj:
+        fields = obj.get("fields", [])
+        if not any(f.get("name") == "Criteria" for f in fields):
+            fields.append({
+                "name": "Criteria",
+                "label": "Criteria (expression JSON — rule fires only when true)",
+                "type": "TextArea",
+                "required": False,
+                "unique": False,
+                "length": None,
+                "picklist_values": None,
+                "reference_to": None,
+                "default": None,
+                "formula": None,
+                "rollup": None,
+                "encrypted": False,
+                "external_id": False,
+                "reparentable": None,
+                "help_text": "Optional expression JSON evaluated against the record being saved. The rule only fires when the criteria evaluates to true; blank means always.",
+            })
+            obj["fields"] = fields
+            store.meta_put("mf_objects", "DuplicateRule", obj)
+    try:
+        store._execute('ALTER TABLE sobj_DuplicateRule ADD COLUMN "Criteria" TEXT')
+        store._commit()
+    except Exception:
+        # Column already present (or table absent) — idempotent-safe.
+        pass
+
+
 def run_migrations(store) -> int:
     """Apply every pending migration. Returns the resulting schema version."""
     raw = store.meta_kv_get("schema_version", "0") or "0"

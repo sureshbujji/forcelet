@@ -30,4 +30,37 @@ def register(app: Flask):
     @require_auth
     @require_admin
     def audit_trail():
-        return jsonify(store.audit_trail(limit=int(request.args.get("limit", 200))))
+        limit = max(1, min(500, int(request.args.get("limit", 50))))
+        offset = max(0, int(request.args.get("offset", 0)))
+        rows, total = store.audit_trail_search(
+            username=request.args.get("user") or None,
+            action=request.args.get("action") or None,
+            entity=request.args.get("entity") or None,
+            date_from=request.args.get("from") or None,
+            date_to=request.args.get("to") or None,
+            limit=limit, offset=offset)
+        return jsonify({"rows": rows, "total": total,
+                        "limit": limit, "offset": offset})
+
+    @app.get("/api/admin/audit-trail/export")
+    @require_auth
+    @require_admin
+    def audit_trail_export():
+        rows, _ = store.audit_trail_search(
+            username=request.args.get("user") or None,
+            action=request.args.get("action") or None,
+            entity=request.args.get("entity") or None,
+            date_from=request.args.get("from") or None,
+            date_to=request.args.get("to") or None,
+            limit=10000, offset=0)
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["When", "User", "Action", "Entity type", "Entity name",
+                    "Details"])
+        for a in rows:
+            w.writerow([a.get("at"), a.get("username"), a.get("action"),
+                        a.get("entity_type"), a.get("entity_name"),
+                        a.get("details")])
+        return Response(buf.getvalue(), mimetype="text/csv",
+                        headers={"Content-Disposition":
+                                 "attachment; filename=audit-trail.csv"})

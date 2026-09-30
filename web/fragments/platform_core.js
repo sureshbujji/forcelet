@@ -29,15 +29,25 @@
   function crudSection(container, headers, title, route, fields, listCols) {
     var div = document.createElement("div");
     div.className = "pc-section";
+    // Unique id prefix per section so the condition builder can find its
+    // object input and criteria textarea via document.getElementById.
+    var pfx = "pcb_" + String(route).replace(/[^a-z0-9]/gi, "_") + "_";
     div.innerHTML = "<h3>" + esc(title) + "</h3>" +
       "<table class=\"pc-table\"><thead><tr>" +
       listCols.map(function (c) { return "<th>" + esc(c) + "</th>"; }).join("") +
       "<th></th></tr></thead><tbody></tbody></table>" +
       "<form class=\"pc-form\">" +
       fields.map(function (f) {
-        return "<label>" + esc(f.label) +
-          "<input name=\"" + esc(f.name) + "\" placeholder=\"" +
-          esc(f.placeholder || "") + "\"></label>";
+        var fid = pfx + f.name;
+        var input = f.textarea
+          ? "<textarea id=\"" + fid + "\" name=\"" + esc(f.name) + "\" rows=\"3\" placeholder=\"" +
+            esc(f.placeholder || "") + "\"></textarea>"
+          : "<input id=\"" + fid + "\" name=\"" + esc(f.name) + "\" placeholder=\"" +
+            esc(f.placeholder || "") + "\">";
+        var builder = f.builder
+          ? "<div class=\"cb-host\" id=\"" + fid + "_cb\"></div>"
+          : "";
+        return "<label>" + esc(f.label) + input + "</label>" + builder;
       }).join("") +
       "<button type=\"submit\">Add</button></form>" +
       "<p class=\"pc-msg\"></p>";
@@ -75,6 +85,13 @@
       });
     });
     container.appendChild(div);
+    // Wire condition builders (the builder lives in the host page).
+    fields.forEach(function (f) {
+      if (f.builder && window.cbInit) {
+        try { window.cbInit(pfx + f.name + "_cb", pfx + f.builder, pfx + f.name); }
+        catch (e) { /* builder unavailable — raw JSON still works */ }
+      }
+    });
     refresh();
   }
 
@@ -180,7 +197,10 @@
         { name: "MatchingRuleId", label: "Matching rule id", placeholder: "(id)" },
         { name: "Action", label: "Action", placeholder: "Block or Warn" },
         { name: "Message", label: "Message", placeholder: "Possible duplicate" },
-        { name: "AppliesOn", label: "Applies on", placeholder: "Create, Update or Both" }
+        { name: "AppliesOn", label: "Applies on", placeholder: "Create, Update or Both" },
+        { name: "Criteria", label: "Criteria JSON (blank = always fire)",
+          placeholder: '{"==":[{"field":"Status"},"New"]}',
+          textarea: true, builder: "ObjectName" }
       ], ["Name", "ObjectName", "Action", "AppliesOn"]);
       duplicatesTab(container, h);
       crudSection(container, h, "Forecast quotas", "/forecast-quotas", [

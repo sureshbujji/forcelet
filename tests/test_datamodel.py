@@ -116,7 +116,7 @@ def test_master_detail_sharing_inheritance(client):
     make_md_pair(client, h)
     r = client.post("/api/admin/users", headers=h, json={
         "username": "dmrep", "name": "DM Rep", "profile": "Standard User",
-        "role": "Sales Rep", "password": "x"})
+        "role": "Sales Rep", "password": "RepPass1!"})
     assert r.status_code == 201, r.get_json()
     uid = r.get_json()["id"]
     # grant the rep object access via a permission set (standard profiles
@@ -136,7 +136,7 @@ def test_master_detail_sharing_inheritance(client):
         "name": "share parents", "object": "DMParent__c", "active": True,
         "criteria": {"==": [{"field": "Name"}, "P"]},
         "share_with": {"type": "user", "id": uid}})
-    h2 = login(client, "dmrep", "x")
+    h2 = login(client, "dmrep", "RepPass1!")
     assert client.get(f"/api/sobjects/DMParent__c/{p['Id']}", headers=h2).status_code == 200
     assert client.get(f"/api/sobjects/DMChild__c/{c['Id']}", headers=h2).status_code == 200
 
@@ -192,11 +192,11 @@ def test_territory_assignment_and_sharing(client):
     # rep in the parent territory sees the CA account via hierarchy, not the NY one
     r = client.post("/api/admin/users", headers=h, json={
         "username": "trep", "name": "T Rep", "profile": "Standard User",
-        "role": "Sales Rep", "password": "x"})
+        "role": "Sales Rep", "password": "RepPass1!"})
     uid = r.get_json()["id"]
     client.post(f"/api/admin/territories/{west['id']}/users", headers=h,
                 json={"user_id": uid})
-    h2 = login(client, "trep", "x")
+    h2 = login(client, "trep", "RepPass1!")
     assert client.get(f"/api/sobjects/Account/{acc['Id']}", headers=h2).status_code == 200
     assert client.get(f"/api/sobjects/Account/{other['Id']}", headers=h2).status_code == 404
     # hierarchy cycle protection

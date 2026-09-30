@@ -125,6 +125,125 @@ class MetadataRegistry:
             self.store.add_unique_index(obj_name, fname)
         return full
 
+    # ------------------------------------------------------ field lifecycle
+    #: Patch keys an admin may change on an existing field. ``name`` and
+    #: ``type`` are intentionally absent — changing those would silently
+    #: invalidate stored data, so they are refused instead.
+    FIELD_EDITABLE = {"label", "help_text", "required", "default",
+                      "picklist_values", "length", "active", "description"}
+
+    def _managed_object(self, obj_name: str) -> dict:
+        """Return the object def, or raise for unknown/standard objects.
+
+        Field and object lifecycle management is restricted to custom
+        objects: editing a standard object's schema could break platform
+        features that depend on it.
+        """
+        obj = self.get_object(obj_name)
+        if not obj:
+            raise KeyError(f"Unknown object '{obj_name}'")
+        if not obj.get("is_custom"):
+            raise PermissionError(
+                f"Object '{obj_name}' is a standard object and cannot be managed here")
+        return obj
+
+    def update_field(self, obj_name: str, fname: str, patch: dict) -> dict:
+        """Edit a custom field's metadata. Returns the updated field def."""
+        obj = self._managed_object(obj_name)
+        fmap = self.field_map(obj)
+        if fname not in fmap:
+            raise KeyError(f"Unknown field '{fname}' on {obj_name}")
+        for key in patch:
+            if key in ("name", "type"):
+                raise ValueError("Field API name and type cannot be changed")
+            if key not in self.FIELD_EDITABLE:
+                raise ValueError(f"Field attribute '{key}' cannot be edited")
+        fdef = fmap[fname]
+        if "label" in patch:
+            if not str(patch["label"]).strip():
+                raise ValueError("Label cannot be blank")
+        if "required" in patch and (fdef.get("type") == "MasterDetail" or fdef.get("rollup")):
+            raise ValueError("The required flag is fixed for master-detail and roll-up fields")
+        if "picklist_values" in patch:
+            if fdef.get("type") not in ("Picklist", "MultiPicklist"):
+                raise ValueError("picklist_values only applies to picklist fields")
+            vals = patch["picklist_values"]
+            if not isinstance(vals, list) or not all(isinstance(x, str) for x in vals):
+                raise ValueError("picklist_values must be a list of strings")
+        if "length" in patch:
+            if fdef.get("type") not in ("Text", "TextArea"):
+                raise ValueError("length only applies to Text/TextArea fields")
+            try:
+                ln = int(patch["length"])
+            except (TypeError, ValueError):
+                raise ValueError("length must be a positive integer")
+            if ln <= 0:
+                raise ValueError("length must be a positive integer")
+            patch["length"] = ln
+        if "active" in patch:
+            patch["active"] = bool(patch["active"])
+        if "required" in patch:
+            patch["required"] = bool(patch["required"])
+        fdef.update({k: v for k, v in patch.items()})
+        self.store.meta_put("mf_objects", obj_name, obj)
+        return fdef
+
+    def set_field_active(self, obj_name: str, fname: str, active: bool) -> dict:
+        return self.update_field(obj_name, fname, {"active": bool(active)})
+
+    def field_value_count(self, obj_name: str, fname: str) -> int:
+        """How many records hold a non-null value for this field."""
+        return self.store._fetchone(
+            f'SELECT COUNT(*) AS n FROM {self.store._table(obj_name)} WHERE "{fname}" IS NOT NULL'
+        )["n"]
+
+    def delete_field(self, obj_name: str, fname: str) -> bool:
+        """Delete a custom field. Refuses when records still hold values."""
+        obj = self._managed_object(obj_name)
+        fmap = self.field_map(obj)
+        if fname not in fmap:
+            raise KeyError(f"Unknown field '{fname}' on {obj_name}")
+        fdef = fmap[fname]
+        if not (fdef.get("formula") or fdef.get("rollup")):
+            n = self.field_value_count(obj_name, fname)
+            if n:
+                raise ValueError(
+                    f"Cannot delete field '{fname}': {n} record(s) still hold a value. "
+                    "Clear the values or deactivate the field instead.")
+        obj["fields"] = [f for f in obj["fields"] if f["name"] != fname]
+        self.store.meta_put("mf_objects", obj_name, obj)
+        # Best-effort physical cleanup; orphan columns are harmless because
+        # every read/write path is driven by the field definitions above.
+        try:
+            self.store._execute(
+                f'ALTER TABLE {self.store._table(obj_name)} DROP COLUMN "{fname}"')
+            self.store._commit()
+        except Exception:
+            pass
+        try:
+            idx = f"ux_{self.store._table(obj_name)}_{fname}".replace('"', "")
+            self.store._execute(f'DROP INDEX IF EXISTS "{idx}"')
+            self.store._commit()
+        except Exception:
+            pass
+        return True
+
+    def delete_object(self, obj_name: str) -> bool:
+        """Delete a custom object. Refuses when records exist."""
+        obj = self._managed_object(obj_name)
+        n = self.store.count(obj_name)
+        if n:
+            raise ValueError(
+                f"Cannot delete object '{obj_name}': {n} record(s) exist. "
+                "Delete the records first.")
+        self.store.meta_delete("mf_objects", obj_name)
+        try:
+            self.store._execute(f"DROP TABLE {self.store._table(obj_name)}")
+            self.store._commit()
+        except Exception:
+            pass
+        return True
+
     def validate_record(self, obj_def: dict, values: dict, partial: bool = False,
                         skip_required: set | None = None):
         """Validate a record's field values. Returns (clean: dict, errors: list).
@@ -140,6 +259,9 @@ class MetadataRegistry:
             if key not in fmap:
                 errors.append(f"Unknown field '{key}' on {obj_def['name']}")
                 continue
+            if fmap[key].get("active") is False:
+                errors.append(f"{fmap[key]['label']} is deactivated and cannot be set")
+                continue
             if fmap[key].get("formula") or fmap[key].get("rollup"):
                 errors.append(f"{fmap[key]['label']} is a computed field and cannot be set")
                 continue
@@ -152,6 +274,8 @@ class MetadataRegistry:
             for fname, fdef in fmap.items():
                 if fdef.get("formula") or fdef.get("rollup"):
                     continue
+                if fdef.get("active") is False:
+                    continue  # deactivated fields are invisible to validation
                 if fname not in values:
                     if fdef.get("default") is not None:
                         clean[fname] = fdef["default"]

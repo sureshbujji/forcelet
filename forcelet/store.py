@@ -202,6 +202,12 @@ class Store:
     def meta_count(self, table: str) -> int:
         return self._fetchone(f"SELECT COUNT(*) AS n FROM {table}")["n"]
 
+    def meta_delete(self, table: str, key: str) -> bool:
+        pk = "name" if table != "mf_users" else "id"
+        cur = self._execute(f"DELETE FROM {table} WHERE {pk}=?", (key,))
+        self._commit()
+        return cur.rowcount > 0
+
     # ------------------------------------------------------------- data DDL
     @staticmethod
     def _table(obj_name: str) -> str:
@@ -375,6 +381,14 @@ class Store:
                  **json.loads(r["definition"])}
                 for r in self._fetchall("SELECT * FROM mf_layouts")]
 
+    def layout_delete(self, object_name: str, profile_name: str,
+                      record_type: str = "Default") -> bool:
+        cur = self._execute(
+            "DELETE FROM mf_layouts WHERE object_name=? AND profile_name=? AND record_type=?",
+            (object_name, profile_name, record_type))
+        self._commit()
+        return cur.rowcount > 0
+
     # ------------------------------------------------- generic config tables
     def config_put(self, table: str, definition: dict) -> str:
         rid = definition.get("id") or new_id()
@@ -389,7 +403,7 @@ class Store:
         return json.loads(row["definition"]) if row else None
 
     def config_all(self, table: str):
-        rows = self._fetchall(f"SELECT definition FROM {table}")
+        rows = self._fetchall(f"SELECT definition FROM {table} ORDER BY rowid")
         return [json.loads(r["definition"]) for r in rows]
 
     def config_delete(self, table: str, rid: str) -> bool:
@@ -449,6 +463,30 @@ class Store:
     def email_log(self, limit=100):
         return self._rows("mf_email_log", limit=limit)
 
+    def email_log_search(self, to=None, template=None, date_from=None,
+                         date_to=None, limit=50, offset=0):
+        """Filtered, paginated email log. Returns (rows, total)."""
+        where, params = [], []
+        if to:
+            where.append("recipient LIKE ?")
+            params.append(f"%{to}%")
+        if template:
+            where.append("template = ?")
+            params.append(template)
+        if date_from:
+            where.append("sent_at >= ?")
+            params.append(date_from)
+        if date_to:
+            params.append(date_to if "T" in date_to else date_to + "T23:59:59")
+            where.append("sent_at <= ?")
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        total = self._fetchone(
+            f"SELECT COUNT(*) AS n FROM mf_email_log{clause}", params)["n"]
+        rows = [dict(r) for r in self._fetchall(
+            f"SELECT * FROM mf_email_log{clause} "
+            f"ORDER BY sent_at DESC LIMIT {int(limit)} OFFSET {int(offset)}", params)]
+        return rows, total
+
     # setup audit trail
     def audit(self, user, action, entity_type, entity_name, details=""):
         return self._row_put("mf_audit_trail", {
@@ -458,6 +496,76 @@ class Store:
 
     def audit_trail(self, limit=200):
         return self._rows("mf_audit_trail", order="at DESC", limit=limit)
+
+    def audit_trail_search(self, username=None, action=None, entity=None,
+                           date_from=None, date_to=None,
+                           limit=50, offset=0):
+        """Filtered, paginated setup audit trail. Returns (rows, total)."""
+        where, params = [], []
+        if username:
+            where.append("username LIKE ?")
+            params.append(f"%{username}%")
+        if action:
+            where.append("action = ?")
+            params.append(action)
+        if entity:
+            where.append("(entity_type LIKE ? OR entity_name LIKE ?)")
+            params.extend([f"%{entity}%", f"%{entity}%"])
+        if date_from:
+            where.append("at >= ?")
+            params.append(date_from)
+        if date_to:
+            # A bare date means "through the end of that day".
+            params.append(date_to if "T" in date_to else date_to + "T23:59:59")
+            where.append("at <= ?")
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        total = self._fetchone(
+            f"SELECT COUNT(*) AS n FROM mf_audit_trail{clause}", params)["n"]
+        rows = [dict(r) for r in self._fetchall(
+            f"SELECT * FROM mf_audit_trail{clause} "
+            f"ORDER BY at DESC LIMIT {int(limit)} OFFSET {int(offset)}", params)]
+        return rows, total
+
+    # ------------------------------------------------------- login history
+    def record_login(self, user_id: str | None, username: str, ip: str,
+                     user_agent: str, success: bool, failure_reason: str = ""):
+        """Persist one /api/login attempt (success or failure)."""
+        self._execute(
+            """INSERT INTO mf_login_history
+               (id, user_id, username, at, ip, user_agent, success, failure_reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (new_id(), user_id, username or "", utcnow(), ip or "",
+             (user_agent or "")[:300], 1 if success else 0, failure_reason or ""))
+        self._commit()
+
+    def login_history(self, username: str | None = None, user_id: str | None = None,
+                      success: bool | None = None, since: str | None = None,
+                      until: str | None = None, limit: int = 50,
+                      offset: int = 0) -> tuple[list, int]:
+        """Filtered, paginated login attempts. Returns (rows, total)."""
+        where, params = [], []
+        if username:
+            where.append("username LIKE ?")
+            params.append(f"%{username}%")
+        if user_id:
+            where.append("user_id = ?")
+            params.append(user_id)
+        if success is not None:
+            where.append("success = ?")
+            params.append(1 if success else 0)
+        if since:
+            where.append("at >= ?")
+            params.append(since)
+        if until:
+            where.append("at <= ?")
+            params.append(until)
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        total = self._fetchone(
+            f"SELECT COUNT(*) AS n FROM mf_login_history {clause}", params)["n"]
+        rows = self._fetchall(
+            f"SELECT * FROM mf_login_history {clause} "
+            f"ORDER BY at DESC LIMIT ? OFFSET ?", (*params, limit, offset))
+        return [dict(r) for r in rows], total
 
     # change data capture
     def emit_change(self, object_name, record_id, event, user, changed_fields=None,

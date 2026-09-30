@@ -269,7 +269,7 @@ def test_audit_trail_records_admin_actions(client, admin, leo):
                           "condition": {}, "message": "x"})
     assert r.status_code == 201
     r = client.get("/api/admin/audit-trail", headers=admin)
-    entries = r.get_json()
+    entries = r.get_json()["rows"]
     match = [e for e in entries if e["entity_name"] == "Audit probe"]
     assert match and match[0]["username"] == "admin"
     assert match[0]["action"] == "create"

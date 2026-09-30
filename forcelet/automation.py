@@ -918,7 +918,7 @@ def find_mentioned_users(store, body: str):
 
 
 def post_to_feed(store, security, user: dict, object_name: str | None,
-                 record_id: str | None, body: str):
+                 record_id: str | None, body: str, record_mentions: bool = True):
     """Create a feed post, recording @mentions. Returns (post, error)."""
     if not (body or "").strip():
         return None, "Post body is required"
@@ -930,9 +930,10 @@ def post_to_feed(store, security, user: dict, object_name: str | None,
         if not rec or not security.can_see_record(user, rec, object_name):
             return None, "Record not found"
     pid = store.feed_post(user["id"], body.strip(), object_name, record_id)
-    for u in find_mentioned_users(store, body):
-        if u["id"] != user["id"]:
-            store.feed_mention(pid, u["id"])
+    if record_mentions:
+        for u in find_mentioned_users(store, body):
+            if u["id"] != user["id"]:
+                store.feed_mention(pid, u["id"])
     post = store.feed_get_post(pid)
     post["user_name"] = user.get("name")
     post["like_count"] = 0

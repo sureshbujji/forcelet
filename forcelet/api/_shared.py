@@ -23,7 +23,7 @@ from .. import duplicate_rules as _duprules
 from .. import email_alerts as _emailalerts
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
-from ..security import (SESSION_MAX_SECONDS, SESSION_TTL_SECONDS, hash_token)
+from ..security import (hash_token, session_timeouts)
 
 
 def ctx():
@@ -100,11 +100,12 @@ QUERY_TOKEN_PATHS = frozenset({"/api/streaming"})
 
 def issue_session(store, user, limited=False):
     """Mint a session token for user; store only its hash. Returns the token."""
-    from ..security import new_session_token
+    from ..security import new_session_token, session_timeouts
     token = new_session_token()
+    ttl, max_age = session_timeouts(store)
     now = datetime.now(timezone.utc)
-    expires = min(now + timedelta(seconds=SESSION_MAX_SECONDS),
-                  now + timedelta(seconds=SESSION_TTL_SECONDS))
+    expires = min(now + timedelta(seconds=max_age),
+                  now + timedelta(seconds=ttl))
     store.create_session(hash_token(token), user["id"],
                          expires.isoformat(timespec="seconds"),
                          ip=_client_ip(),
@@ -144,22 +145,38 @@ def current_user():
         if expires <= now:
             store.delete_session(hash_token(token))
             return None
-        # Sliding expiry: idle sessions live SESSION_TTL_SECONDS, capped at
-        # SESSION_MAX_SECONDS from creation.
+        # Sliding expiry: idle sessions live session_timeout_minutes, capped at
+        # session_max_hours from creation (both admin-configurable).
         try:
             created = datetime.fromisoformat(sess["created_at"])
         except Exception:
             created = now
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
-        new_exp = min(created + timedelta(seconds=SESSION_MAX_SECONDS),
-                      now + timedelta(seconds=SESSION_TTL_SECONDS))
+        ttl, max_age = session_timeouts(store)
+        new_exp = min(created + timedelta(seconds=max_age),
+                      now + timedelta(seconds=ttl))
         store.touch_session(hash_token(token), new_exp.isoformat(timespec="seconds"))
         user = security.get_user(sess["user_id"])
+        if user and not user.get("is_active", True):
+            # Deactivated mid-session: kill the session, deny the request.
+            store.delete_session(hash_token(token))
+            return None
         if user:
             request.mf_session = sess
         return user
     return None
+
+
+# Paths a limited session may call: forced password change, plus the
+# self-service TOTP enrollment flow (needed when 2FA is required but the
+# user has not enrolled yet).
+_LIMITED_SESSION_PATHS = frozenset({
+    "/api/change-password",
+    "/api/me/totp/status",
+    "/api/me/totp/setup",
+    "/api/me/totp/enable",
+})
 
 
 def require_auth(fn):
@@ -169,11 +186,12 @@ def require_auth(fn):
         if not user:
             return jsonify({"error": "Authentication required"}), 401
         sess = getattr(request, "mf_session", None)
-        if sess and sess.get("limited") and request.path != "/api/change-password":
-            # Seeded/default credentials: the user must set a real password
-            # before doing anything else.
-            return jsonify({"error": "Password change required",
-                            "must_change_password": True}), 403
+        if sess and sess.get("limited") and request.path not in _LIMITED_SESSION_PATHS:
+            # Seeded/default credentials or pending 2FA enrollment: the user
+            # must finish onboarding before doing anything else.
+            return jsonify({"error": "Account setup incomplete — finish the "
+                                     "required password change / 2FA enrollment",
+                            "must_change_password": bool(user.get("must_change_password"))}), 403
         request.mf_user = user
         return fn(*a, **kw)
     return wrapper

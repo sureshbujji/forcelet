@@ -410,7 +410,11 @@ async function totpVerify(){
 }
 async function finishLogin(r,currentPassword){
   if(r.must_change_password){ showForcedPasswordChange(r,currentPassword); return; }
+  if(r.totp_setup_required){ token=r.token; me=r.user; showTotpEnroll(); return; }
   token=r.token; me=r.user;
+  await enterApp();
+}
+async function enterApp(){
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
   document.getElementById("whoami").textContent=me.name;
@@ -421,6 +425,33 @@ async function finishLogin(r,currentPassword){
     refreshBell();
     await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
   }finally{ navSilent=false; }
+}
+/* ---- TOTP enrollment during sign-in (org requires 2FA, not yet enrolled) ---- */
+function showTotpEnroll(){
+  document.getElementById("loginbtns").innerHTML=`<div class="card" style="max-width:380px">
+  <div class="section-title">Set up two-factor authentication</div>
+  <p class="muted">Your organization requires two-factor authentication. Set it up now to continue signing in.</p>
+  <div class="btnrow"><button class="btn" onclick="totpEnrollSetup()">Set up now</button></div><div id="tpenerr"></div></div>`;
+}
+async function totpEnrollSetup(){
+  const r=await api("POST","/api/me/totp/setup");
+  if(!r.ok){ document.getElementById("tpenerr").innerHTML=`<div class="err">${esc((r.data||{}).error||"Setup failed")}</div>`; return; }
+  document.getElementById("loginbtns").innerHTML=`<div class="card" style="max-width:380px">
+  <div class="section-title">Set up two-factor authentication</div>
+  <p class="muted">1. Enter this secret in your authenticator app, or open the link on your phone.</p>
+  <label>Secret (keep private)</label><input readonly value="${esc(r.data.secret)}" onclick="this.select()">
+  <p><a href="${esc(r.data.otpauth_url)}">otpauth link — open on your phone</a></p>
+  <p class="muted">2. Enter the 6-digit code from the app to finish.</p>
+  <input id="tpen_code" inputmode="numeric" maxlength="6" placeholder="000000" style="max-width:160px">
+  <div class="btnrow" style="margin-top:10px"><button class="btn" onclick="totpEnrollEnable()">Enable 2FA</button></div>
+  <div id="tpenerr"></div></div>`;
+  document.getElementById("tpen_code").focus();
+}
+async function totpEnrollEnable(){
+  const r=await api("POST","/api/me/totp/enable",{code:document.getElementById("tpen_code").value.trim()});
+  if(!r.ok){ document.getElementById("tpenerr").innerHTML=`<div class="err">${esc((r.data||{}).error||"Invalid code — try again")}</div>`; return; }
+  // Enrollment clears the limited flag on the session; we can enter the app.
+  await enterApp();
 }
 let pendingCurrentPassword="";
 function showForcedPasswordChange(r,currentPassword){
@@ -442,17 +473,9 @@ async function forcedPasswordSubmit(){
   const r=await fetch("/api/change-password",{method:"POST",headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify({current:pendingCurrentPassword,new:n1})}).then(r=>r.json());
   if(!r.changed) return err(r.error||"Could not change password.");
   pendingCurrentPassword="";
+  if(r.totp_setup_required){ showTotpEnroll(); return; }
   // The limited session is now fully trusted; enter the app.
-  document.getElementById("login").style.display="none";
-  document.getElementById("app").style.display="block";
-  document.getElementById("whoami").textContent=me.name;
-  document.getElementById("whoami_detail").textContent=`${me.profile} · ${me.role||"no role"}`;
-  navSilent=true; // don't let the initial tab render rewrite a deep-link URL
-  try{
-    await loadObjects();
-    refreshBell();
-    await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
-  }finally{ navSilent=false; }
+  await enterApp();
 }
 async function logout(){
   try{ await fetch("/api/logout",{method:"POST",headers:{"Authorization":"Bearer "+token}}); }catch(e){}
@@ -559,10 +582,12 @@ async function refreshUserApps(){
 let curObj=null, curDesc=null, curLayout=null;
 let inlineEdit=false, splitMode=false, splitId=null;
 let curViews=[], curView=null, curSort=null, curDir="asc", curSearch="";
+let listPage=0, listTotal=0; const LIST_SIZE=50;
 async function showObject(name){
   document.getElementById("main").innerHTML=skel(4);
   setActive(name); curObj=name;
   curView=null; curSort=null; curDir="asc"; curSearch=""; curQueue=null;
+  listPage=0;
   splitMode=false; splitId=null;
   const d=await api("GET",`/api/describe/${name}`); curDesc=d.data;
   const l=await api("GET",`/api/layout/${name}${curApp?`?app=${curApp.id}`:""}`); curLayout=l.data;
@@ -572,11 +597,13 @@ async function showObject(name){
 function setView(id){
   curView=curViews.find(x=>x.id===id)||null;
   curSort=curView&&curView.sort_by||null; curDir=curView&&curView.sort_dir||"asc";
+  listPage=0;
   renderList();
 }
 function toggleSort(col){
   if(curSort===col) curDir=curDir==="asc"?"desc":"asc";
   else { curSort=col; curDir="asc"; }
+  listPage=0;
   renderList();
 }
 async function renderList(){
@@ -584,10 +611,13 @@ async function renderList(){
   if(curView) q+=`view=${curView.id}&`;
   if(curSort) q+=`sort=${curSort}&dir=${curDir}&`;
   if(curSearch) q+=`search=${encodeURIComponent(curSearch)}&`;
+  if(!(curObj==="Case"&&curQueue)) q+=`limit=${LIST_SIZE}&offset=${listPage*LIST_SIZE}&`;
   if(curObj==="Case"&&!caseQueues.length){ const qr=await api("GET","/api/case-queues"); caseQueues=qr.ok&&Array.isArray(qr.data)?qr.data:[]; }
-  let rows;
+  let rows, total=null;
   if(curObj==="Case"&&curQueue){ const qr=await api("GET",`/api/case-queues/${curQueue}/cases`); rows=qr.ok&&Array.isArray(qr.data)?qr.data:[]; }
-  else{ const r=await api("GET",q); rows=r.data||[]; }
+  else{ const r=await api("GET",q); const d=r.data;
+    if(d&&!Array.isArray(d)&&Array.isArray(d.rows)){ rows=d.rows; total=d.total; } else rows=d||[]; }
+  listTotal=total==null?rows.length:total;
   let cols;
   if(curView&&curView.columns&&curView.columns.length){
     const fmap={}; curDesc.fields.forEach(f=>fmap[f.name]=f);
@@ -596,7 +626,7 @@ async function renderList(){
   if(!cols||!cols.length) cols=curDesc.fields.slice(0,6);
   const arrow=c=>curSort===c?(curDir==="asc"?" ▲":" ▼"):"";
   let html=`<div class="btnrow"><h2 style="margin:0">${esc(curDesc.plural)}</h2><span style="flex:1"></span>`;
-  html+=`<input id="lsearch" placeholder="Search records..." value="${esc(curSearch)}" style="max-width:170px" onkeydown="if(event.key==='Enter'){curSearch=this.value;renderList();}">`;
+  html+=`<input id="lsearch" placeholder="Search records..." value="${esc(curSearch)}" style="max-width:170px" onkeydown="if(event.key==='Enter'){curSearch=this.value;listPage=0;renderList();}">`;
   html+=`<select id="lview" onchange="setView(this.value)" style="max-width:200px"><option value="">— All records —</option>${curViews.map(vw=>`<option value="${vw.id}" ${curView&&curView.id===vw.id?"selected":""}>${esc(vw.name)}${vw.shared?" (shared)":""}</option>`).join("")}</select>`;
   let moreItems=`<button onclick="document.getElementById('saveview').style.display='flex'">Save view</button>`;
   moreItems+=`<button onclick="showKanban()">Kanban</button>`;
@@ -618,7 +648,7 @@ async function renderList(){
   html+=`<button class="btn small" onclick="saveView()">Save</button></div>`;
   const listCard=`<div class="card"${splitMode?` id="splitlist" style="margin:0"`:``}><table><tr>${cols.map(c=>`<th onclick="toggleSort('${c.name}')" style="cursor:pointer;user-select:none">${esc(c.label)}${arrow(c.name)}</th>`).join("")}<th></th></tr>`+
   rows.map(row=>`<tr${splitMode?` data-rid="${row.Id}" onclick="splitSelect('${row.Id}')" class="${splitId===row.Id?"sel":""}`:""}>${cols.map(c=>`<td>${inlineEdit&&canInline(c)?inlineCell(c,row):esc(fmtVal(c,row[c.name]))}</td>`).join("")}<td><button class="btn secondary small" onclick="event.stopPropagation();${splitMode?`splitSelect('${row.Id}')`:`showDetail('${row.Id}')`}">${splitMode?"Preview":"Open"}</button></td></tr>`).join("")+
-  `</table>${rows.length?"":'<p class="muted">No records match. Sharing rules may be hiding records owned by others.</p>'}</div>`;
+  `</table>${listPager(total)}${rows.length?"":'<p class="muted">No records match. Sharing rules may be hiding records owned by others.</p>'}</div>`;
   html+=splitMode?`<div class="split">${listCard}<div id="splitdetail"><div class="card"><p class="muted">Select a record to preview it here.</p></div></div></div>`:listCard;
   document.getElementById("main").innerHTML=html;
   if(splitMode&&splitId) splitSelect(splitId);
@@ -634,7 +664,41 @@ async function saveView(){
   curView=curViews.find(x=>x.id===r.data.id)||null;
   renderList();
 }
-function exportCsv(){ window.open(`/api/sobjects/${curObj}/export`,"_blank"); }
+function exportCsv(){ showExportDialog(); }
+function showExportDialog(){
+  const old=document.getElementById("exp_dlg"); if(old) old.remove();
+  const fields=(curDesc.fields||[]);
+  const d=document.createElement("div"); d.id="exp_dlg";
+  const filtDesc=[curView?`view "${curView.name}"`:"",curSearch?`search "${curSearch}"`:""].filter(Boolean).join(" + ");
+  d.innerHTML=`<div style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)document.getElementById('exp_dlg').remove()">
+   <div class="card" style="width:min(580px,94vw);max-height:86vh;overflow:auto;margin:0">
+    <div class="section-title">Export ${esc(curDesc.plural)} to CSV</div>
+    <label>Filename</label><input id="exp_name" value="${curObj}.csv">
+    <label style="margin-top:8px"><input type="checkbox" id="exp_filters" style="width:auto" ${filtDesc?"checked":""}> Apply current list filters${filtDesc?` (${esc(filtDesc)})`:""}</label>
+    <div class="muted" style="margin:10px 0 4px">Fields — <button class="btn secondary small" onclick="expToggleAll(true)">Select all</button> <button class="btn secondary small" onclick="expToggleAll(false)">Select none</button></div>
+    <div style="columns:2;column-gap:16px">${fields.map(f=>`<label style="display:block;font-weight:normal;margin:2px 0"><input type="checkbox" class="exp_f" value="${f.name}" style="width:auto" checked> ${esc(f.label)}</label>`).join("")}</div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="doExportCsv()">Export</button> <button class="btn secondary" onclick="document.getElementById('exp_dlg').remove()">Cancel</button></div>
+   </div></div>`;
+  document.body.appendChild(d);
+}
+function expToggleAll(on){ document.querySelectorAll("#exp_dlg .exp_f").forEach(c=>c.checked=on); }
+function doExportCsv(){
+  const fields=[...document.querySelectorAll("#exp_dlg .exp_f")].filter(c=>c.checked).map(c=>c.value);
+  let url=`/api/sobjects/${curObj}/export?fields=${encodeURIComponent(fields.join(","))}`;
+  if(document.getElementById("exp_filters").checked){
+    if(curView) url+=`&view=${curView.id}`;
+    if(curSearch) url+=`&search=${encodeURIComponent(curSearch)}`;
+  }
+  let fn=document.getElementById("exp_name").value.trim()||`${curObj}.csv`;
+  if(!/\.csv$/i.test(fn)) fn+=".csv";
+  document.getElementById("exp_dlg").remove();
+  downloadCsv(url,fn);
+}
+function listPager(total){
+  if(total==null) return "";
+  const pages=Math.max(1,Math.ceil(listTotal/LIST_SIZE));
+  return `<div class="btnrow" style="margin-top:8px"><span class="muted">${listTotal} record${listTotal===1?"":"s"} — page ${listPage+1} of ${pages}</span><span style="flex:1"></span><button class="btn secondary small" ${listPage===0?"disabled":""} onclick="listPage--;renderList()">← Prev</button> <button class="btn secondary small" ${listPage+1>=pages?"disabled":""} onclick="listPage++;renderList()">Next →</button></div>`;
+}
 let curKanbanField=null;
 let caseQueues=[], curQueue=null;
 async function showKanban(){
@@ -1460,7 +1524,7 @@ async function showRecycleBin(){
   document.getElementById("main").innerHTML=skel(3);
   const r=await api("GET","/api/recycle-bin");
   const items=r.data||[];
-  let html=`<div class="btnrow"><h2 style="margin:0">\uD83D\uDDD1 Recycle Bin</h2><span class="muted">${items.length} item(s)</span><span style="flex:1"></span>`;
+  let html=`<div class="btnrow"><h2 style="margin:0">Recycle Bin</h2><span class="muted">${items.length} item(s)</span><span style="flex:1"></span>`;
   if(me.profile==="System Administrator"&&items.length) html+=`<button class="btn danger small" onclick="emptyBin()">Empty bin</button>`;
   html+=`</div>`;
   if(!items.length) html+=`<div class="card"><p class="muted">Nothing here. Deleted records land here first and can be restored.</p></div>`;
@@ -1592,12 +1656,14 @@ async function showAdmin(section, highlight){
   setActive("__admin");
   if(!section){ renderSetupHome(); return; }
   if(highlight==="App Manager"){ renderAppManager(); return; }
-  const [users,roles,profiles,ft]=await Promise.all([api("GET","/api/admin/users"),api("GET","/api/admin/roles"),api("GET","/api/admin/profiles"),api("GET","/api/field-types")]);
+  const [users,roles,profiles,ft,orgset]=await Promise.all([api("GET","/api/admin/users"),api("GET","/api/admin/roles"),api("GET","/api/admin/profiles"),api("GET","/api/field-types"),api("GET","/api/admin/settings/org")]);
   const arr=r=>Array.isArray(r.data)?r.data:[];
   const [uList,rList,pList,ftList]=[arr(users),arr(roles),arr(profiles),arr(ft)];
+  const orgName=(orgset.data&&orgset.data.org_name)||"Forcelet";
   if(!uList.length||!rList.length||!pList.length||!ftList.length){ toast("Could not load setup data. Please retry.","error"); }
   const objs=objects.map(o=>`<option>${o.name}</option>`).join("");
-  let html=`<h2>Admin Setup</h2>
+  const months=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  let html=`<h2>Admin Setup${orgName?` — ${esc(orgName)}`:""}</h2>
   <div class="card"><div class="section-title">Create custom object</div><div id="oerr"></div>
     <label>API name (e.g. Invoice)</label><input id="ao_name"><label>Label</label><input id="ao_label"><label>Plural label</label><input id="ao_plural">
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createObject()">Create object</button></div><div id="ao_list"></div></div>
@@ -1614,6 +1680,11 @@ async function showAdmin(section, highlight){
     <label><input type="checkbox" id="af_enc" style="width:auto"> Encrypted at rest (text-like fields only; not searchable by exact match, can't be unique)</label>
     <label><input type="checkbox" id="af_ext" style="width:auto"> External ID (unique identifier for upserts — Text/Email/Phone/URL/Number only)</label>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="addField()">Add field</button></div></div>
+  <div class="card"><div class="section-title">Object fields</div><div id="oferr"></div>
+    <p class="muted">Manage fields on custom objects. <b>Deactivate</b> hides a field from forms, lists and the API while keeping its data. <b>Delete</b> is permanent and is refused while any record still holds a value.</p>
+    <label>Object</label><select id="of_obj" onchange="listObjectFields()"></select>
+    <div class="btnrow" style="margin-top:12px"><button class="btn secondary" onclick="listObjectFields()">Refresh fields</button><button class="btn danger" onclick="deleteObject()">Delete object…</button></div>
+    <div id="of_list"></div></div>
   <div class="card"><div class="section-title">Validation rule</div><div id="vrerr"></div><p class="muted">Condition is expression JSON — the rule fires when it evaluates to true. Example: <code>${esc(CONDITION_EXAMPLE)}</code></p>
     <div class="grid2"><div><label>Object</label><select id="vr_obj">${objs}</select><label>Name</label><input id="vr_name"></div>
     <div><label>Error message</label><input id="vr_msg"><label>Condition JSON</label><textarea id="vr_cond" rows="3" placeholder='{"<":[{"field":"CloseDate"},{"today":true}]}'></textarea><div class="cb-host" id="cb_vr"></div></div></div>
@@ -1641,7 +1712,7 @@ async function showAdmin(section, highlight){
   <div class="card"><div class="section-title">Approval process</div><div id="aperr"></div>
     <p class="muted">Entry conditions = expression JSON. Approver: <code>"manager"</code>, or <code>{"type":"role","role":"CEO"}</code>, or <code>{"type":"user","id":"u_…"}</code>.</p>
     <div class="grid2"><div><label>Object</label><select id="ap_obj">${objs}</select><label>Name</label><input id="ap_name"></div>
-    <div><label>Entry conditions JSON</label><textarea id="ap_entry" rows="2" placeholder='{"<":[20,{"field":"DiscountPercent"}]}'></textarea><label>Steps JSON</label><textarea id="ap_steps" rows="2" placeholder='[{"name":"Manager approval","approver":"manager"}]'></textarea></div></div>
+    <div><label>Entry conditions JSON</label><textarea id="ap_entry" rows="2" placeholder='{"<":[20,{"field":"DiscountPercent"}]}'></textarea><div class="cb-host" id="cb_ap"></div><label>Steps JSON</label><textarea id="ap_steps" rows="2" placeholder='[{"name":"Manager approval","approver":"manager"}]'></textarea></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="ap_submit" onclick="submitSetupForm('approval-processes')">Create process</button><button class="btn secondary" id="ap_cancel" style="display:none" onclick="cancelSetupEdit('approval-processes')">Cancel</button><div id="ap_list"></div></div></div>
   <div class="card"><div class="section-title">Sharing rule (criteria-based)</div><div id="srerr"></div>
     <div class="grid2"><div><label>Object</label><select id="sr_obj">${objs}</select><label>Name</label><input id="sr_name"><label>Share with</label><input id="sr_with" placeholder='{"type":"role","role":"Support Agent"}'></div>
@@ -1770,18 +1841,98 @@ async function showAdmin(section, highlight){
   <div class="card"><div class="section-title">CSV import</div><div id="imperr"></div>
     <div class="grid2"><div><label>Object</label><select id="im_obj">${objs}</select><label>Mode</label><select id="im_mode"><option value="insert">Insert</option><option value="upsert">Upsert (match by external ID)</option></select></div><div><label>CSV file (headers = field names)</label><input type="file" id="im_file" accept=".csv"><label>External ID field (upsert mode)</label><input id="im_ext" placeholder="External_Id"></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="importCsv()">Import</button></div></div>
-  <div class="card"><div class="section-title">Create user</div><div id="auerr"></div>
-    <div class="grid2"><div><label>Username</label><input id="au_user"><label>Full name</label><input id="au_name"><label>Temporary password</label><input id="au_pass" type="password" placeholder="User must change at first login"></div>
-    <div><label>Profile</label><select id="au_prof">${pList.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select>
-    <label>Role</label><select id="au_role"><option value="">— none —</option>${rList.map(r=>`<option>${esc(r.name)}</option>`).join("")}</select></div></div>
-    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createUser()">Create user</button></div><div id="au_list"></div></div>
+  <div class="card"><div class="section-title">Users</div><div id="auerr"></div>
+    <div class="grid2"><div><label>Username</label><input id="au_user"><label>Full name</label><input id="au_name"><label>Email</label><input id="au_email" type="email"></div>
+    <div><label>Temporary password</label><input id="au_pass" type="password" placeholder="User must change at first login"><label>Profile</label><select id="au_prof">${pList.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select>
+    <label>Role</label><select id="au_role"><option value="">— none —</option>${rList.map(r=>`<option>${esc(r.name)}</option>`).join("")}</select>
+    <label id="au_active_wrap" style="display:none"><input type="checkbox" id="au_active" style="width:auto"> Active</label></div></div>
+    <input type="hidden" id="au_id">
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="au_save" onclick="saveUser()">Create user</button><button class="btn secondary" id="au_cancel" style="display:none" onclick="cancelUserEdit()">Cancel</button></div>
+    <div class="setup-search" style="margin-top:10px"><input id="au_q" placeholder="Search username, name, email, profile…" oninput="filterUserRows(this.value)"></div>
+    <div id="au_list"></div><div id="au_ps"></div></div>
+  <div class="card"><div class="section-title">Profiles</div><div id="pferr"></div>
+    <p class="muted">Object-level (Create/Read/Edit/Delete) and field-level (Read/Edit) permissions. System Administrator always has full access.</p>
+    <div class="btnrow" style="margin:8px 0"><button class="btn secondary small" onclick="showNewProfileForm()">New profile</button></div>
+    <div id="pf_list"></div>
+    <div id="pf_new" style="display:none;margin-top:8px"><label>Profile name</label><input id="pf_new_name" style="max-width:260px"><div class="btnrow" style="margin-top:8px"><button class="btn small" onclick="createProfile()">Create</button><button class="btn secondary small" onclick="document.getElementById('pf_new').style.display='none'">Cancel</button></div><div id="pfnewerr"></div></div>
+    <div id="pf_editor" style="display:none;margin-top:12px"></div></div>
+  <div class="card"><div class="section-title">Security policies</div><div id="sperr"></div>
+    <p class="muted">Apply to new sign-ins immediately; existing sessions keep their current expiry.</p>
+    <div class="grid2"><div>
+    <div class="section-title" style="font-size:13px">Password policy</div>
+    <label>Minimum length</label><input id="sp_minlen" type="number" min="1" value="8">
+    <label><input type="checkbox" id="sp_upper" style="width:auto"> Require uppercase letter</label>
+    <label><input type="checkbox" id="sp_lower" style="width:auto"> Require lowercase letter</label>
+    <label><input type="checkbox" id="sp_digit" style="width:auto"> Require digit</label>
+    <label><input type="checkbox" id="sp_symbol" style="width:auto"> Require symbol</label>
+    <label>Password expires after (days — 0 = never)</label><input id="sp_expiry" type="number" min="0" value="0">
+    </div><div>
+    <div class="section-title" style="font-size:13px">Lockout</div>
+    <label>Failed attempts before lockout</label><input id="sp_lockn" type="number" min="1" value="5">
+    <label>Count attempts within (minutes)</label><input id="sp_lockw" type="number" min="1" value="15">
+    <label>Lockout duration (minutes)</label><input id="sp_lockd" type="number" min="1" value="15">
+    <div class="section-title" style="font-size:13px;margin-top:8px">Sessions</div>
+    <label>Idle timeout (minutes)</label><input id="sp_sess" type="number" min="1" value="720">
+    <label>Absolute max (hours)</label><input id="sp_sessmax" type="number" min="1" value="168">
+    </div></div>
+    <div class="section-title" style="font-size:13px;margin-top:10px">Two-factor authentication</div>
+    <label><input type="radio" name="sp_totp" value="none" style="width:auto" onchange="setTotpMode('none')"> Not required</label><br>
+    <label><input type="radio" name="sp_totp" value="all" style="width:auto" onchange="setTotpMode('all')"> Required for everyone</label><br>
+    <label><input type="radio" name="sp_totp" value="profiles" style="width:auto" onchange="setTotpMode('profiles')"> Required for selected profiles</label>
+    <div id="sp_totp_profiles" style="margin-top:6px;display:none">${pList.map(p=>`<label><input type="checkbox" data-sp-prof="${esc(p.name)}" style="width:auto"> ${esc(p.name)}</label><br>`).join("")}</div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveSecurityPolicies()">Save policies</button></div></div>
+  <div class="card"><div class="section-title">Company settings</div><div id="orger"></div>
+    <p class="muted">Organization identity used across the app.</p>
+    <div class="grid2"><div>
+    <label>Organization name</label><input id="org_name" placeholder="Acme Corporation">
+    <label>Default locale</label><input id="org_locale" placeholder="en-US">
+    </div><div>
+    <label>Default timezone</label><input id="org_tz" placeholder="America/Los_Angeles">
+    <label>Default currency (ISO code)</label><input id="org_cur" placeholder="USD" maxlength="3" style="max-width:120px">
+    <label>Fiscal year starts</label><select id="org_fy">${months.map((m,i)=>`<option value="${i+1}">${m}</option>`).join("")}</select>
+    </div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveOrgSettings()">Save</button></div></div>
+  <div class="card"><div class="section-title">Community portal</div><div id="porerr"></div>
+    <p class="muted">Settings for the customer portal (<a href="portal.html" target="_blank">/portal.html</a>).</p>
+    <label><input type="checkbox" id="por_enabled" style="width:auto"> Portal enabled</label>
+    <label>Portal title</label><input id="por_title">
+    <label>Welcome message (shown on the sign-in page)</label><textarea id="por_welcome" rows="3"></textarea>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="savePortalSettings()">Save</button></div></div>
+  <div class="card"><div class="section-title">Chatter settings</div><div id="chaerr"></div>
+    <label><input type="checkbox" id="cha_feed" style="width:auto"> Chatter feed enabled</label>
+    <p class="muted">When off, all feed APIs return a "Chatter is disabled" error.</p>
+    <label><input type="checkbox" id="cha_mentions" style="width:auto"> @mentions enabled</label>
+    <p class="muted">When off, @username mentions are not recorded and no mention notifications are sent.</p>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveChatterSettings()">Save</button></div></div>
+  <div class="card"><div class="section-title">Login history</div>
+    <p class="muted">Every sign-in attempt, successful or failed.</p>
+    <div class="grid2"><div><label>Username contains</label><input id="lh_user"></div><div><label>Status</label><select id="lh_success"><option value="">All</option><option value="1">Successful</option><option value="0">Failed</option></select></div></div>
+    <div class="grid2"><div><label>From</label><input id="lh_from" type="date"></div><div><label>To</label><input id="lh_to" type="date"></div></div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn secondary" onclick="loadLoginHistory(0)">Apply filters</button></div>
+    <div id="lh_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Storage usage</div>
+    <p class="muted">Record counts per object, plus database, uploaded files, and backup sizes.</p>
+    <div class="btnrow"><button class="btn secondary" onclick="loadStorage()">Refresh</button></div>
+    <div id="st_list" style="margin-top:8px"></div></div>
   <div class="card"><div class="section-title">Create role</div><div id="arerr"></div>
     <label>Role name</label><input id="ar_name"><label>Parent role</label><select id="ar_parent"><option value="">— none (top) —</option>${rList.map(r=>`<option>${esc(r.name)}</option>`).join("")}</select>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createRole()">Create role</button></div><div id="rl_list"></div></div>
-  <div class="card"><div class="section-title">Page layout (JSON)</div><div id="alerr"></div>
-    <div class="grid2"><div><label>Object</label><select id="al_obj">${objs}</select><label>Profile</label><select id="al_prof">${pList.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select></div>
-    <div><label>Record type (blank = Default)</label><input id="al_rt" placeholder="Default"><label>Layout JSON</label><textarea id="al_json" rows="4" placeholder='{"sections":[{"title":"Details","columns":[["Name","Phone"]]}]}'></textarea></div></div>
-    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveLayout()">Save layout</button></div></div>
+  <div class="card"><div class="section-title">Page layouts</div><div id="alerr"></div>
+    <div class="grid2"><div><label>Object</label><select id="al_obj" onchange="leFields()">${objs}</select><label>Profile</label><select id="al_prof">${pList.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select>
+    <label>Record type (blank = Default)</label><input id="al_rt" placeholder="Default">
+    <div class="btnrow" style="margin-top:12px"><button class="btn secondary" onclick="leLoad()">Load into editor</button></div></div>
+    <div><label>Saved layouts (assignments)</label><div id="le_list" style="max-height:240px;overflow:auto"></div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn secondary small" onclick="leList()">Refresh</button></div></div></div>
+    <div class="btnrow" style="margin:12px 0"><button class="btn secondary small" id="le_tabV" onclick="leTab('v')">Visual editor</button><button class="btn secondary small" id="le_tabJ" onclick="leTab('j')">Advanced JSON</button></div>
+    <div id="le_visual"><div class="grid2">
+      <div><label>Field palette — drag fields onto a section</label><div id="le_palette" style="display:flex;flex-wrap:wrap;gap:6px;max-height:460px;overflow:auto;border:1px solid #d5dae2;border-radius:6px;padding:8px;min-height:80px"></div></div>
+      <div><div class="btnrow"><label style="margin:0">Sections</label><span style="flex:1"></span><button class="btn secondary small" onclick="leAddSection()">+ Section</button></div>
+      <div id="le_sections"></div>
+      <label style="margin-top:12px">Related lists (object API names)</label><div id="le_related" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      <div class="btnrow" style="margin-top:6px"><input id="le_rel_new" placeholder="Object API name" style="max-width:180px"><button class="btn secondary small" onclick="leAddRelated()">+ Add</button></div></div>
+    </div></div>
+    <div id="le_json" style="display:none"><label>Layout JSON</label><textarea id="al_json" rows="8" placeholder='{"sections":[{"title":"Details","columns":[["Name","Phone"]]}]}'></textarea></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="leSave()">Save layout</button></div></div>
   <div class="card"><div class="section-title">Bulk API 2.0</div><div id="bulkerr"></div>
     <p class="muted">CSV ingest jobs: create (Open) → paste CSV → Close &amp; run. Operations: insert / update / upsert / delete. Per-row success &amp; error files download when done. Update/delete rows need an <code>Id</code> column; upsert needs an external ID field.</p>
     <div class="grid2"><div><label>Object</label><select id="bulk_obj">${objs}</select><label>Operation</label><select id="bulk_op"><option>insert</option><option>update</option><option>upsert</option><option>delete</option></select><label>External ID field (upsert)</label><input id="bulk_ext" placeholder="External_Id"></div>
@@ -1833,27 +1984,30 @@ const SETUP_SECTIONS=[
  {id:"apps",title:"Apps",desc:"Custom applications, tabs & navigation"},
  {id:"automation",title:"Automation",desc:"Flows, triggers, approvals, assignment, SLA"},
  {id:"security",title:"Security & Access",desc:"Users, roles, sharing, API keys"},
+ {id:"company",title:"Company",desc:"Organization, portal & chatter settings"},
  {id:"integrations",title:"Integrations",desc:"Webhooks, email, callouts, import / export"},
  {id:"devops",title:"DevOps",desc:"Bulk API, streaming, sandboxes, source tracking, packages"},
  {id:"monitoring",title:"Monitoring",desc:"Jobs, audit trail, AI scoring"},
  {id:"corecrm",title:"Core CRM",desc:"Opportunity products & teams, case teams, entitlements, duplicate rules, forecasting"},
 ];
 const CARD_SECTION={
- "Create custom object":"datamodel","Add field to object":"datamodel","Record type":"datamodel","Page layout (JSON)":"datamodel","Sales path":"datamodel",
+ "Create custom object":"datamodel","Add field to object":"datamodel","Object fields":"datamodel","Record type":"datamodel","Page layouts":"datamodel","Sales path":"datamodel",
  "Relationships":"datamodel","Person Accounts":"datamodel","Territories":"datamodel","Big Objects & Archival":"datamodel",
  "App Manager":"apps",
  "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Dynamic Forms":"automation","Approval process":"automation","Assignment rule":"automation","Case SLA policy":"automation","Escalation rule":"automation","Auto-response rule":"automation",
- "Create user":"security","Create role":"security","Permission set":"security","Sharing rule (criteria-based)":"security","Duplicate matching rule":"security","API keys":"security",
+ "Users":"security","Create role":"security","Permission set":"security","Profiles":"security","Security policies":"security","Sharing rule (criteria-based)":"security","Duplicate matching rule":"security","API keys":"security",
  "Webhook":"integrations","Named credential (HTTP callouts)":"integrations","Email template":"integrations","CSV import":"integrations","Metadata package":"integrations","Change sets":"integrations",
+ "Company settings":"company","Community portal":"company","Chatter settings":"company",
  "Bulk API 2.0":"devops","Streaming events":"devops","Sandboxes":"devops","Source tracking":"devops","Custom metadata types":"devops","Custom settings":"devops","External objects":"devops",
- "Scheduled job":"monitoring","Field history tracking":"monitoring","Audit trail & change events":"monitoring","AI lead scoring":"monitoring",
+ "Scheduled job":"monitoring","Field history tracking":"monitoring","Audit trail & change events":"monitoring","AI lead scoring":"monitoring","Login history":"monitoring","Storage usage":"monitoring",
  "Duplicate rules, email alerts & forecasting":"corecrm","Case teams & entitlements":"corecrm",
 };
 const SETUP_TILES=[
  {section:"datamodel",card:"Create custom object",desc:"Define custom objects",url:"/api/objects"},
  {section:"datamodel",card:"Add field to object",desc:"Custom, formula & roll-up fields"},
+ {section:"datamodel",card:"Object fields",desc:"Edit, deactivate & delete fields",url:"/api/admin/objects"},
  {section:"datamodel",card:"Record type",desc:"Per-type picklists & defaults",kind:"record-types"},
- {section:"datamodel",card:"Page layout (JSON)",desc:"Per-profile page layouts"},
+ {section:"datamodel",card:"Page layouts",desc:"Visual page-layout editor"},
  {section:"datamodel",card:"Sales path",desc:"Stage guidance paths"},
  {section:"datamodel",card:"Relationships",desc:"Lookup & master-detail, cascade delete"},
  {section:"datamodel",card:"Person Accounts",desc:"B2C person records on Account"},
@@ -1870,7 +2024,9 @@ const SETUP_TILES=[
  {section:"automation",card:"Case SLA policy",desc:"Milestones & breach tracking",kind:"sla-policies"},
  {section:"automation",card:"Escalation rule",desc:"Save & breach escalations",kind:"escalation-rules"},
  {section:"automation",card:"Auto-response rule",desc:"Instant email replies",kind:"auto-response-rules"},
- {section:"security",card:"Create user",desc:"Manage users",url:"/api/admin/users"},
+ {section:"security",card:"Users",desc:"Create, edit, deactivate & unlock users",url:"/api/admin/users"},
+ {section:"security",card:"Profiles",desc:"Object & field permissions",url:"/api/admin/profiles"},
+ {section:"security",card:"Security policies",desc:"Password, lockout, session & 2FA"},
  {section:"security",card:"Create role",desc:"Role hierarchy",url:"/api/admin/roles"},
  {section:"security",card:"Permission set",desc:"Additive grants",kind:"permission-sets"},
  {section:"security",card:"Sharing rule (criteria-based)",desc:"Criteria sharing",kind:"sharing-rules"},
@@ -1889,9 +2045,14 @@ const SETUP_TILES=[
  {section:"devops",card:"Custom metadata types",desc:"Deployable typed config (__mdt)"},
  {section:"devops",card:"Custom settings",desc:"Org-wide key/value config"},
  {section:"devops",card:"External objects",desc:"OData-backed virtual objects (__x)"},
+ {section:"company",card:"Company settings",desc:"Organization name, locale & currency"},
+ {section:"company",card:"Community portal",desc:"Portal branding & access"},
+ {section:"company",card:"Chatter settings",desc:"Feed & @mention control"},
  {section:"monitoring",card:"Scheduled job",desc:"Python on a schedule",kind:"scheduled-jobs"},
  {section:"monitoring",card:"Field history tracking",desc:"Per-object change log control"},
  {section:"monitoring",card:"Audit trail & change events",desc:"Who changed what"},
+ {section:"monitoring",card:"Login history",desc:"Sign-in attempts & lockouts"},
+ {section:"monitoring",card:"Storage usage",desc:"Records, files & backups"},
  {section:"monitoring",card:"AI lead scoring",desc:"Train the scoring model"},
 ];
 async function renderSetupHome(){
@@ -1950,8 +2111,10 @@ function setupAfterRender(section, highlight){
   for(const [kind,cfg] of Object.entries(SETUP_KINDS)){ if(cfg.cardSection===sec.id) refreshSetupList(kind); }
   for(const b of COND_BUILDERS){ if(b.section===sec.id) cbInit(b.id,b.objSel,b.target); }
   // custom read-only lists
-  if(sec.id==="security"){ listSetupUsers(); listSetupRoles(); }
-  if(sec.id==="datamodel"){ listSetupObjects(); }
+  if(sec.id==="security"){ listSetupUsers(); listSetupRoles(); listProfiles(); loadSecurityPolicies(); }
+  if(sec.id==="company"){ loadOrgSettings(); loadPortalSettings(); loadChatterSettings(); }
+  if(sec.id==="monitoring"){ loadLoginHistory(0); loadStorage(); }
+  if(sec.id==="datamodel"){ listSetupObjects(); listObjectFields(); leList(); leFields(); }
   if(sec.id==="integrations"){ listNamedCreds(); listChangeSets(); }
   if(sec.id==="monitoring"){ listJobs(); loadHistoryTracking(); }
   if(sec.id==="corecrm"){ renderCoreCrmSetup(); }
@@ -2025,7 +2188,7 @@ const SETUP_KINDS={
    fields:[["name","sla_name"],["priority","sla_pri","blankstar"],["milestones","sla_ms","json",[]],["active",null,"const",true]]},
  "escalation-rules":{cardTitle:"Escalation rule",cardSection:"automation",listEl:"esc_list",errEl:"escerr",submit:"esc_submit",cancel:"esc_cancel",cols:[["Name","name"],["Object","object"],["Runs on","trigger_on"]],
    fields:[["name","esc_name"],["object","esc_obj"],["trigger_on","esc_on"],["criteria","esc_crit","json",{}],["action","esc_act","json",{}],["active",null,"const",true]]},
- "permission-sets":{cardTitle:"Permission set",cardSection:"security",listEl:"ps_list",cols:[["Name","name"],["Label","label"]],noEdit:true,noActive:true,actions:{del:true}},
+ "permission-sets":{cardTitle:"Permission set",cardSection:"security",listEl:"ps_list",cols:[["Name","name"],["Label","label"]],noActive:true,extra:"psEdit",actions:{del:true}},
 };
 const SETUP_CACHE={};
 let SETUP_EDIT={kind:null,rid:null};
@@ -2068,8 +2231,13 @@ async function submitSetupForm(kind){
   if(r.ok){ toast(SETUP_EDIT.kind===kind?"Saved.":"Created.","ok"); cancelSetupEdit(kind,true); refreshSetupList(kind); }
   else setupErr(kind,r.data&&r.data.error||"Failed");
 }
-function editSetupRow(kind,rid){
-  const row=(SETUP_CACHE[kind]||[]).find(x=>x.id===rid); if(!row) return;
+async function editSetupRow(kind,rid){
+  let row=(SETUP_CACHE[kind]||[]).find(x=>x.id===rid);
+  if(!row){  // not on current page — fetch single
+    const cfg0=SETUP_KINDS[kind], apiKind=cfg0.apiKind||kind;
+    const r=await api("GET",`/api/admin/${apiKind}/${rid}`);
+    if(r.ok&&r.data) row=r.data; else { toast("Failed to load: "+(r.data&&r.data.error||r.status),"error"); return; }
+  }
   const cfg=SETUP_KINDS[kind];
   fillSetupForm(kind,row);
   SETUP_EDIT={kind,rid};
@@ -2105,19 +2273,69 @@ function cellVal(row,f){
   if(val===undefined||val===null||val==="") val="—";
   return esc(String(val));
 }
+let SETUP_PAGE={};
 async function refreshSetupList(kind){
   const cfg=SETUP_KINDS[kind]; if(!cfg) return;
   const el=document.getElementById(cfg.listEl); if(!el) return;
   const apiKind=cfg.apiKind||kind;
-  const r=await api("GET","/api/admin/"+apiKind);
-  let rows=Array.isArray(r.data)?r.data:[];
+  const paged=!cfg.filter;  // kinds with a client-side filter share a table; keep full fetch
+  const limit=50, offset=paged?(SETUP_PAGE[kind]||0):0;
+  const r=await api("GET","/api/admin/"+apiKind+(paged?`?limit=${limit}&offset=${offset}`:""));
+  let rows, total=null;
+  if(r.data&&!Array.isArray(r.data)&&Array.isArray(r.data.rows)){ rows=r.data.rows; total=r.data.total; }
+  else rows=Array.isArray(r.data)?r.data:[];
   SETUP_CACHE[kind]=rows;
   if(cfg.filter) rows=rows.filter(cfg.filter);
-  const badge=document.querySelector(`[data-count-for="${kind}"]`); if(badge) badge.textContent=`(${rows.length})`;
+  const badge=document.querySelector(`[data-count-for="${kind}"]`); if(badge) badge.textContent=`(${total==null?rows.length:total})`;
   if(!rows.length){ el.innerHTML=`<p class="muted">None yet.</p>`; return; }
   const acts=cfg.actions||{edit:!cfg.noEdit,toggle:!cfg.noActive,del:true};
   el.innerHTML=`<table style="margin-top:10px"><tr>${cfg.cols.map(c=>`<th>${c[0]}</th>`).join("")}${cfg.noActive?"":`<th>Status</th>`}<th></th></tr>`+
-   rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> <button class=\"btn secondary small\" onclick=\"viewJobRuns(\'${x.id}\')\">Runs</button> `:""}${cfg.extra==="flowCanvas"?`<button class="btn secondary small" onclick="openFlowBuilder('${kind}','${x.id}')">Canvas</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`;
+   rows.map(x=>`<tr>${cfg.cols.map(c=>`<td>${cellVal(x,c[1])}</td>`).join("")}${cfg.noActive?"":`<td>${x.active?`<span class="pill pill-on">Active</span>`:`<span class="pill pill-off">Inactive</span>`}</td>`}<td style="white-space:nowrap">${cfg.extra==="runJob"?`<button class="btn secondary small" onclick="runJob('${x.id}')">Run now</button> <button class="btn secondary small" onclick="viewJobRuns('${x.id}')">Runs</button> `:""}${cfg.extra==="flowCanvas"?`<button class="btn secondary small" onclick="openFlowBuilder('${kind}','${x.id}')">Canvas</button> `:""}${cfg.extra==="psEdit"?`<button class="btn secondary small" onclick="psEditForm('${x.id}')">Edit</button> `:""}${acts.edit?`<button class="btn secondary small" onclick="editSetupRow('${kind}','${x.id}')">Edit</button> `:""}${acts.toggle?`<button class="btn secondary small" onclick="toggleSetupActive('${kind}','${x.id}',${!!x.active})">${x.active?"Deactivate":"Activate"}</button> `:""}${acts.del?`<button class="btn danger small" onclick="delSetupRow('${kind}','${x.id}')">Delete</button>`:""}</td></tr>`).join("")+`</table>`+
+   (paged&&total!=null?setupPager(kind,total,limit,offset):"");
+}
+function setupPager(kind,total,limit,offset){
+  const pages=Math.max(1,Math.ceil(total/limit));
+  const page=Math.floor(offset/limit)+1;
+  return `<div class="btnrow" style="margin-top:8px"><span class="muted">${total} item${total===1?"":"s"} — page ${page} of ${pages}</span><span style="flex:1"></span><button class="btn secondary small" ${offset===0?"disabled":""} onclick="SETUP_PAGE['${kind}']=Math.max(0,${offset}-${limit});refreshSetupList('${kind}')">${"\u2190"} Prev</button> <button class="btn secondary small" ${offset+limit>=total?"disabled":""} onclick="SETUP_PAGE['${kind}']=${offset}+${limit};refreshSetupList('${kind}')">Next ${"\u2192"}</button></div>`;
+}
+/* ---------- Permission sets: edit + per-user assignments ---------- */
+async function psEditForm(id){
+  const r=await api("GET","/api/admin/permission-sets/"+id);
+  if(!r.ok){ toast("Failed to load: "+(r.data&&r.data.error||r.status),"error"); return; }
+  const ps=r.data;
+  document.getElementById("ps_list").innerHTML=`<div class="card" style="margin-top:10px;padding:10px"><div class="section-title">Edit permission set</div><div class="grid2"><div><label>Name</label><input id="pse_name" value="${esc(ps.name||"")}" disabled><label>Label</label><input id="pse_label" value="${esc(ps.label||"")}"></div><div><label>Object permissions JSON</label><textarea id="pse_obj" rows="4">${esc(JSON.stringify(ps.object_permissions||{},null,2))}</textarea><label>Field permissions JSON</label><textarea id="pse_field" rows="4">${esc(JSON.stringify(ps.field_permissions||{},null,2))}</textarea></div></div><div class="btnrow" style="margin-top:8px"><button class="btn small" onclick="psSave('${ps.id}')">Save</button> <button class="btn secondary small" onclick="refreshSetupList('permission-sets')">Cancel</button></div><div id="pse_err"></div></div>`;
+}
+async function psSave(id){
+  let obj, fld;
+  try{ obj=JSON.parse(document.getElementById("pse_obj").value||"{}"); fld=JSON.parse(document.getElementById("pse_field").value||"{}"); }
+  catch(e){ document.getElementById("pse_err").innerHTML=`<div class="err">Invalid JSON.</div>`; return; }
+  const r=await api("PATCH","/api/admin/permission-sets/"+id,{label:document.getElementById("pse_label").value.trim(),object_permissions:obj,field_permissions:fld});
+  if(!r.ok){ document.getElementById("pse_err").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  toast("Permission set saved.","ok"); refreshSetupList("permission-sets");
+}
+async function userPsView(uid){
+  const u=SETUP_USERS.find(x=>x.id===uid); if(!u) return;
+  const el=document.getElementById("au_ps");
+  const [ar,pr]=await Promise.all([api("GET",`/api/admin/users/${uid}/permission-sets`),api("GET","/api/admin/permission-sets")]);
+  const assigned=ar.ok?ar.data:[];
+  const all=(pr.data&&pr.data.rows)||pr.data||[];
+  const assignedIds=new Set(assigned.map(a=>a.id));
+  const avail=all.filter(p=>!assignedIds.has(p.id));
+  el.innerHTML=`<div class="card" style="margin-top:10px;padding:10px"><div class="section-title">Permission sets — ${esc(u.username)}</div>`+
+   (assigned.length?`<table style="margin-top:6px"><tr><th>Name</th><th>Label</th><th></th></tr>${assigned.map(a=>`<tr><td>${esc(a.name)}${a.missing?' <span class="pill pill-off">deleted</span>':""}</td><td>${esc(a.label||"—")}</td><td><button class="btn danger small" onclick="userPsUnassign('${uid}','${a.id}')">Unassign</button></td></tr>`).join("")}</table>`:`<p class="muted">No permission sets assigned.</p>`)+
+   `<div class="btnrow" style="margin-top:8px"><select id="ups_add" style="max-width:260px">${avail.map(p=>`<option value="${p.id}">${esc(p.label||p.name)}</option>`).join("")}</select> <button class="btn small" onclick="userPsAssign('${uid}')" ${avail.length?"":"disabled"}>Assign</button> <button class="btn secondary small" onclick="document.getElementById('au_ps').innerHTML=''">Close</button></div><div id="ups_err"></div></div>`;
+  el.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+async function userPsAssign(uid){
+  const sel=document.getElementById("ups_add"); if(!sel||!sel.value) return;
+  const r=await api("POST",`/api/admin/users/${uid}/permission-sets`,{permission_set:sel.value});
+  if(!r.ok){ document.getElementById("ups_err").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  userPsView(uid); toast("Permission set assigned.","ok");
+}
+async function userPsUnassign(uid,psid){
+  if(!confirm("Unassign this permission set?")) return;
+  const r=await api("DELETE",`/api/admin/users/${uid}/permission-sets/${psid}`);
+  r.ok?(userPsView(uid),toast("Unassigned.","ok")):toast("Failed: "+(r.data&&r.data.error||r.status),"error");
 }
 /* ============ guided condition builder (point-and-click, no raw JSON) ============ */
 const CB_OPS=[["==","equals"],["!=","not equals"],[">","greater than"],["<","less than"],[">=","> or equal"],["<=","< or equal"],["contains","contains"],["starts_with","starts with"],["isblank","is blank"],["notblank","is not blank"]];
@@ -2127,6 +2345,7 @@ const COND_BUILDERS=[
  {id:"cb_fl",section:"automation",objSel:"fl_obj",target:"fl_cond"},
  {id:"cb_aru",section:"automation",objSel:"aru_obj",target:"aru_crit"},
  {id:"cb_ar",section:"automation",objSel:"ar_obj",target:"ar_crit"},
+ {id:"cb_ap",section:"automation",objSel:"ap_obj",target:"ap_entry"},
  {id:"cb_sr",section:"automation",objSel:"sr_obj",target:"sr_crit"},
  {id:"cb_esc",section:"automation",objSel:"esc_obj",target:"esc_crit"},
 ];
@@ -2182,15 +2401,304 @@ function cbInsert(bid){
   toast("Condition inserted — review, then save.","ok");
 }
 /* ============ read-only lists: users, roles, objects ============ */
+let SETUP_USERS=[];
 async function listSetupUsers(){
   const el=document.getElementById("au_list"); if(!el) return;
-  const r=await api("GET","/api/admin/users"); const rows=r.data||[];
-  el.innerHTML=rows.length?`<table style="margin-top:10px"><tr><th>Username</th><th>Name</th><th>Profile</th><th>Role</th></tr>${rows.map(u=>`<tr><td>${esc(u.username)}</td><td>${esc(u.name||"—")}</td><td>${esc(u.profile||"—")}</td><td>${esc(u.role||"—")}</td></tr>`).join("")}</table>`:`<p class="muted">No users.</p>`;
+  const r=await api("GET","/api/admin/users"); SETUP_USERS=r.data||[];
+  renderUserRows();
+}
+function renderUserRows(){
+  const el=document.getElementById("au_list"); if(!el) return;
+  const q=(document.getElementById("au_q")||{value:""}).value.toLowerCase();
+  const rows=SETUP_USERS.filter(u=>!q||(u.username+" "+(u.name||"")+" "+(u.email||"")+" "+(u.profile||"")).toLowerCase().includes(q));
+  el.innerHTML=rows.length?`<table style="margin-top:10px"><tr><th>Username</th><th>Name</th><th>Email</th><th>Profile</th><th>Role</th><th>Status</th><th></th></tr>${rows.map(u=>{
+    const active=u.is_active!==false;
+    return `<tr><td>${esc(u.username)}</td><td>${esc(u.name||"—")}</td><td>${esc(u.email||"—")}</td><td>${esc(u.profile||"—")}</td><td>${esc(u.role||"—")}</td><td>${active?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="editUser('${u.id}')">Edit</button> <button class="btn secondary small" onclick="toggleUserActive('${u.id}',${active})">${active?"Deactivate":"Activate"}</button> <button class="btn secondary small" onclick="resetUserPassword('${u.id}')">Reset password</button> <button class="btn secondary small" onclick="unlockUser('${u.id}')">Unlock</button> <button class="btn secondary small" onclick="userPsView('${u.id}')">Permission sets</button></td></tr>`;}).join("")}</table>`:`<p class="muted">No users.</p>`;
+}
+function filterUserRows(){ renderUserRows(); }
+function editUser(uid){
+  const u=SETUP_USERS.find(x=>x.id===uid); if(!u) return;
+  document.getElementById("au_id").value=u.id;
+  document.getElementById("au_user").value=u.username; document.getElementById("au_user").disabled=true;
+  document.getElementById("au_name").value=u.name||"";
+  document.getElementById("au_email").value=u.email||"";
+  document.getElementById("au_pass").value="";
+  document.getElementById("au_prof").value=u.profile||"";
+  document.getElementById("au_role").value=u.role||"";
+  document.getElementById("au_active_wrap").style.display="";
+  document.getElementById("au_active").checked=u.is_active!==false;
+  document.getElementById("au_save").textContent="Save changes";
+  document.getElementById("au_cancel").style.display="";
+  document.getElementById("auerr").innerHTML="";
+}
+function cancelUserEdit(){
+  document.getElementById("au_id").value="";
+  ["au_user","au_name","au_email","au_pass"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("au_user").disabled=false;
+  document.getElementById("au_active_wrap").style.display="none";
+  document.getElementById("au_save").textContent="Create user";
+  document.getElementById("au_cancel").style.display="none";
+}
+async function saveUser(){
+  const uid=document.getElementById("au_id").value;
+  const errEl=document.getElementById("auerr");
+  let r;
+  if(uid){
+    r=await api("PUT","/api/admin/users/"+encodeURIComponent(uid),{name:v("au_name"),email:v("au_email"),profile:v("au_prof"),role:v("au_role")||null,is_active:document.getElementById("au_active").checked});
+  }else{
+    if(!v("au_user")){ errEl.innerHTML=`<div class="err">Username is required.</div>`; return; }
+    r=await api("POST","/api/admin/users",{username:v("au_user"),name:v("au_name"),email:v("au_email"),profile:v("au_prof"),role:v("au_role")||null,password:v("au_pass")||"forcelet"});
+  }
+  errEl.innerHTML=r.ok?`<div class="ok">${uid?"User updated.":"User created."}</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok){ cancelUserEdit(); listSetupUsers(); }
+}
+async function toggleUserActive(uid,currently){
+  const u=SETUP_USERS.find(x=>x.id===uid);
+  const label=currently?"deactivate":"activate";
+  if(!confirm(`${label==="deactivate"?"Deactivate":"Activate"} user ${u?u.username:uid}?${currently?" They will be signed out immediately and cannot sign in.":""}`)) return;
+  const r=await api("PUT","/api/admin/users/"+encodeURIComponent(uid),{is_active:!currently});
+  document.getElementById("auerr").innerHTML=r.ok?`<div class="ok">User ${label}d.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listSetupUsers();
+}
+async function resetUserPassword(uid){
+  const u=SETUP_USERS.find(x=>x.id===uid);
+  if(!confirm(`Reset the password for ${u?u.username:uid}? Their sessions will be revoked and they must set a new password at next sign-in.`)) return;
+  const r=await api("POST","/api/admin/users/"+encodeURIComponent(uid)+"/reset-password");
+  if(!r.ok){ document.getElementById("auerr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  openLightbox(`<div class="section-title">Temporary password</div>
+   <p class="muted">Share this once with <b>${esc(u?u.username:"")}</b> — it is shown only this time, and they must change it at next sign-in.</p>
+   <input readonly value="${esc(r.data.temporary_password)}" onclick="this.select()" style="font-family:monospace;font-size:16px">`);
+  document.getElementById("auerr").innerHTML=`<div class="ok">Temporary password issued.</div>`;
+}
+async function unlockUser(uid){
+  const r=await api("POST","/api/admin/users/"+encodeURIComponent(uid)+"/unlock");
+  document.getElementById("auerr").innerHTML=r.ok?`<div class="ok">Account unlocked.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+/* ---------- Profiles: permission matrix editor ---------- */
+let PF_CACHE=[];
+async function listProfiles(){
+  const el=document.getElementById("pf_list"); if(!el) return;
+  const r=await api("GET","/api/admin/profiles"); PF_CACHE=r.data||[];
+  el.innerHTML=PF_CACHE.length?`<table style="margin-top:8px"><tr><th>Profile</th><th>Objects with access</th><th></th></tr>${PF_CACHE.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${Object.keys(p.object_permissions||{}).length}</td><td><button class="btn secondary small" onclick="editProfile('${esc(p.name)}')">Edit permissions</button></td></tr>`).join("")}</table>`:`<p class="muted">No profiles.</p>`;
+  document.getElementById("pf_editor").style.display="none";
+}
+function showNewProfileForm(){
+  document.getElementById("pf_new").style.display="";
+  document.getElementById("pf_new_name").value="";
+  document.getElementById("pf_new_name").focus();
+}
+async function createProfile(){
+  const name=v("pf_new_name");
+  if(!name){ document.getElementById("pfnewerr").innerHTML=`<div class="err">Name is required.</div>`; return; }
+  const r=await api("POST","/api/admin/profiles",{name});
+  document.getElementById("pfnewerr").innerHTML=r.ok?`<div class="ok">Profile created — edit its permissions below.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok){ document.getElementById("pf_new").style.display="none"; listProfiles(); editProfile(name); }
+}
+async function editProfile(name){
+  const ed=document.getElementById("pf_editor"); if(!ed) return;
+  ed.style.display=""; ed.innerHTML=`<p class="muted">Loading permissions…</p>`;
+  const [pr,objs]=await Promise.all([api("GET","/api/admin/profiles/"+encodeURIComponent(name)),api("GET","/api/objects")]);
+  if(!pr.ok){ ed.innerHTML=`<div class="err">${esc((pr.data||{}).error||"Failed to load")}</div>`; return; }
+  const p=pr.data||{name}, op=p.object_permissions||{}, fp=p.field_permissions||{};
+  const list=((objs.data||[])).slice().sort((a,b)=>a.name.localeCompare(b.name));
+  let h=`<div class="section-title" style="font-size:14px">Permissions — ${esc(name)}</div>
+  <p class="muted">Tick object permissions; use Fields to restrict individual fields (all fields are readable/editable by default).</p>
+  <table><tr><th>Object</th><th>Create</th><th>Read</th><th>Edit</th><th>Delete</th><th></th></tr>`;
+  for(const o of list){
+    const perm=op[o.name]||{};
+    h+=`<tr><td><b>${esc(o.label||o.name)}</b><div class="muted">${esc(o.name)}</div></td>${["create","read","edit","delete"].map(a=>`<td><input type="checkbox" data-pf-obj="${esc(o.name)}" data-pf-act="${a}"${perm[a]?" checked":""}></td>`).join("")}<td><button class="btn secondary small" onclick="togglePfFields('${esc(o.name)}','${esc(name)}')">Fields</button></td></tr>
+    <tr id="pf_fields_${esc(o.name)}" style="display:none"><td colspan="6"><div id="pf_fieldlist_${esc(o.name)}"></div></td></tr>`;
+  }
+  h+=`</table><div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveProfile('${esc(name)}')">Save permissions</button><button class="btn secondary" onclick="document.getElementById('pf_editor').style.display='none'">Close</button></div><div id="pferr2"></div>`;
+  ed.innerHTML=h;
+  ed.scrollIntoView({behavior:"smooth",block:"start"});
+}
+async function togglePfFields(obj, pname){
+  const row=document.getElementById("pf_fields_"+obj), host=document.getElementById("pf_fieldlist_"+obj);
+  if(!row||!host) return;
+  const open=row.style.display==="none";
+  row.style.display=open?"":"none";
+  if(!open||host.dataset.loaded) return;
+  host.dataset.loaded="1";
+  host.innerHTML=`<p class="muted">Loading fields…</p>`;
+  const [desc,pr]=await Promise.all([api("GET","/api/describe/"+encodeURIComponent(obj)),api("GET","/api/admin/profiles/"+encodeURIComponent(pname))]);
+  const fields=((desc.data||{}).fields||[]).filter(f=>!f.computed);
+  const fp=((pr.data||{}).field_permissions||{})[obj]||{};
+  host.innerHTML=`<table style="margin-top:6px"><tr><th>Field</th><th>Read</th><th>Edit</th></tr>${fields.map(f=>{const perm=fp[f.name]||{read:true,edit:true};return `<tr><td>${esc(f.label||f.name)}<div class="muted">${esc(f.name)}</div></td><td><input type="checkbox" data-pf-obj="${esc(obj)}" data-pf-field="${esc(f.name)}" data-pf-fact="read"${perm.read!==false?" checked":""}></td><td><input type="checkbox" data-pf-obj="${esc(obj)}" data-pf-field="${esc(f.name)}" data-pf-fact="edit"${perm.edit!==false?" checked":""}></td></tr>`;}).join("")}</table>`;
+}
+async function saveProfile(name){
+  const ed=document.getElementById("pf_editor"); if(!ed) return;
+  const op={}, fpTouched={};
+  ed.querySelectorAll("[data-pf-act]").forEach(cb=>{
+    const o=cb.dataset.pfObj, a=cb.dataset.pfAct;
+    op[o]=op[o]||{}; op[o][a]=cb.checked;
+  });
+  ed.querySelectorAll("[data-pf-fact]").forEach(cb=>{
+    const o=cb.dataset.pfObj, f=cb.dataset.pfField, k=cb.dataset.pfFact;
+    fpTouched[o]=fpTouched[o]||{}; fpTouched[o][f]=fpTouched[o][f]||{}; fpTouched[o][f][k]=cb.checked;
+  });
+  // Merge field permissions: only overlay objects whose fields were expanded,
+  // so untouched objects keep their existing restrictions.
+  const cur=await api("GET","/api/admin/profiles/"+encodeURIComponent(name));
+  const fp=Object.assign({},(cur.data||{}).field_permissions||{},fpTouched);
+  const r=await api("PUT","/api/admin/profiles/"+encodeURIComponent(name),{object_permissions:op,field_permissions:fp});
+  document.getElementById("pferr2").innerHTML=r.ok?`<div class="ok">Permissions saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listProfiles();
+}
+/* ---------- Security policies ---------- */
+function setTotpMode(mode){
+  document.querySelectorAll('input[name="sp_totp"]').forEach(r=>{r.checked=r.value===mode;});
+  document.getElementById("sp_totp_profiles").style.display=mode==="profiles"?"":"none";
+}
+async function loadSecurityPolicies(){
+  if(!document.getElementById("sp_minlen")) return;
+  const r=await api("GET","/api/admin/settings/security"); const d=r.data||{};
+  const set=(id,val)=>{const e=document.getElementById(id); if(e) e.value=val;};
+  set("sp_minlen",d.password_min_length||8);
+  const chk=(id,val)=>{const e=document.getElementById(id); if(e) e.checked=!!val;};
+  chk("sp_upper",d.password_require_upper); chk("sp_lower",d.password_require_lower);
+  chk("sp_digit",d.password_require_digit); chk("sp_symbol",d.password_require_symbol);
+  set("sp_expiry",d.password_expiry_days!=null?d.password_expiry_days:0);
+  set("sp_lockn",d.lockout_threshold||5); set("sp_lockw",d.lockout_window_minutes||15); set("sp_lockd",d.lockout_duration_minutes||15);
+  set("sp_sess",d.session_timeout_minutes||720); set("sp_sessmax",d.session_max_hours||168);
+  const mode=d.totp_required==="all"?"all":(d.totp_required==="profiles"?"profiles":"none");
+  setTotpMode(mode);
+  document.querySelectorAll("[data-sp-prof]").forEach(cb=>{cb.checked=(d.totp_required_profiles||[]).includes(cb.dataset.spProf);});
+}
+async function saveSecurityPolicies(){
+  const num=(id,def)=>{const n=parseInt(document.getElementById(id).value,10); return Number.isFinite(n)&&n>=0?n:def;};
+  const mode=(document.querySelector('input[name="sp_totp"]:checked')||{value:"none"}).value;
+  const body={password_min_length:num("sp_minlen",8),
+    password_require_upper:document.getElementById("sp_upper").checked,
+    password_require_lower:document.getElementById("sp_lower").checked,
+    password_require_digit:document.getElementById("sp_digit").checked,
+    password_require_symbol:document.getElementById("sp_symbol").checked,
+    password_expiry_days:num("sp_expiry",0),
+    lockout_threshold:num("sp_lockn",5), lockout_window_minutes:num("sp_lockw",15), lockout_duration_minutes:num("sp_lockd",15),
+    session_timeout_minutes:num("sp_sess",720), session_max_hours:num("sp_sessmax",168),
+    totp_required:mode,
+    totp_required_profiles:mode==="profiles"?[...document.querySelectorAll("[data-sp-prof]")].filter(cb=>cb.checked).map(cb=>cb.dataset.spProf):[]};
+  const r=await api("PUT","/api/admin/settings/security",body);
+  document.getElementById("sperr").innerHTML=r.ok?`<div class="ok">Policies saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+/* ---------- Company settings ---------- */
+async function loadOrgSettings(){
+  if(!document.getElementById("org_name")) return;
+  const r=await api("GET","/api/admin/settings/org"); const d=r.data||{};
+  document.getElementById("org_name").value=d.org_name||"";
+  document.getElementById("org_locale").value=d.default_locale||"";
+  document.getElementById("org_tz").value=d.default_timezone||"";
+  document.getElementById("org_cur").value=d.default_currency||"";
+  if(d.fiscal_year_start_month) document.getElementById("org_fy").value=String(d.fiscal_year_start_month);
+}
+async function saveOrgSettings(){
+  const r=await api("PUT","/api/admin/settings/org",{org_name:v("org_name"),default_locale:v("org_locale"),default_timezone:v("org_tz"),default_currency:v("org_cur").toUpperCase(),fiscal_year_start_month:parseInt(document.getElementById("org_fy").value,10)||1});
+  document.getElementById("orger").innerHTML=r.ok?`<div class="ok">Company settings saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok&&v("org_name")) showAdmin("company","Company settings");
+}
+/* ---------- Portal settings ---------- */
+async function loadPortalSettings(){
+  if(!document.getElementById("por_title")) return;
+  const r=await api("GET","/api/admin/settings/portal"); const d=r.data||{};
+  document.getElementById("por_enabled").checked=d.enabled!==false;
+  document.getElementById("por_title").value=d.title||"";
+  document.getElementById("por_welcome").value=d.welcome_message||"";
+}
+async function savePortalSettings(){
+  const r=await api("PUT","/api/admin/settings/portal",{enabled:document.getElementById("por_enabled").checked,title:v("por_title"),welcome_message:v("por_welcome")});
+  document.getElementById("porerr").innerHTML=r.ok?`<div class="ok">Portal settings saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+/* ---------- Chatter settings ---------- */
+async function loadChatterSettings(){
+  if(!document.getElementById("cha_feed")) return;
+  const r=await api("GET","/api/admin/settings/chatter"); const d=r.data||{};
+  document.getElementById("cha_feed").checked=d.feed_enabled!==false;
+  document.getElementById("cha_mentions").checked=d.mentions_enabled!==false;
+}
+async function saveChatterSettings(){
+  const r=await api("PUT","/api/admin/settings/chatter",{feed_enabled:document.getElementById("cha_feed").checked,mentions_enabled:document.getElementById("cha_mentions").checked});
+  document.getElementById("chaerr").innerHTML=r.ok?`<div class="ok">Chatter settings saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+/* ---------- Login history ---------- */
+let LH_OFFSET=0; const LH_LIMIT=25;
+async function loadLoginHistory(offset){
+  LH_OFFSET=offset||0;
+  const el=document.getElementById("lh_list"); if(!el) return;
+  el.innerHTML=`<p class="muted">Loading…</p>`;
+  const p=new URLSearchParams({limit:LH_LIMIT,offset:LH_OFFSET});
+  const u=v("lh_user"); if(u) p.set("username",u);
+  const s=document.getElementById("lh_success").value; if(s!=="") p.set("success",s);
+  const f=document.getElementById("lh_from").value; if(f) p.set("from",f);
+  const t=document.getElementById("lh_to").value; if(t) p.set("to",t+"T23:59:59");
+  const r=await api("GET","/api/admin/login-history?"+p.toString());
+  const d=r.data||{rows:[],total:0};
+  const rows=d.rows||[], total=d.total||0;
+  let h=rows.length?`<table><tr><th>When</th><th>Username</th><th>Status</th><th>IP</th><th>Source</th></tr>${rows.map(x=>`<tr><td>${esc((x.at||"").replace("T"," ").slice(0,19))}</td><td>${esc(x.username)}</td><td>${x.success?'<span class="pill pill-on">Success</span>':'<span class="pill pill-off">Failed</span>'}</td><td>${esc(x.ip||"—")}</td><td title="${esc(x.user_agent||"")}">${esc(x.source||"—")}</td></tr>`).join("")}</table>`:`<p class="muted">No sign-in attempts match.</p>`;
+  const pages=Math.ceil(total/LH_LIMIT);
+  if(pages>1){
+    const cur=Math.floor(LH_OFFSET/LH_LIMIT);
+    h+=`<div class="btnrow" style="margin-top:8px"><button class="btn secondary small" ${cur<=0?"disabled":""} onclick="loadLoginHistory(${LH_OFFSET-LH_LIMIT})">‹ Prev</button><span class="muted" style="align-self:center">Page ${cur+1} of ${pages} (${total} attempts)</span><button class="btn secondary small" ${cur>=pages-1?"disabled":""} onclick="loadLoginHistory(${LH_OFFSET+LH_LIMIT})">Next ›</button></div>`;
+  }
+  el.innerHTML=h;
+}
+/* ---------- Storage usage ---------- */
+async function loadStorage(){
+  const el=document.getElementById("st_list"); if(!el) return;
+  el.innerHTML=`<p class="muted">Loading…</p>`;
+  const r=await api("GET","/api/admin/storage"); const d=r.data||{};
+  if(!r.ok){ el.innerHTML=`<div class="err">${esc((r.data||{}).error||"Failed to load")}</div>`; return; }
+  const fmt=b=>b==null?"—":(b<1024?b+" B":b<1048576?(b/1024).toFixed(1)+" KB":b<1073741824?(b/1048576).toFixed(1)+" MB":(b/1073741824).toFixed(2)+" GB");
+  const objs=(d.objects||[]).filter(o=>o.records);
+  const max=Math.max(1,...objs.map(o=>o.records||0));
+  let h=`<div class="grid2"><div><b>Database</b><div class="muted">${fmt(d.database_bytes)}</div></div><div><b>Uploaded files</b><div class="muted">${fmt(d.files_bytes)}</div></div></div>
+  <div class="grid2" style="margin-top:6px"><div><b>Backups (${(d.backups||[]).length})</b><div class="muted">${fmt(d.backups_bytes)}</div></div><div><b>Total records</b><div class="muted">${d.total_records!=null?d.total_records:"—"}</div></div></div>`;
+  if((d.backups||[]).length) h+=`<table style="margin-top:10px"><tr><th>Backup</th><th style="text-align:right">Size</th></tr>${d.backups.map(b=>`<tr><td>${esc(b.name)}</td><td style="text-align:right">${fmt(b.size_bytes)}</td></tr>`).join("")}</table>`;
+  h+=`<table style="margin-top:10px"><tr><th>Object</th><th style="width:45%">Records</th><th style="text-align:right"></th></tr>${objs.slice(0,40).map(o=>{const pct=Math.round(100*(o.records||0)/max);return `<tr><td>${esc(o.label||o.object)}<div class="muted">${esc(o.object)}${o.custom?" · custom":""}</div></td><td><div style="background:#eef1f5;border-radius:4px;height:10px"><div style="background:#0176d3;height:10px;border-radius:4px;width:${pct}%"></div></div></td><td style="text-align:right">${o.records.toLocaleString()}</td></tr>`;}).join("")}</table>`;
+  el.innerHTML=h;
 }
 async function listSetupRoles(){
   const el=document.getElementById("rl_list"); if(!el) return;
-  const r=await api("GET","/api/admin/roles"); const rows=r.data||[];
-  el.innerHTML=rows.length?`<table style="margin-top:10px"><tr><th>Role</th><th>Parent</th></tr>${rows.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.parent||"—")}</td></tr>`).join("")}</table>`:`<p class="muted">No roles.</p>`;
+  const [rr,ur]=await Promise.all([api("GET","/api/admin/roles"),api("GET","/api/admin/users")]);
+  const roles=rr.data||[], users=ur.data||[];
+  const kids={}; roles.forEach(r=>{ const p=r.parent||""; (kids[p]=kids[p]||[]).push(r); });
+  Object.values(kids).forEach(a=>a.sort((x,y)=>x.name.localeCompare(y.name)));
+  const userCount={}; users.forEach(u=>{ if(u.role) userCount[u.role]=(userCount[u.role]||0)+1; });
+  const orphans=roles.filter(r=>r.parent&&!roles.some(x=>x.name===r.parent));
+  function node(r,depth){
+    const ch=(kids[r.name]||[]);
+    const ed=`roleEd_${r.name.replace(/[^a-zA-Z0-9]/g,"_")}`;
+    return `<li><div class="btnrow" style="gap:6px;align-items:center;flex-wrap:wrap">`+
+     `<span style="font-weight:600">${esc(r.name)}</span>`+
+     `<span class="muted">${userCount[r.name]||0} user${(userCount[r.name]||0)===1?"":"s"}${ch.length?` · ${ch.length} child role${ch.length===1?"":"s"}`:""}</span>`+
+     `<span style="flex:1"></span>`+
+     `<button class="btn secondary small" onclick="roleEditForm('${esc(r.name)}')">Rename / reparent</button> `+
+     `<button class="btn danger small" onclick="roleDel('${esc(r.name)}')">Delete</button></div>`+
+     `<div id="${ed}"></div>`+
+     (ch.length?`<ul style="margin:4px 0 4px 18px;padding-left:12px;border-left:2px solid var(--border)">${ch.map(c=>node(c,depth+1)).join("")}</ul>`:"")+
+     `</li>`;
+  }
+  const roots=(kids[""]||[]).concat(orphans);
+  el.innerHTML=`<div style="margin-top:10px"><div class="muted" style="margin-bottom:6px">Role hierarchy — ${roles.length} role${roles.length===1?"":"s"}. Sharing rules grant users visibility into records owned by their subordinates.</div>`+
+   (roots.length?`<ul style="list-style:none;margin:0;padding:0">${roots.map(r=>node(r,0)).join("")}</ul>`:`<p class="muted">No roles.</p>`)+`</div>`;
+  el._roles=roles;
+}
+function roleEditForm(name){
+  const el=document.getElementById("rl_list"); const roles=el._roles||[];
+  const r=roles.find(x=>x.name===name); if(!r) return;
+  const ed=document.getElementById(`roleEd_${name.replace(/[^a-zA-Z0-9]/g,"_")}`);
+  const opts=roles.filter(x=>x.name!==name).map(x=>`<option value="${esc(x.name)}" ${x.name===r.parent?"selected":""}>${esc(x.name)}</option>`).join("");
+  ed.innerHTML=`<div class="card" style="margin:8px 0;padding:10px"><div class="grid2"><div><label>Role name</label><input id="re_name" value="${esc(r.name)}"></div><div><label>Parent role</label><select id="re_parent"><option value="">— none (top) —</option>${opts}</select></div></div><div class="btnrow" style="margin-top:8px"><button class="btn small" onclick="roleSave('${esc(name)}')">Save</button> <button class="btn secondary small" onclick="listSetupRoles()">Cancel</button></div><div id="re_err"></div></div>`;
+}
+async function roleSave(name){
+  const nn=v("re_name"), np=v("re_parent")||null;
+  const r=await api("PUT","/api/admin/roles/"+encodeURIComponent(name),{name:nn,parent:np});
+  if(!r.ok){ document.getElementById("re_err").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; return; }
+  listSetupRoles(); toast("Role updated.","ok");
+}
+async function roleDel(name){
+  if(!confirm(`Delete role "${name}"? This is refused while users are assigned to it or child roles exist.`)) return;
+  const r=await api("DELETE","/api/admin/roles/"+encodeURIComponent(name));
+  r.ok?(toast("Role deleted.","ok"),listSetupRoles()):toast("Cannot delete: "+(r.data&&r.data.error||r.status),"error");
 }
 async function listSetupObjects(){
   const el=document.getElementById("ao_list"); if(!el) return;
@@ -2246,19 +2754,182 @@ async function addField(){
   try{ const ru=v("af_rollup"); if(ru) body.rollup=JSON.parse(ru); }catch(e){ document.getElementById("aferr").innerHTML=`<div class="err">Roll-up is not valid JSON.</div>`; return; }
   const r=await api("POST",`/api/admin/objects/${v("af_obj")}/fields`,body);
   document.getElementById("aferr").innerHTML=r.ok?`<div class="ok">Field added.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listObjectFields();
 }
-async function createUser(){
-  const r=await api("POST","/api/admin/users",{username:v("au_user"),name:v("au_name"),profile:v("au_prof"),role:v("au_role")||null,password:v("au_pass")||"forcelet"});
-  document.getElementById("auerr").innerHTML=r.ok?`<div class="ok">User created.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+/* ---------- Object fields manager ---------- */
+let OF_FIELDS=[];
+async function listObjectFields(){
+  const sel=document.getElementById("of_obj"); if(!sel) return;
+  const custom=(objects||[]).filter(o=>o.is_custom);
+  const cur=sel.value;
+  sel.innerHTML=custom.map(o=>`<option value="${esc(o.name)}">${esc(o.label||o.name)}</option>`).join("");
+  if([...sel.options].some(o=>o.value===cur)) sel.value=cur;
+  const obj=sel.value, el=document.getElementById("of_list"), errEl=document.getElementById("oferr");
+  if(!obj){ el.innerHTML=`<p class="muted">No custom objects yet — create one above.</p>`; return; }
+  const r=await api("GET","/api/admin/objects/"+encodeURIComponent(obj)+"/fields");
+  if(!r.ok){ errEl.innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`; el.innerHTML=""; return; }
+  errEl.innerHTML=""; OF_FIELDS=r.data||[];
+  el.innerHTML=OF_FIELDS.length?`<table style="margin-top:10px"><tr><th>API name</th><th>Label</th><th>Type</th><th>Required</th><th>Status</th><th>Records with values</th><th></th></tr>${OF_FIELDS.map(f=>{
+    const active=f.active!==false;
+    return `<tr><td><code>${esc(f.name)}</code></td><td>${esc(f.label)}</td><td>${esc(f.type)}${f.formula?" (formula)":""}${f.rollup?" (roll-up)":""}</td><td>${f.required?"✓":"—"}</td><td>${active?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td>${f.value_count!=null?f.value_count:"—"}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="editFieldRow('${f.name}')">Edit</button> <button class="btn secondary small" onclick="toggleFieldActive('${f.name}',${active})">${active?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="delFieldRow('${f.name}')">Delete</button></td></tr><tr id="of_edit_${f.name}" style="display:none"><td colspan="7"></td></tr>`;
+  }).join("")}</table>`:`<p class="muted">No fields yet — add one above.</p>`;
+}
+async function toggleFieldActive(fname,currently){
+  const obj=v("of_obj");
+  const verb=currently?"Deactivate":"Activate";
+  const note=currently?" It will disappear from record forms, lists and the API, but its stored data is kept and the field can be reactivated.":" It will reappear in record forms, lists and the API.";
+  if(!confirm(`${verb} field '${fname}' on ${obj}?${note}`)) return;
+  const r=await api("PUT","/api/admin/objects/"+encodeURIComponent(obj)+"/fields/"+encodeURIComponent(fname),{active:!currently});
+  document.getElementById("oferr").innerHTML=r.ok?`<div class="ok">Field ${verb.toLowerCase()}d.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listObjectFields();
+}
+async function delFieldRow(fname){
+  const obj=v("of_obj");
+  const f=OF_FIELDS.find(x=>x.name===fname);
+  const n=f&&f.value_count!=null?f.value_count:0;
+  if(!confirm(`Delete field '${fname}' on ${obj}? This permanently removes the field definition and cannot be undone.${n?` ${n} record(s) currently hold a value — the delete will be refused until those values are cleared.`:""}`)) return;
+  const r=await api("DELETE","/api/admin/objects/"+encodeURIComponent(obj)+"/fields/"+encodeURIComponent(fname));
+  document.getElementById("oferr").innerHTML=r.ok?`<div class="ok">Field deleted.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listObjectFields();
+}
+function editFieldRow(fname){
+  const f=OF_FIELDS.find(x=>x.name===fname); if(!f) return;
+  const row=document.getElementById("of_edit_"+fname); if(!row) return;
+  const showing=row.style.display!=="none";
+  document.querySelectorAll("[id^='of_edit_']").forEach(x=>x.style.display="none");
+  if(showing) return;
+  const isPick=f.type==="Picklist"||f.type==="MultiPicklist";
+  const isText=f.type==="Text"||f.type==="TextArea";
+  row.style.display="";
+  row.querySelector("td").innerHTML=`<div class="grid2" style="padding:8px">
+    <div><label>Label</label><input id="ofe_label" value="${esc(f.label||"")}">
+    <label>Help text</label><input id="ofe_help" value="${esc(f.help_text||"")}"></div>
+    <div>${isText?`<label>Length</label><input id="ofe_len" type="number" min="1" value="${f.length||""}">`:""}
+    ${isPick?`<label>Picklist values (comma-separated)</label><input id="ofe_pick" value="${esc((f.picklist_values||[]).join(", "))}">`:""}
+    <label><input type="checkbox" id="ofe_req" style="width:auto" ${f.required?"checked":""}> Required</label></div></div>
+    <div class="btnrow"><button class="btn small" onclick="saveFieldRow('${f.name}')">Save</button><button class="btn secondary small" onclick="document.getElementById('of_edit_${f.name}').style.display='none'">Cancel</button></div>`;
+}
+async function saveFieldRow(fname){
+  const obj=v("of_obj");
+  const body={label:document.getElementById("ofe_label").value.trim(),help_text:document.getElementById("ofe_help").value.trim(),required:document.getElementById("ofe_req").checked};
+  const lenEl=document.getElementById("ofe_len"); if(lenEl&&lenEl.value) body.length=parseInt(lenEl.value,10);
+  const pkEl=document.getElementById("ofe_pick"); if(pkEl) body.picklist_values=pkEl.value.split(",").map(s=>s.trim()).filter(Boolean);
+  if(!body.label){ document.getElementById("oferr").innerHTML=`<div class="err">Label cannot be blank.</div>`; return; }
+  const r=await api("PUT","/api/admin/objects/"+encodeURIComponent(obj)+"/fields/"+encodeURIComponent(fname),body);
+  document.getElementById("oferr").innerHTML=r.ok?`<div class="ok">Field updated.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) listObjectFields();
+}
+async function deleteObject(){
+  const obj=v("of_obj"); if(!obj) return;
+  if(!confirm(`Delete the custom object '${obj}' and all its field definitions? This is permanent and cannot be undone. The delete is refused while any records of this object still exist — delete those records first.`)) return;
+  const r=await api("DELETE","/api/admin/objects/"+encodeURIComponent(obj));
+  document.getElementById("oferr").innerHTML=r.ok?`<div class="ok">Object deleted.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok){ loadObjects(); listObjectFields(); }
 }
 async function createRole(){
   const r=await api("POST","/api/admin/roles",{name:v("ar_name"),parent:v("ar_parent")||null});
   document.getElementById("arerr").innerHTML=r.ok?`<div class="ok">Role created.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
 }
-async function saveLayout(){
-  let layout; try{ layout=JSON.parse(v("al_json")); }catch(e){ document.getElementById("alerr").innerHTML=`<div class="err">Invalid JSON.</div>`; return; }
+/* ---------- Page layouts: visual editor + assignment list ---------- */
+let LE={fields:[],sections:[],related:[]}, LE_ALL=[], LE_TAB="v";
+async function leFields(){
+  const obj=v("al_obj"); if(!obj) return;
+  const d=await getDesc(obj).catch(()=>null);
+  LE.fields=(d&&d.fields)||[];
+  leRenderSections();
+}
+function leTab(which){
+  LE_TAB=which;
+  document.getElementById("le_visual").style.display=which==="v"?"":"none";
+  document.getElementById("le_json").style.display=which==="j"?"":"none";
+  document.getElementById("le_tabV").className="btn secondary small"+(which==="v"?"":"");
+  if(which==="j") document.getElementById("al_json").value=JSON.stringify(leSerialize(),null,2);
+  else{ try{ leDeserialize(JSON.parse(document.getElementById("al_json").value||"{}")); }catch(e){} }
+}
+function leSerialize(){
+  return {sections:LE.sections.map(s=>{
+    const cols=Array.from({length:s.columns||2},()=>[]);
+    s.fields.forEach((fn,k)=>cols[k%(s.columns||2)].push(fn));
+    return {title:s.title,columns:cols};
+  }),related_lists:LE.related.slice()};
+}
+function leDeserialize(lay){
+  const secs=(lay&&lay.sections)||[];
+  LE.sections=secs.map(s=>({title:s.title||"Section",columns:(s.columns||[[]]).length,fields:(s.columns||[]).flat()}));
+  if(!LE.sections.length) LE.sections=[{title:"Details",columns:2,fields:[]}];
+  LE.related=((lay&&lay.related_lists)||[]).slice();
+  leRenderSections();
+}
+function leRenderSections(){
+  const host=document.getElementById("le_sections"); if(!host) return;
+  host.innerHTML=LE.sections.map((s,i)=>`<div style="margin:8px 0;padding:8px;border:1px solid #d5dae2;border-radius:6px" ondragover="event.preventDefault()" ondrop="leDrop(event,${i})">
+    <div class="btnrow"><input value="${esc(s.title)}" onchange="LE.sections[${i}].title=this.value" style="max-width:200px;font-weight:bold" aria-label="Section title"><span style="flex:1"></span>
+    <label style="margin:0">Columns <select onchange="LE.sections[${i}].columns=+this.value;leRenderSections()"><option value="1" ${s.columns===1?"selected":""}>1</option><option value="2" ${s.columns!==1?"selected":""}>2</option></select></label>
+    <button class="btn danger small" onclick="leDelSection(${i})">Remove</button></div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;min-height:44px;border:1px dashed #aab3c0;border-radius:6px;padding:6px;margin-top:6px">
+    ${s.fields.map(fn=>{const f=LE.fields.find(x=>x.name===fn)||{label:fn};return `<span class="pill" draggable="true" ondragstart="event.dataTransfer.setData('text/plain','move:${i}:${fn}')" style="cursor:grab" title="Drag to move">${esc(f.label)} <a href="#" onclick="leUnplace(${i},'${fn}');return false" title="Remove from section">×</a></span>`;}).join("")||`<span class="muted" style="padding:6px">Drop fields here</span>`}
+    </div></div>`).join("");
+  const used=new Set(LE.sections.flatMap(s=>s.fields));
+  document.getElementById("le_palette").innerHTML=LE.fields.filter(f=>!used.has(f.name)).map(f=>
+    `<span class="pill" draggable="true" ondragstart="event.dataTransfer.setData('text/plain','${f.name}')" style="cursor:grab" title="${esc(f.label)} — ${esc(f.type)}">${esc(f.label)}</span>`).join("")||`<span class="muted">All fields are placed in sections.</span>`;
+  document.getElementById("le_related").innerHTML=LE.related.map((o,i)=>`<span class="pill">${esc(o)} <a href="#" onclick="LE.related.splice(${i},1);leRenderSections();return false" title="Remove">×</a></span>`).join("")||`<span class="muted">None</span>`;
+}
+function leDrop(ev,i){
+  ev.preventDefault();
+  let data=""; try{ data=ev.dataTransfer.getData("text/plain"); }catch(e){}
+  if(!data) return;
+  let fn=data;
+  if(data.startsWith("move:")){ const parts=data.split(":"); const fi=+parts[1]; fn=parts.slice(2).join(":"); LE.sections[fi].fields=LE.sections[fi].fields.filter(x=>x!==fn); }
+  if(!LE.sections[i].fields.includes(fn)) LE.sections[i].fields.push(fn);
+  leRenderSections();
+}
+function leUnplace(i,fn){ LE.sections[i].fields=LE.sections[i].fields.filter(x=>x!==fn); leRenderSections(); }
+function leAddSection(){ LE.sections.push({title:"New section",columns:2,fields:[]}); leRenderSections(); }
+function leDelSection(i){ LE.sections.splice(i,1); leRenderSections(); }
+function leAddRelated(){
+  const oN=document.getElementById("le_rel_new").value.trim();
+  if(oN&&!LE.related.includes(oN)) LE.related.push(oN);
+  document.getElementById("le_rel_new").value="";
+  leRenderSections();
+}
+async function leList(){
+  const el=document.getElementById("le_list"); if(!el) return;
+  const r=await api("GET","/api/admin/layouts");
+  LE_ALL=r.ok?(r.data||[]):[];
+  el.innerHTML=LE_ALL.length?`<table><tr><th>Object</th><th>Profile</th><th>Record type</th><th>Sections</th><th></th></tr>${LE_ALL.map((l,i)=>`<tr><td>${esc(l.object)}</td><td>${esc(l.profile)}</td><td>${esc(l.record_type)}</td><td>${l.sections}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="leEdit(${i})">Edit</button> <button class="btn danger small" onclick="leDel(${i})">Delete</button></td></tr>`).join("")}</table>`:`<p class="muted">No saved layouts.</p>`;
+}
+function leEdit(i){
+  const l=LE_ALL[i]; if(!l) return;
+  document.getElementById("al_obj").value=l.object;
+  document.getElementById("al_prof").value=l.profile;
+  document.getElementById("al_rt").value=l.record_type==="Default"?"":l.record_type;
+  leFields().then(()=>{ leDeserialize(l); leTab("v"); });
+}
+async function leDel(i){
+  const l=LE_ALL[i]; if(!l) return;
+  if(!confirm(`Delete the layout for ${l.object} / ${l.profile} / ${l.record_type}? Records will fall back to the default field arrangement.`)) return;
+  const q=`?object=${encodeURIComponent(l.object)}&profile=${encodeURIComponent(l.profile)}&record_type=${encodeURIComponent(l.record_type)}`;
+  const r=await api("DELETE","/api/admin/layouts"+q);
+  document.getElementById("alerr").innerHTML=r.ok&&r.data.deleted?`<div class="ok">Layout deleted.</div>`:`<div class="err">${esc((r.data&&r.data.error)||"Failed")}</div>`;
+  leList();
+}
+async function leLoad(){
+  const obj=v("al_obj"), prof=v("al_prof"), rt=v("al_rt")||"Default";
+  await leList();
+  const l=LE_ALL.find(x=>x.object===obj&&x.profile===prof&&x.record_type===rt);
+  await leFields();
+  leDeserialize(l||{sections:[],related_lists:[]});
+  document.getElementById("alerr").innerHTML=l?`<div class="ok">Layout loaded into the editor.</div>`:`<div class="ok">No saved layout for this assignment — starting from a blank canvas.</div>`;
+  leTab("v");
+}
+async function leSave(){
+  let layout;
+  if(LE_TAB==="j"){
+    try{ layout=JSON.parse(v("al_json")); }catch(e){ document.getElementById("alerr").innerHTML=`<div class="err">Invalid JSON.</div>`; return; }
+  }else layout=leSerialize();
   const r=await api("POST","/api/admin/layouts",{object:v("al_obj"),profile:v("al_prof"),record_type:v("al_rt")||"Default",sections:layout.sections||[],related_lists:layout.related_lists||[]});
   document.getElementById("alerr").innerHTML=r.ok?`<div class="ok">Layout saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  if(r.ok) leList();
 }
 async function createPermissionSet(){
   const r=await api("POST","/api/admin/permission-sets",{name:v("ps_name"),label:v("ps_label"),object_permissions:parseJson("ps_obj")||{},field_permissions:{}});
@@ -2504,17 +3175,70 @@ async function purgeHistory(){
   toast(n?("Purged "+n+" old history row(s)."):"Nothing old enough to purge.","ok");
   loadHistoryTracking();
 }
-async function showAudit(){
-  const r=await api("GET","/api/admin/audit-trail?limit=50");
-  document.getElementById("audit_view").innerHTML=`<table style="margin-top:10px"><tr><th>When</th><th>Who</th><th>Action</th><th>What</th></tr>${(r.data||[]).map(a=>`<tr><td>${esc((a.at||"").slice(0,19).replace("T"," "))}</td><td>${esc(a.username)}</td><td>${esc(a.action)}</td><td>${esc(a.entity_type+": "+a.entity_name)}</td></tr>`).join("")}</table>`;
+async function downloadCsv(url,filename){
+  const r=await fetch(url,{headers:{"Authorization":"Bearer "+token}});
+  if(!r.ok){ toast("Export failed: HTTP "+r.status,"error"); return; }
+  const blob=await r.blob();
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename||"export.csv"; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
 }
+let AUD={user:"",action:"",entity:"",from:"",to:"",limit:50,offset:0,total:0};
+function auditQuery(extra){
+  const q=new URLSearchParams();
+  if(AUD.user)q.set("user",AUD.user); if(AUD.action)q.set("action",AUD.action);
+  if(AUD.entity)q.set("entity",AUD.entity); if(AUD.from)q.set("from",AUD.from);
+  if(AUD.to)q.set("to",AUD.to);
+  if(extra) for(const k in extra) q.set(k,extra[k]);
+  return q.toString();
+}
+async function showAudit(){
+  const r=await api("GET","/api/admin/audit-trail?"+auditQuery({limit:AUD.limit,offset:AUD.offset}));
+  const d=r.data||{rows:[],total:0}; AUD.total=d.total;
+  const page=Math.floor(AUD.offset/AUD.limit)+1, pages=Math.max(1,Math.ceil(AUD.total/AUD.limit));
+  document.getElementById("audit_view").innerHTML=`
+  <div class="btnrow" style="margin-top:10px;flex-wrap:wrap">
+    <input id="af_user" placeholder="User" value="${esc(AUD.user)}" style="max-width:130px" onkeydown="if(event.key==='Enter')auditApply()">
+    <input id="af_action" placeholder="Action" value="${esc(AUD.action)}" style="max-width:130px" onkeydown="if(event.key==='Enter')auditApply()">
+    <input id="af_entity" placeholder="Entity type/name" value="${esc(AUD.entity)}" style="max-width:160px" onkeydown="if(event.key==='Enter')auditApply()">
+    <input id="af_from" type="date" value="${esc(AUD.from)}" style="max-width:150px" title="From date">
+    <input id="af_to" type="date" value="${esc(AUD.to)}" style="max-width:150px" title="To date">
+    <button class="btn secondary small" onclick="auditApply()">Filter</button>
+    <button class="btn secondary small" onclick="auditClear()">Clear</button>
+    <span style="flex:1"></span>
+    <button class="btn secondary small" onclick="downloadCsv('/api/admin/audit-trail/export?'+auditQuery(),'audit-trail.csv')">Export CSV</button>
+  </div>
+  <table style="margin-top:10px"><tr><th>When</th><th>Who</th><th>Action</th><th>What</th></tr>${(d.rows||[]).map(a=>`<tr><td>${esc((a.at||"").slice(0,19).replace("T"," "))}</td><td>${esc(a.username)}</td><td>${esc(a.action)}</td><td>${esc(a.entity_type+": "+a.entity_name)}</td></tr>`).join("")}</table>
+  <div class="btnrow" style="margin-top:8px"><span class="muted">${AUD.total} entr${AUD.total===1?"y":"ies"} — page ${page} of ${pages}</span><span style="flex:1"></span>
+  <button class="btn secondary small" ${AUD.offset===0?"disabled":""} onclick="AUD.offset=Math.max(0,AUD.offset-AUD.limit);showAudit()">← Prev</button>
+  <button class="btn secondary small" ${AUD.offset+AUD.limit>=AUD.total?"disabled":""} onclick="AUD.offset+=AUD.limit;showAudit()">Next →</button></div>`;
+}
+function auditApply(){
+  AUD.user=document.getElementById("af_user").value.trim();
+  AUD.action=document.getElementById("af_action").value.trim();
+  AUD.entity=document.getElementById("af_entity").value.trim();
+  AUD.from=document.getElementById("af_from").value;
+  AUD.to=document.getElementById("af_to").value;
+  AUD.offset=0; showAudit();
+}
+function auditClear(){ AUD={user:"",action:"",entity:"",from:"",to:"",limit:50,offset:0,total:0}; showAudit(); }
 async function showChanges(){
   const r=await api("GET","/api/change-events?limit=50");
   document.getElementById("chg_view").innerHTML=`<table style="margin-top:10px"><tr><th>#</th><th>When</th><th>Object</th><th>Event</th><th>Changed fields</th></tr>${(r.data||[]).slice().reverse().map(e=>`<tr><td>${e.seq}</td><td>${esc((e.at||"").slice(0,19).replace("T"," "))}</td><td>${esc(e.object_name)}</td><td>${esc(e.event)}</td><td>${esc((e.changed_fields||[]).join(", "))}</td></tr>`).join("")}</table>`;
 }
+let EMLOG_PAGE=0; const EMLOG_SIZE=20;
 async function showEmailLog(){
-  const r=await api("GET","/api/admin/email-log?limit=20");
-  document.getElementById("em_log").innerHTML=`<table style="margin-top:10px"><tr><th>When</th><th>To</th><th>Subject</th><th>Template</th></tr>${(r.data||[]).map(e=>`<tr><td>${esc((e.sent_at||"").slice(0,16).replace("T"," "))}</td><td>${esc(e.recipient)}</td><td>${esc(e.subject)}</td><td>${esc(e.template||"—")}</td></tr>`).join("")}</table>`;
+  const q={limit:EMLOG_SIZE,offset:EMLOG_PAGE*EMLOG_SIZE};
+  const to=document.getElementById("em_to"), tpl=document.getElementById("em_tpl"),
+        df=document.getElementById("em_from"), dt=document.getElementById("em_to2");
+  if(to&&to.value) q.to=to.value; if(tpl&&tpl.value) q.template=tpl.value;
+  if(df&&df.value) q.date_from=df.value; if(dt&&dt.value) q.date_to=dt.value;
+  const qs=Object.entries(q).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join("&");
+  const r=await api("GET","/api/admin/email-log?"+qs);
+  const rows=(r.data&&r.data.rows)||[], total=(r.data&&r.data.total)||0;
+  const pages=Math.max(1,Math.ceil(total/EMLOG_SIZE));
+  document.getElementById("em_log").innerHTML=`<div class="btnrow" style="margin:8px 0"><input id="em_to" placeholder="To contains…" value="${to?esc(to.value):""}" style="max-width:160px"><input id="em_tpl" placeholder="Template…" value="${tpl?esc(tpl.value):""}" style="max-width:140px"><input id="em_from" type="date" value="${df?df.value:""}" style="max-width:140px"><input id="em_to2" type="date" value="${dt?dt.value:""}" style="max-width:140px"><button class="btn secondary small" onclick="EMLOG_PAGE=0;showEmailLog()">Apply</button></div>`+
+   `<table style="margin-top:6px"><tr><th>When</th><th>To</th><th>Subject</th><th>Template</th></tr>${rows.map(e=>`<tr><td>${esc((e.sent_at||"").slice(0,16).replace("T"," "))}</td><td>${esc(e.recipient)}</td><td>${esc(e.subject)}</td><td>${esc(e.template||"—")}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">No emails match.</td></tr>`}</table>`+
+   `<div class="btnrow" style="margin-top:8px"><span class="muted">${total} email${total===1?"":"s"} — page ${EMLOG_PAGE+1} of ${pages}</span><span style="flex:1"></span><button class="btn secondary small" ${EMLOG_PAGE===0?"disabled":""} onclick="EMLOG_PAGE--;showEmailLog()">← Prev</button> <button class="btn secondary small" ${EMLOG_PAGE+1>=pages?"disabled":""} onclick="EMLOG_PAGE++;showEmailLog()">Next →</button></div>`;
 }
 async function exportPkg(){
   const r=await fetch("/api/admin/packages/export",{headers:{"Authorization":"Bearer "+token}});

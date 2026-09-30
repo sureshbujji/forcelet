@@ -56,6 +56,8 @@ def register(app: Flask):
         rt = request.args.get("record_type") or automation.default_record_type(store, obj_name)
         fields = []
         for f in obj.get("fields", []):
+            if f.get("active") is False:
+                continue  # deactivated fields are hidden from the UI
             if security.can(user, "read", obj_name, f["name"]):
                 f2 = dict(f)
                 if f.get("type") in ("Picklist", "MultiPicklist"):

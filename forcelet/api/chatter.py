@@ -21,6 +21,22 @@ from ._shared import (
     _audit, _do_create, _do_update, _visible_records,
     current_user, require_admin, require_auth, serialize, ctx,
 )
+from ..settings import CHATTER_KEY, get_settings
+
+
+def _chatter_settings(store) -> dict:
+    return get_settings(store, CHATTER_KEY)
+
+
+def _feed_enabled(store) -> bool:
+    return bool(_chatter_settings(store).get("feed_enabled", True))
+
+
+def _require_feed(store):
+    """Return a 503 response when Chatter is disabled, else None."""
+    if not _feed_enabled(store):
+        return jsonify({"error": "Chatter is disabled by your administrator."}), 503
+    return None
 
 
 def register(app: Flask):
@@ -29,6 +45,9 @@ def register(app: Flask):
     @app.get("/api/feed")
     @require_auth
     def feed():
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         user = request.mf_user
         obj_name = request.args.get("object")
         record_id = request.args.get("record_id")
@@ -56,15 +75,22 @@ def register(app: Flask):
     @app.post("/api/feed")
     @require_auth
     def feed_post_ep():
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         user = request.mf_user
         body = request.json or {}
+        mentions_on = _chatter_settings(store).get("mentions_enabled", True)
         post, err = automation.post_to_feed(store, security, user,
                                             body.get("object"), body.get("record_id"),
-                                            body.get("body", ""))
+                                            body.get("body", ""),
+                                            record_mentions=mentions_on)
         if err:
             return jsonify({"error": err}), 422
         post["liked_by_me"] = False
-        for u in automation.find_mentioned_users(store, body.get("body", "")):
+        mentioned = automation.find_mentioned_users(store, body.get("body", "")) \
+            if mentions_on else []
+        for u in mentioned:
             if u["id"] != user["id"]:
                 store.notify(u["id"], "mention",
                              f"{user.get('name')} mentioned you",
@@ -75,6 +101,9 @@ def register(app: Flask):
     @app.get("/api/feed/<pid>/comments")
     @require_auth
     def feed_comments(pid):
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         if not store.feed_get_post(pid):
             return jsonify({"error": "Not found"}), 404
         return jsonify(store.feed_comments(pid))
@@ -82,6 +111,9 @@ def register(app: Flask):
     @app.post("/api/feed/<pid>/comments")
     @require_auth
     def feed_add_comment(pid):
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         user = request.mf_user
         if not store.feed_get_post(pid):
             return jsonify({"error": "Not found"}), 404
@@ -94,6 +126,9 @@ def register(app: Flask):
     @app.post("/api/feed/<pid>/like")
     @require_auth
     def feed_like(pid):
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         if not store.feed_get_post(pid):
             return jsonify({"error": "Not found"}), 404
         store.feed_like(pid, request.mf_user["id"])
@@ -102,12 +137,18 @@ def register(app: Flask):
     @app.delete("/api/feed/<pid>/like")
     @require_auth
     def feed_unlike(pid):
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         store.feed_unlike(pid, request.mf_user["id"])
         return jsonify({"liked": False})
 
     @app.post("/api/feed/follow")
     @require_auth
     def feed_follow():
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         user = request.mf_user
         body = request.json or {}
         obj_name, record_id = body.get("object"), body.get("record_id")
@@ -122,6 +163,9 @@ def register(app: Flask):
     @app.delete("/api/feed/follow")
     @require_auth
     def feed_unfollow():
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         user = request.mf_user
         ok = store.feed_unfollow(user["id"], request.args.get("object"),
                                  request.args.get("record_id"))
@@ -130,4 +174,7 @@ def register(app: Flask):
     @app.get("/api/feed/following")
     @require_auth
     def feed_following():
+        blocked = _require_feed(store)
+        if blocked:
+            return blocked
         return jsonify(store.feed_follows_for(request.mf_user["id"]))

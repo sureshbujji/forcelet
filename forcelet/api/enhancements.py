@@ -438,6 +438,11 @@ def register(app: Flask):
         store.meta_put("mf_users", user["id"], fresh)
         with _TOTP_LOCK:
             _TOTP_SETUP.pop(user["id"], None)
+        # 2FA enrollment completes onboarding: if this limited session was
+        # gated only on pending TOTP enrollment, trust it fully now.
+        sess = getattr(request, "mf_session", None)
+        if sess and sess.get("limited") and not fresh.get("must_change_password"):
+            store.unlimit_session(sess["token_hash"])
         _audit("enable", "totp", user.get("username") or user["id"])
         return jsonify({"enabled": True})
 

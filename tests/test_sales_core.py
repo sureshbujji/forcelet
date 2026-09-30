@@ -558,9 +558,9 @@ def test_generic_lineitem_delete_recomputes_opp_amount(client, h):
 def test_standard_user_can_manage_line_items(client, h):
     r = client.post("/api/admin/users", headers=h,
                     json={"username": "stdrep1", "name": "Std Rep",
-                          "profile": "Standard User", "password": "x"})
+                          "profile": "Standard User", "password": "RepPass1!"})
     assert r.status_code == 201, r.get_json()
-    hs = login(client, username="stdrep1", password="x")
+    hs = login(client, username="stdrep1", password="RepPass1!")
     r = client.post("/api/sobjects/Opportunity", headers=hs,
                     json={"Name": "Std Opp", "Stage": "Prospecting",
                           "CloseDate": "2026-12-31"})

@@ -81,6 +81,17 @@ const API = "";
 let token = sessionStorage.getItem("portal_token") || "";
 let contactName = sessionStorage.getItem("portal_name") || "";
 let view = "kb";
+let portalCfg = {enabled:true, title:"Forcelet Community", welcome_message:""};
+
+async function loadPortalSettings(){
+  try{
+    const r = await fetch(API+"/api/portal/settings");
+    const j = await r.json();
+    if(j && typeof j === "object") portalCfg = Object.assign(portalCfg, j);
+  }catch(e){}
+  document.title = portalCfg.title + " — Customer Portal";
+  document.querySelector("header h1").textContent = portalCfg.title;
+}
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function fmtDT(s){if(!s)return "";const d=new Date(s.length<=16?s+"Z":s);return isNaN(d)?esc(s):d.toLocaleString();}
@@ -105,9 +116,14 @@ function setView(v){
 
 /* ------------------------------------------------------------ public KB */
 async function kbList(){
+  if(!portalCfg.enabled){
+    return '<div class="card"><h2>'+esc(portalCfg.title)+'</h2><p class="err">The community portal is currently disabled. Please contact your administrator.</p></div>';
+  }
   const {data}=await api("GET","/api/portal/kb");
   const arts=data||[];
-  let h='<div class="card"><h2>Knowledge Base</h2>';
+  let h="";
+  if(portalCfg.welcome_message) h+='<div class="card"><p>'+esc(portalCfg.welcome_message).replace(/\n/g,"<br>")+"</p></div>";
+  h+='<div class="card"><h2>Knowledge Base</h2>';
   if(!arts.length)h+='<p class="muted">No published articles yet.</p>';
   for(const a of arts){
     h+='<div class="kb-item" data-id="'+esc(a.Id)+'"><h3>'+esc(a.Title)+'</h3>'
@@ -129,6 +145,9 @@ async function kbArticle(id){
 
 /* ----------------------------------------------------------------- login */
 function loginForm(){
+  if(!portalCfg.enabled){
+    return '<div class="card" style="max-width:420px;margin:0 auto"><h2>'+esc(portalCfg.title)+'</h2><p class="err">The community portal is currently disabled. Please contact your administrator.</p></div>';
+  }
   return '<div class="card" style="max-width:420px;margin:0 auto"><h2>Sign in</h2>'
     +'<div id="lmsg"></div>'
     +'<form id="lform"><label class="f">Username</label><input type="text" id="lu" autocomplete="username" required>'
@@ -259,7 +278,7 @@ function wire(){
   const so=document.getElementById("signout");
   if(so)so.onclick=async()=>{await api("POST","/api/portal/logout");signOut(false);};
 }
-setView(token?"cases":"kb");
+loadPortalSettings().then(()=>setView(token?"cases":"kb"));
 </script>
 </body>
 </html>

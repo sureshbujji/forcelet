@@ -33,15 +33,52 @@ def register(app: Flask):
         records, obj = _visible_records(user, obj_name)
         if not obj or not security.can(user, "read", obj_name):
             return jsonify({"error": "Unknown object or no access"}), 404
-        fields = [f for f in obj.get("fields", []) if security.can(user, "read", obj_name, f["name"])]
+        # Optional list-view filters (?view=) and text search (?search=),
+        # mirroring GET /api/sobjects/<obj>.
+        view = None
+        view_id = request.args.get("view")
+        if view_id:
+            view = store.config_get("mf_list_views", view_id)
+            if not view or view.get("object") != obj_name or not (
+                    view.get("shared") or view.get("owner") == user["id"]
+                    or security.is_admin(user)):
+                view = None
+        filt = (view or {}).get("filters") or None
+        rows = []
+        for r in records:
+            if filt:
+                try:
+                    if not eval_expr(filt, record_context(r), user=user):
+                        continue
+                except Exception:
+                    continue
+            rows.append(r)
+        q = (request.args.get("search") or "").strip().lower()
+        if q:
+            text_fields = {f["name"] for f in obj.get("fields", [])
+                           if f["type"] in ("Text", "TextArea", "Email", "Phone", "URL")}
+            rows = [r for r in rows
+                    if any(q in str(r.get(fn) or "").lower() for fn in text_fields)]
+        readable = [f for f in obj.get("fields", [])
+                    if security.can(user, "read", obj_name, f["name"])]
+        wanted = request.args.get("fields")
+        if wanted:
+            want = {w.strip() for w in wanted.split(",") if w.strip()}
+            fields = [f for f in readable if f["name"] in want]
+        else:
+            fields = readable
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(["Id", "RecordType"] + [f["name"] for f in fields])
-        for r in records:
+        for r in rows:
             s = serialize(user, obj, r)
             w.writerow([s["Id"], s["RecordType"]] + [s.get(f["name"], "") for f in fields])
+        filename = secure_filename(request.args.get("filename") or f"{obj_name}.csv") \
+            or f"{obj_name}.csv"
+        if not filename.lower().endswith(".csv"):
+            filename += ".csv"
         return Response(buf.getvalue(), mimetype="text/csv",
-                        headers={"Content-Disposition": f"attachment; filename={obj_name}.csv"})
+                        headers={"Content-Disposition": f"attachment; filename={filename}"})
 
     @app.post("/api/admin/import/<obj_name>")
     @require_auth

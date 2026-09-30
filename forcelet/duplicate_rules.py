@@ -38,7 +38,10 @@ The strictest matching active rule wins: ``block`` > ``warn`` > no action.
 """
 from __future__ import annotations
 
+import json
 import re
+
+from .expressions import eval_expr, record_context
 
 BLOCK = "block"
 WARN = "warn"
@@ -119,6 +122,25 @@ def find_duplicates(store, object_name: str, field_values: dict,
     return dups
 
 
+def _criteria_matches(criteria, field_values: dict) -> bool:
+    """True when the rule's Criteria expression matches the record values.
+
+    Blank criteria means "always". An invalid expression never matches, so a
+    misconfigured rule fails closed instead of blocking saves unexpectedly.
+    """
+    if not criteria:
+        return True
+    if isinstance(criteria, str):
+        try:
+            criteria = json.loads(criteria)
+        except (ValueError, TypeError):
+            return False
+    try:
+        return bool(eval_expr(criteria, record_context(field_values or {})))
+    except Exception:
+        return False
+
+
 def evaluate_duplicate_rules(store, object_name: str, event: str,
                              field_values: dict,
                              exclude_id: str | None = None):
@@ -139,6 +161,8 @@ def evaluate_duplicate_rules(store, object_name: str, event: str,
             continue
         mrule = store.get("MatchingRule", drule.get("MatchingRuleId") or "")
         if not mrule or not mrule.get("IsActive", True):
+            continue
+        if not _criteria_matches(drule.get("Criteria"), field_values):
             continue
         if find_duplicates(store, object_name, field_values,
                             exclude_id=exclude_id, rules=[mrule]):

@@ -453,9 +453,9 @@ def test_related_endpoint(client, h):
 def test_case_team_member_sees_case_via_generic_api(client, h):
     r = client.post("/api/admin/users", headers=h,
                     json={"username": "tmate1", "name": "Team Mate",
-                          "profile": "Standard User", "password": "x"})
+                          "profile": "Standard User", "password": "RepPass1!"})
     assert r.status_code == 201, r.get_json()
-    h2 = login(client, username="tmate1", password="x")
+    h2 = login(client, username="tmate1", password="RepPass1!")
     u2 = client.get("/api/me", headers=h2).get_json()
     uid2 = u2.get("id") or u2.get("Id")
 

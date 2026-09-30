@@ -23,15 +23,32 @@ from functools import wraps
 from flask import Flask, jsonify, request
 
 from ..security import (
-    SESSION_MAX_SECONDS, SESSION_TTL_SECONDS, hash_token,
+    hash_token,
     login_locked_out, record_failed_login, reset_login_attempts,
-    verify_password,
+    session_timeouts, verify_password,
 )
+from ..settings import PORTAL_KEY, SECURITY_KEY, get_settings
 from ._shared import _client_ip, ctx, rate_limit
 
 log = logging.getLogger("forcelet.portal")
 
 PORTAL_PREFIX = "mf_portal_"
+
+
+def _portal_settings(store) -> dict:
+    return get_settings(store, PORTAL_KEY)
+
+
+def _portal_enabled(store) -> bool:
+    return bool(_portal_settings(store).get("enabled", True))
+
+
+def _require_portal_enabled(store):
+    """Return a 503 response when the portal is disabled, else None."""
+    if not _portal_enabled(store):
+        return jsonify({"error": "The community portal is disabled. "
+                                 "Contact your administrator."}), 503
+    return None
 
 
 def _new_portal_token() -> str:
@@ -81,8 +98,9 @@ def _portal_session_context():
         created = now
     if created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
-    new_exp = min(created + timedelta(seconds=SESSION_MAX_SECONDS),
-                  now + timedelta(seconds=SESSION_TTL_SECONDS))
+    ttl, max_age = session_timeouts(store)
+    new_exp = min(created + timedelta(seconds=max_age),
+                  now + timedelta(seconds=ttl))
     store.touch_portal_session(thash, new_exp.isoformat(timespec="seconds"))
 
     cu = store.get("CommunityUser", sess["community_user_id"])
@@ -138,31 +156,46 @@ def _account_work_orders(store, account_id: str) -> list:
 def register(app: Flask):
     store, registry, security = app.mf_store, app.mf_registry, app.mf_security
 
+    # ------------------------------------------------- public branding
+    @app.get("/api/portal/settings")
+    def portal_public_settings():
+        """Public branding for the community portal page (no secrets)."""
+        s = _portal_settings(store)
+        return jsonify({"enabled": bool(s.get("enabled", True)),
+                        "title": s.get("title") or "Forcelet Community",
+                        "welcome_message": s.get("welcome_message") or ""})
+
     # ------------------------------------------------------------------ login
     @app.post("/api/portal/login")
     @rate_limit(max_requests=10, window_seconds=300,
                 key_fn=lambda: "portal-login:" + _client_ip())
     def portal_login():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         body = request.json or {}
         username = (body.get("username") or "").strip()
         ip = _client_ip()
+        sec = get_settings(store, SECURITY_KEY)
         lock_key = "portal:" + username.lower()
-        if login_locked_out(ip, lock_key):
+        if login_locked_out(ip, lock_key, sec):
+            mins = sec["lockout_duration_minutes"]
             log.warning("portal login locked out ip=%s username=%s", ip, username)
             return jsonify({"error": "Too many failed attempts. "
-                                     "Try again in 15 minutes."}), 429
+                                     f"Try again in {mins} minutes."}), 429
         cu = _community_user_by_username(store, username)
         if (not cu or not cu.get("IsActive")
                 or not verify_password(body.get("password", ""),
                                        cu.get("PasswordHash") or "")):
-            record_failed_login(ip, lock_key)
+            record_failed_login(ip, lock_key, sec)
             log.warning("portal login failed ip=%s username=%s", ip, username)
             return jsonify({"error": "Invalid username or password"}), 401
         reset_login_attempts(ip, lock_key)
         token = _new_portal_token()
         now = datetime.now(timezone.utc)
-        expires = min(now + timedelta(seconds=SESSION_MAX_SECONDS),
-                      now + timedelta(seconds=SESSION_TTL_SECONDS))
+        ttl, max_age = session_timeouts(store)
+        expires = min(now + timedelta(seconds=max_age),
+                      now + timedelta(seconds=ttl))
         store.create_portal_session(
             hash_token(token), cu["id"], expires.isoformat(timespec="seconds"),
             ip=ip, user_agent=request.headers.get("User-Agent", ""))
@@ -178,6 +211,9 @@ def register(app: Flask):
     @app.post("/api/portal/logout")
     @require_portal_auth
     def portal_logout():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         auth = request.headers.get("Authorization", "")
         token = auth[7:] if auth.startswith("Bearer ") else ""
         if token.startswith(PORTAL_PREFIX):
@@ -187,6 +223,9 @@ def register(app: Flask):
     # ------------------------------------------------------- knowledge base
     @app.get("/api/portal/kb")
     def portal_kb_list():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         arts = [r for r in store.query("KnowledgeArticle", owner_ids=None,
                                        limit=500)
                 if r.get("Status") == "Published"]
@@ -198,6 +237,9 @@ def register(app: Flask):
 
     @app.get("/api/portal/kb/<article_id>")
     def portal_kb_detail(article_id):
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         rec = store.get("KnowledgeArticle", article_id)
         if not rec or rec.get("Status") != "Published":
             return jsonify({"error": "Article not found"}), 404
@@ -216,6 +258,9 @@ def register(app: Flask):
     @app.get("/api/portal/cases")
     @require_portal_auth
     def portal_cases():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         account_id = request.mf_portal["account_id"]
         if not account_id:
             return jsonify([])
@@ -227,6 +272,9 @@ def register(app: Flask):
     @app.post("/api/portal/cases")
     @require_portal_auth
     def portal_create_case():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         pctx = request.mf_portal
         if not pctx["account_id"]:
             return jsonify({"error": "No account linked to this portal user"}), 422
@@ -255,6 +303,9 @@ def register(app: Flask):
     @app.get("/api/portal/appointments")
     @require_portal_auth
     def portal_appointments():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         account_id = request.mf_portal["account_id"]
         wos = _account_work_orders(store, account_id)
         wo_ids = {w["id"] for w in wos}
@@ -271,6 +322,9 @@ def register(app: Flask):
     @app.get("/api/portal/reports")
     @require_portal_auth
     def portal_reports():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         account_id = request.mf_portal["account_id"]
         wos = _account_work_orders(store, account_id)
         wo_ids = {w["id"] for w in wos}
@@ -299,6 +353,9 @@ def register(app: Flask):
     @app.get("/api/portal/profile")
     @require_portal_auth
     def portal_profile():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         c = request.mf_portal["contact"]
         acct = store.get("Account", c.get("AccountId")) or {}
         return jsonify({"Id": c["id"],
@@ -311,6 +368,9 @@ def register(app: Flask):
     @app.patch("/api/portal/profile")
     @require_portal_auth
     def portal_profile_update():
+        blocked = _require_portal_enabled(store)
+        if blocked:
+            return blocked
         c = request.mf_portal["contact"]
         body = request.json or {}
         fields = {}

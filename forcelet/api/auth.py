@@ -24,9 +24,12 @@ from .. import automation
 from .. import crypto as _crypto
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
-from ..security import (SESSION_MAX_SECONDS, SESSION_TTL_SECONDS, hash_token,
+from ..security import (hash_token,
                         login_locked_out, new_session_token,
-                        record_failed_login, reset_login_attempts)
+                        record_failed_login, reset_login_attempts,
+                        session_timeouts, totp_required_for_user)
+from ..settings import SECURITY_KEY, check_password_policy, get_settings
+from ..store import utcnow
 from ._shared import (
     _audit, _client_ip, _do_create, _do_update, _visible_records,
     current_user, issue_session, rate_limit, require_admin, require_auth,
@@ -34,6 +37,32 @@ from ._shared import (
 )
 
 log = logging.getLogger("forcelet.auth")
+
+
+def _apply_password_expiry(store, security, user, sec) -> None:
+    """Force a password change at login when the password is older than the
+    configured expiry. Users without a recorded set-time start the clock now
+    instead of being forced immediately."""
+    days = int(sec.get("password_expiry_days", 0) or 0)
+    if not days or user.get("must_change_password"):
+        return
+    set_at = user.get("password_set_at")
+    if not set_at:
+        user["password_set_at"] = utcnow()
+        store.meta_put("mf_users", user["id"], user)
+        return
+    try:
+        born = datetime.fromisoformat(set_at)
+    except (ValueError, TypeError):
+        return
+    if born.tzinfo is None:
+        born = born.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if born.tzinfo is None:
+        born = born.replace(tzinfo=timezone.utc)
+    if (now - born).days >= days:
+        user["must_change_password"] = True
+        store.meta_put("mf_users", user["id"], user)
 
 
 def register(app: Flask):
@@ -46,19 +75,38 @@ def register(app: Flask):
         body = request.json or {}
         username = (body.get("username") or "").strip()
         ip = _client_ip()
-        if login_locked_out(ip, username):
+        ua = request.headers.get("User-Agent", "")
+        sec = get_settings(store, SECURITY_KEY)
+        if login_locked_out(ip, username, sec):
+            mins = sec["lockout_duration_minutes"]
             log.warning("login locked out ip=%s username=%s", ip, username)
-            return jsonify({"error": "Too many failed attempts. Try again in 15 minutes."}), 429
+            store.record_login(None, username, ip, ua, False, "locked out")
+            return jsonify({"error": f"Too many failed attempts. "
+                                     f"Try again in {mins} minutes."}), 429
         user = security.get_user_by_username(username)
         if not user or not security.check_password(user, body.get("password", "")):
-            record_failed_login(ip, username)
+            record_failed_login(ip, username, sec)
             log.warning("login failed ip=%s username=%s", ip, username)
+            store.record_login(user["id"] if user else None, username,
+                               ip, ua, False, "invalid credentials")
             return jsonify({"error": "Invalid username or password"}), 401
+        if not user.get("is_active", True):
+            store.record_login(user["id"], username, ip, ua, False,
+                               "account deactivated")
+            return jsonify({"error": "This account has been deactivated. "
+                                     "Contact your administrator."}), 403
         reset_login_attempts(ip, username)
+        _apply_password_expiry(store, security, user, sec)
+        store.record_login(user["id"], username, ip, ua, True)
         must_change = bool(user.get("must_change_password"))
-        token = issue_session(store, user, limited=must_change)
+        # Org 2FA policy: required but not enrolled -> limited session that
+        # can only finish enrollment; the app stays unusable until then.
+        totp_needed = totp_required_for_user(store, user) \
+            and not user.get("totp_secret")
+        token = issue_session(store, user, limited=(must_change or totp_needed))
         resp = jsonify({"token": token,
                         "must_change_password": must_change,
+                        "totp_setup_required": totp_needed,
                         "user": {"id": user["id"], "username": user["username"],
                                  "name": user["name"], "profile": user["profile"],
                                  "role": user["role"]}})
@@ -94,19 +142,23 @@ def register(app: Flask):
         if not security.check_password(user, body.get("current", "")):
             return jsonify({"error": "Current password is incorrect"}), 403
         new = body.get("new", "")
-        if len(new) < 8:
-            return jsonify({"error": "New password must be at least 8 characters"}), 422
-        if new == user.get("username"):
-            return jsonify({"error": "New password must differ from the username"}), 422
+        sec = get_settings(store, SECURITY_KEY)
+        err = check_password_policy(new, user.get("username"), sec)
+        if err:
+            return jsonify({"error": err}), 422
         security.set_password(user["id"], new)
         user = security.get_user(user["id"])
         user.pop("must_change_password", None)
         store.meta_put("mf_users", user["id"], user)
         sess = getattr(request, "mf_session", None)
-        if sess:
+        # If 2FA is required and still not enrolled, keep the session limited
+        # so the user can only finish enrollment.
+        totp_needed = totp_required_for_user(store, user) \
+            and not user.get("totp_secret")
+        if sess and not totp_needed:
             # This session is now fully trusted; kill every other session so
             # a compromised old password cannot linger anywhere.
             store.unlimit_session(sess["token_hash"])
             store.delete_user_sessions(user["id"], except_hash=sess["token_hash"])
         _audit("password_change", "User", user["username"])
-        return jsonify({"changed": True})
+        return jsonify({"changed": True, "totp_setup_required": totp_needed})

@@ -64,6 +64,15 @@ def register(app: Flask):
         reverse = (request.args.get("dir") or (view or {}).get("sort_dir") or "asc").lower() == "desc"
         if sort_key:
             rows.sort(key=lambda r: (r.get(sort_key) is None, r.get(sort_key)), reverse=reverse)
+        if "limit" in request.args or "offset" in request.args:
+            # Paginated envelope; without these params the legacy array
+            # shape (capped at 200) is returned unchanged.
+            limit = max(1, min(500, int(request.args.get("limit", 50))))
+            offset = max(0, int(request.args.get("offset", 0)))
+            page = rows[offset:offset + limit]
+            return jsonify({"rows": [serialize(user, obj, r) for r in page],
+                            "total": len(rows), "limit": limit,
+                            "offset": offset})
         return jsonify([serialize(user, obj, r) for r in rows[:200]])
 
     # Shared create/update pipelines (used by the REST endpoints, upsert,

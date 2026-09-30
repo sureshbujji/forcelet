@@ -51,4 +51,16 @@ def register(app: Flask):
     @require_auth
     @require_admin
     def email_log():
-        return jsonify(store.email_log(limit=int(request.args.get("limit", 100))))
+        args = request.args
+        if any(k in args for k in ("to", "template", "date_from", "date_to", "offset")):
+            limit = max(1, min(500, int(args.get("limit", 50))))
+            offset = max(0, int(args.get("offset", 0)))
+            rows, total = store.email_log_search(
+                to=args.get("to") or None,
+                template=args.get("template") or None,
+                date_from=args.get("date_from") or None,
+                date_to=args.get("date_to") or None,
+                limit=limit, offset=offset)
+            return jsonify({"rows": rows, "total": total,
+                            "limit": limit, "offset": offset})
+        return jsonify(store.email_log(limit=int(args.get("limit", 100))))
