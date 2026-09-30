@@ -753,8 +753,14 @@ PACKAGE_TABLES = {
     "reports": ("mf_reports", ("name",)),
     "sla_policies": ("mf_sla_policies", ("object", "name")),
     "escalation_rules": ("mf_escalation_rules", ("object", "name")),
+    "rollup_rules": ("mf_rollup_rules",
+                     ("child_object", "parent_object", "parent_field")),
+    "lead_field_mappings": ("mf_lead_field_mappings",
+                            ("target_object", "target_field")),
+    "web_to_forms": ("mf_web_to_forms", ("key",)),
     "named_credentials": ("mf_named_credentials", ("name",)),
     "forecast_quotas": ("mf_forecast_quotas", ("user_id", "period")),
+    "forecast_types": ("mf_forecast_types", ("name",)),
     "apps": ("mf_apps", ("name",)),
     "custom_settings": ("mf_custom_settings", ("name",)),
     "external_objects": ("mf_external_objects", ("api_name",)),
@@ -970,6 +976,41 @@ def _convert_insert(store, registry, security, obj_name: str, fields: dict,
     return rec
 
 
+def lead_field_mappings(store):
+    """Active declarative lead-conversion mappings.
+
+    Returns {target_object: {target_field: lead_field}} for rows in
+    mf_lead_field_mappings. Custom mappings override the built-in defaults
+    in convert_lead (explicit API ``options`` overrides win over both).
+    """
+    out = {}
+    try:
+        rows = store.config_all("mf_lead_field_mappings")
+    except Exception:
+        return out
+    for m in rows:
+        if not m.get("active", True):
+            continue
+        if m.get("target_object") and m.get("target_field") and m.get("lead_field"):
+            out.setdefault(m["target_object"], {})[m["target_field"]] = m["lead_field"]
+    return out
+
+
+def _apply_lead_mappings(lead, target_fields, mappings, skip=()):
+    """Overlay custom lead->target mappings onto ``target_fields``.
+
+    Only non-empty lead values are copied; ``skip`` fields (system-managed
+    links like AccountId) are never remapped.
+    """
+    for target_field, lead_field in mappings.items():
+        if target_field in skip:
+            continue
+        val = lead.get(lead_field)
+        if val not in (None, ""):
+            target_fields[target_field] = val
+    return target_fields
+
+
 def convert_lead(store, registry, security, lead_id: str, user: dict,
                  options: dict | None = None):
     """Convert a Lead into Account + Contact (+ Opportunity).
@@ -977,6 +1018,8 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
     options: {"account_name", "contact": {...overrides},
               "opportunity_name", "create_opportunity": bool,
               "opportunity": {...overrides}}
+    Field values come from built-in defaults, overridden by active
+    mf_lead_field_mappings rows, overridden by explicit ``options``.
     Returns (result, error).
     """
     options = options or {}
@@ -990,17 +1033,27 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
     for obj_name in ("Account", "Contact", "Opportunity"):
         if not security.can(user, "create", obj_name):
             return None, f"No create access on {obj_name}"
-    account_name = options.get("account_name") or lead.get("Company") \
-        or f"{lead.get('FirstName', '')} {lead.get('LastName', '')}".strip() \
-        or "Converted Account"
+    mappings = lead_field_mappings(store)
+    acct_map = mappings.get("Account", {})
+    account_name = (options.get("account_name")
+                    or lead.get(acct_map.get("Name", "Company"))
+                    or f"{lead.get('FirstName', '')} {lead.get('LastName', '')}".strip()
+                    or "Converted Account")
     try:
+        account_fields = _apply_lead_mappings(
+            lead, {"Name": account_name}, acct_map, skip=("Name",))
         account = _convert_insert(store, registry, security, "Account",
-                                  {"Name": account_name}, lead.get("owner_id")
+                                  account_fields, lead.get("owner_id")
                                   or user["id"], user)
         contact_fields = {"FirstName": lead.get("FirstName"),
-                          "LastName": lead.get("LastName") or "Unknown",
+                          "LastName": lead.get("LastName"),
                           "Email": lead.get("Email"), "Phone": lead.get("Phone"),
                           "AccountId": account["id"]}
+        contact_fields = _apply_lead_mappings(
+            lead, contact_fields, mappings.get("Contact", {}),
+            skip=("AccountId",))
+        if not contact_fields.get("LastName"):
+            contact_fields["LastName"] = "Unknown"
         contact_fields.update(options.get("contact") or {})
         contact = _convert_insert(store, registry, security, "Contact",
                                   {k: v for k, v in contact_fields.items()
@@ -1015,6 +1068,9 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
                           "AccountId": account["id"],
                           "Stage": (stage_field.get("picklist_values") or ["Prospecting"])[0],
                           "CloseDate": str(_date.today() + _timedelta(days=30))}
+            opp_fields = _apply_lead_mappings(
+                lead, opp_fields, mappings.get("Opportunity", {}),
+                skip=("AccountId", "Name"))
             opp_fields.update(options.get("opportunity") or {})
             opportunity = _convert_insert(store, registry, security, "Opportunity",
                                           opp_fields, account["owner_id"], user)
@@ -1112,9 +1168,19 @@ def start_case_milestones(store, obj_name: str, rec: dict):
 
 
 def complete_case_milestones(store, obj_name: str, rec: dict, old: dict | None):
-    """Mark open milestones complete when a case is closed."""
-    if rec.get("Status") != "Closed" or (old or {}).get("Status") == "Closed":
-        return 0
+    """Mark open milestones complete when a record hits its completion rule.
+
+    The completion rule is ``{field: value}`` on the matching SLA policy
+    (``completion`` key); it fires only when every field transitioned INTO
+    its target value on this update. Policies created before the
+    ``completion`` field existed complete on ``{"Status": "Closed"}``, which
+    also preserves the entitlement-process behavior.
+    """
+    policy = sla_policy_for(store, obj_name, rec)
+    completion = (policy or {}).get("completion") or {"Status": "Closed"}
+    for field, want in completion.items():
+        if rec.get(field) != want or (old or {}).get(field) == want:
+            return 0
     n = 0
     for m in store.config_all("mf_case_milestones"):
         if m.get("record_id") == rec["id"] and not m.get("completed_at"):
@@ -1124,10 +1190,11 @@ def complete_case_milestones(store, obj_name: str, rec: dict, old: dict | None):
     return n
 
 
-def case_milestones(store, record_id: str):
+def case_milestones(store, obj_name: str, record_id: str):
     return sorted(
         (m for m in store.config_all("mf_case_milestones")
-         if m.get("record_id") == record_id),
+         if m.get("record_id") == record_id
+         and m.get("object", "Case") == obj_name),
         key=lambda m: m.get("due_at") or "")
 
 
@@ -1291,42 +1358,113 @@ def invoke_callout(store, cred_ref: str, method: str = "GET", path: str = "",
 
 
 # ------------------------------------------------------------ forecasts
-def forecast_for_period(store, security, period: str, viewer: dict):
-    """Sales forecast for one YYYY-MM period.
+#: Built-in forecast type: Opportunity revenue (the historical default).
+BUILTIN_FORECAST_TYPE = {
+    "id": "builtin", "name": "Opportunity Revenue", "object": "Opportunity",
+    "amount_field": "Amount", "date_field": "CloseDate",
+    "category_field": "Stage", "won_values": ["Closed Won"],
+    "lost_values": ["Closed Lost"], "probability_field": "Probability",
+}
+
+
+def get_forecast_type(store, type_id):
+    """Stored forecast type by id, or the built-in Opportunity type."""
+    if not type_id or type_id == "builtin":
+        return dict(BUILTIN_FORECAST_TYPE)
+    return store.config_get("mf_forecast_types", type_id)
+
+
+def list_forecast_types(store):
+    """Stored forecast types, with the built-in Opportunity type first."""
+    rows = sorted(store.config_all("mf_forecast_types"),
+                  key=lambda r: r.get("name") or "")
+    return [dict(BUILTIN_FORECAST_TYPE)] + rows
+
+
+def validate_forecast_type(store, registry, body, existing_id=None):
+    """Validate a forecast-type definition. Returns an error string or None."""
+    name = (body.get("name") or "").strip()
+    if not name:
+        return "name is required"
+    dup = next((r for r in store.config_all("mf_forecast_types")
+                if r.get("name") == name and r.get("id") != existing_id), None)
+    if dup or name == BUILTIN_FORECAST_TYPE["name"]:
+        return f"A forecast type named '{name}' already exists"
+    obj_name = body.get("object")
+    obj = registry.get_object(obj_name) if obj_name else None
+    if not obj:
+        return f"Unknown object '{obj_name}'"
+    fmap = {f["name"]: f for f in obj.get("fields", [])}
+    for key, kinds in (("amount_field", ("Currency", "Number")),
+                       ("date_field", ("Date", "DateTime"))):
+        fname = body.get(key)
+        f = fmap.get(fname or "")
+        if not f or f.get("type") not in kinds:
+            return f"{key} must be a { '/'.join(kinds)} field on {obj_name}"
+        if f.get("formula") or f.get("rollup"):
+            return f"{key} cannot be a computed field"
+    cf = fmap.get(body.get("category_field") or "")
+    if not cf or cf.get("type") not in ("Picklist", "Text"):
+        return "category_field must be a Picklist or Text field on " + obj_name
+    for key in ("won_values", "lost_values"):
+        vals = body.get(key)
+        if not isinstance(vals, list) or not vals:
+            return f"{key} must be a non-empty list of category values"
+    pf = body.get("probability_field")
+    if pf:
+        f = fmap.get(pf)
+        if not f or f.get("type") not in ("Currency", "Number", "Percent"):
+            return "probability_field must be a numeric field on " + obj_name
+    return None
+
+
+def forecast_for_period(store, security, period: str, viewer: dict,
+                        forecast_type: dict | None = None):
+    """Forecast for one YYYY-MM period, over any configured object.
 
     Rows cover the viewer, their role subtree, or everyone for admins.
-    Closed Won counts at full amount; open stages count at Amount*Probability.
+    Records whose category is in won_values count at full amount; lost_values
+    are excluded; open records count at amount x probability (or full amount
+    when the type has no probability field).
     """
     import re
     if not re.fullmatch(r"\d{4}-\d{2}", period or ""):
         raise ValueError("period must be YYYY-MM")
+    ft = forecast_type or BUILTIN_FORECAST_TYPE
+    type_id = ft.get("id")
+    obj_name = ft["object"]
+    amt_f, date_f = ft["amount_field"], ft["date_field"]
+    cat_f, won, lost = ft["category_field"], set(ft["won_values"] or []), \
+        set(ft["lost_values"] or [])
+    prob_f = ft.get("probability_field")
     if security.is_admin(viewer):
         user_ids = [u["id"] for u in security.list_users()]
     else:
         user_ids = security.visible_owner_ids(viewer)
     quotas = {q["user_id"]: q["quota"] for q in store.config_all("mf_forecast_quotas")
-              if q.get("period") == period}
+              if q.get("period") == period
+              and (q.get("forecast_type_id") or "builtin") == (type_id or "builtin")}
     names = {u["id"]: u.get("name") or u.get("username") for u in security.list_users()}
     rows = []
     for uid in user_ids:
         closed = 0.0
         weighted = 0.0
         pipeline = []
-        for opp in store.query("Opportunity", owner_ids=[uid], limit=10000):
-            cd = (opp.get("CloseDate") or "")[:7]
+        for rec in store.query(obj_name, owner_ids=[uid], limit=10000):
+            cd = (rec.get(date_f) or "")[:7]
             if cd != period:
                 continue
-            amt = float(opp.get("Amount") or 0)
-            stage = opp.get("Stage") or ""
-            if stage == "Closed Won":
+            amt = float(rec.get(amt_f) or 0)
+            cat = rec.get(cat_f) or ""
+            if cat in won:
                 closed += amt
-            elif stage == "Closed Lost":
+            elif cat in lost:
                 continue
             else:
-                w = amt * float(opp.get("Probability") or 0) / 100.0
+                w = amt * float(rec.get(prob_f) or 0) / 100.0 if prob_f else amt
                 weighted += w
-                pipeline.append({"stage": stage, "amount": amt,
-                                 "probability": opp.get("Probability")})
+                pipeline.append({"stage": cat, "amount": amt,
+                                 "probability": rec.get(prob_f) if prob_f else None})
         total = round(closed + weighted, 2)
         quota = quotas.get(uid)
         rows.append({"user_id": uid, "user_name": names.get(uid, uid),
@@ -1336,7 +1474,9 @@ def forecast_for_period(store, security, period: str, viewer: dict):
                      "attainment": round(total / quota, 4) if quota else None,
                      "pipeline": pipeline})
     rows.sort(key=lambda r: r["user_name"] or "")
-    return {"period": period, "rows": rows}
+    return {"period": period, "forecast_type": {"id": type_id, "name": ft.get("name"),
+                                               "object": obj_name},
+            "rows": rows}
 
 
 # ------------------------------------------------------------ screen flows

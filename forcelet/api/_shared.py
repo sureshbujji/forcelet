@@ -17,6 +17,7 @@ from flask import current_app, jsonify, request
 
 from .. import automation
 from .. import crypto as _crypto
+from ..store import utcnow
 from .. import datamodel as _datamodel
 from .. import dynamic_forms as _dynforms
 from .. import duplicate_rules as _duprules
@@ -31,22 +32,153 @@ def ctx():
     return current_app.mf_store, current_app.mf_registry, current_app.mf_security
 
 
-def recompute_opp_amount(user, opp_id):
-    """Recompute Opportunity.Amount after a generic OpportunityLineItem write.
+# ---------------------------------------------------------------------------
+# Declarative stored roll-up rules (A6)
+# ---------------------------------------------------------------------------
+#: Aggregation functions a roll-up rule may use.
+ROLLUP_FUNCS = ("sum", "count", "min", "max", "avg")
 
-    The /api/sales/* routes do their own roll-up; this covers generic
-    /api/sobjects writes, CSV import, web-to-lead, and flows. Lazy import
-    avoids a circular dependency (sales_core imports this module).
-    Never raises: a stale Amount is better than a 500 on a saved record.
-    """
-    if not opp_id:
-        return
+_rollup_local = threading.local()
+
+
+def _rollup_rules_for(child_obj_name):
+    store = ctx()[0]
     try:
-        from . import sales_core as _sales
-        _sales._recompute_amount(user, opp_id)
+        rows = store.config_all("mf_rollup_rules")
+    except Exception:
+        return []
+    return [r for r in rows
+            if r.get("active", True)
+            and r.get("child_object") == child_obj_name]
+
+
+def _num(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _apply_rollup_rule(user, rule, child_rec, seen):
+    """Recompute one rule's parent field. Never raises (caller guards)."""
+    store, registry, security = ctx()
+    parent_obj = rule.get("parent_object")
+    link_field = rule.get("link_field")
+    parent_field = rule.get("parent_field")
+    child_field = rule.get("child_field")
+    func = rule.get("func") or "sum"
+    parent_id = (child_rec or {}).get(link_field) if link_field else None
+    if not parent_obj or not parent_id or (parent_obj, parent_id) in seen:
+        return
+    pdef = registry.get_object(parent_obj)
+    cdef = registry.get_object(rule.get("child_object"))
+    if not pdef or not cdef:
+        return
+    pfields = {f["name"]: f for f in pdef.get("fields", [])}
+    cfields = {f["name"]: f for f in cdef.get("fields", [])}
+    pf = pfields.get(parent_field)
+    if not pf or pf.get("formula") or pf.get("rollup"):
+        return  # never write into computed fields
+    if func != "count" and not cfields.get(child_field):
+        return
+    if not cfields.get(link_field):
+        return
+    seen.add((parent_obj, parent_id))
+    recs, _ = _visible_records(user, rule["child_object"])
+    kids = [r for r in recs if r.get(link_field) == parent_id]
+    if func == "count":
+        total = len(kids)
+    else:
+        vals = [_num(r.get(child_field)) for r in kids]
+        if func == "min":
+            total = min(vals) if vals else None
+        elif func == "max":
+            total = max(vals) if vals else None
+        elif func == "avg":
+            total = sum(vals) / len(vals) if vals else None
+        else:  # sum over an empty set is 0, matching the legacy roll-ups
+            total = sum(vals)
+    if total is not None and pf.get("type") == "Currency":
+        total = round(total, 2)
+    # Write through the normal update pipeline so validation, triggers,
+    # flows and webhooks fire exactly as they did for the hardcoded roll-up.
+    status, _payload = _do_update(user, parent_obj, parent_id,
+                                  {parent_field: total})
+    if status >= 400:
+        logging.getLogger("forcelet").warning(
+            "Roll-up rule '%s' could not update %s %s (status %s)",
+            rule.get("name"), parent_obj, parent_id, status)
+
+
+def recompute_stored_rollups(user, child_obj_name, child_rec, old_rec=None):
+    """Recompute parent fields for all active roll-up rules on a child write.
+
+    Called after create/update/delete of a child record. When the link field
+    changed (reparenting), ``old_rec`` refreshes the previous parent too.
+    Never raises: a stale parent value is better than a 500 on a saved
+    record. A per-thread ``seen`` set stops cyclic rule chains from looping.
+    """
+    rules = _rollup_rules_for(child_obj_name)
+    if not rules:
+        return
+    seen = getattr(_rollup_local, "seen", None)
+    top = seen is None
+    if top:
+        seen = set()
+        _rollup_local.seen = seen
+    try:
+        for rule in rules:
+            try:
+                _apply_rollup_rule(user, rule, child_rec, seen)
+            except Exception:
+                logging.getLogger("forcelet").warning(
+                    "Stored roll-up rule '%s' failed", rule.get("name"),
+                    exc_info=True)
+            link = rule.get("link_field")
+            old_pid = (old_rec or {}).get(link) if link else None
+            new_pid = (child_rec or {}).get(link) if link else None
+            if old_pid and old_pid != new_pid:
+                try:
+                    _apply_rollup_rule(
+                        user, rule, {**(child_rec or {}), link: old_pid},
+                        seen)
+                except Exception:
+                    logging.getLogger("forcelet").warning(
+                        "Stored roll-up rule '%s' failed (old parent)",
+                        rule.get("name"), exc_info=True)
+    finally:
+        if top:
+            _rollup_local.seen = None
+
+
+#: KnowledgeArticle fields whose change snapshots a new article version.
+KB_CONTENT_FIELDS = ("Title", "Summary", "Body", "Category", "Status")
+
+
+def snapshot_kb_version(store, old_rec, user):
+    """Store the pre-update state of a KnowledgeArticle as a new version.
+
+    Versions are immutable history; the live article always holds the latest
+    content. Never raises.
+    """
+    try:
+        article_id = old_rec.get("id")
+        rows = [r for r in store.config_all("mf_kb_versions")
+                if r.get("article_id") == article_id]
+        version = max([r.get("version") or 0 for r in rows] + [0]) + 1
+        store.config_put("mf_kb_versions", {
+            "article_id": article_id, "version": version,
+            "title": old_rec.get("Title"), "summary": old_rec.get("Summary"),
+            "body": old_rec.get("Body"), "status": old_rec.get("Status"),
+            "category": old_rec.get("Category"),
+            "snapshot": {k: v for k, v in old_rec.items()},
+            "created_by": (user or {}).get("id"),
+            "created_date": utcnow(),
+        })
     except Exception:
         logging.getLogger("forcelet").warning(
-            "Opportunity Amount roll-up failed for %s", opp_id, exc_info=True)
+            "KB version snapshot failed for %s", old_rec.get("id"),
+            exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +339,30 @@ def require_admin(fn):
     return wrapper
 
 
+def require_admin_scope(*scopes):
+    """Allow full admins, or delegated admins holding any of the scopes.
+
+    Scopes come from delegated administration groups
+    (see forcelet/delegated.py): "users", "passwords", "profiles", "roles".
+    Endpoints that target a specific user must additionally call
+    ``delegated.target_in_scope`` when the grant is role-restricted.
+    """
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(*a, **kw):
+            store, registry, security = ctx()
+            user = request.mf_user
+            if security.is_admin(user):
+                return fn(*a, **kw)
+            from .. import delegated as _delegated
+            if any(_delegated.has_scope(store, user, s) for s in scopes):
+                return fn(*a, **kw)
+            return jsonify({"error": "System Administrator profile or a "
+                                     "delegated administration grant required"}), 403
+        return wrapper
+    return deco
+
+
 def _audit(action, entity_type, name, details=""):
     store, registry, security = ctx()
     try:
@@ -243,6 +399,12 @@ def serialize(user, obj_def, record):
         person_name = _datamodel.person_display_name(record)
         if person_name:
             data["Name"] = person_name
+    try:
+        from .. import divisions as _divisions
+        data["Division"] = _divisions.record_division_name(
+            store, obj_def["name"], record.get("id") or "")
+    except Exception:
+        data["Division"] = ""
     return data
 
 
@@ -251,6 +413,86 @@ def _visible_records(user, obj_name):
     obj = registry.get_object(obj_name)
     return [r for r in store.query(obj_name, owner_ids=None, limit=10000)
             if security.can_see_record(user, r, obj_name)], obj
+
+
+#: Task fields copied onto the next occurrence of a recurring task.
+TASK_RECURRENCE_COPY = ("Subject", "Priority", "AccountId", "Description",
+                        "IsRecurring", "RecurrenceType",
+                        "RecurrenceInterval", "RecurrenceEndDate",
+                        "RecurrenceCount")
+
+
+def task_recurrence_error(rec, clean):
+    """Validate recurrence settings on a Task. Returns an error string or None."""
+    is_rec = clean.get("IsRecurring", (rec or {}).get("IsRecurring"))
+    if not is_rec:
+        return None
+    rtype = clean.get("RecurrenceType", (rec or {}).get("RecurrenceType"))
+    if not rtype:
+        return "RecurrenceType is required for a recurring Task"
+    interval = clean.get("RecurrenceInterval",
+                         (rec or {}).get("RecurrenceInterval") or 1)
+    if (interval or 0) < 1:
+        return "RecurrenceInterval must be at least 1"
+    count = clean.get("RecurrenceCount", (rec or {}).get("RecurrenceCount"))
+    if count is not None and count < 1:
+        return "RecurrenceCount must be at least 1"
+    return None
+
+
+def advance_recurrence(date_str, rtype, interval):
+    """Advance an ISO date by a recurrence step. Never raises."""
+    from calendar import monthrange
+    try:
+        d = datetime.fromisoformat(str(date_str)[:10]).date()
+    except (ValueError, TypeError):
+        d = datetime.now(timezone.utc).date()
+    interval = max(int(interval or 1), 1)
+    if rtype == "Weekly":
+        d += timedelta(weeks=interval)
+    elif rtype == "Monthly":
+        month = d.month - 1 + interval
+        year = d.year + month // 12
+        month = month % 12 + 1
+        d = d.replace(year=year, month=month,
+                      day=min(d.day, monthrange(year, month)[1]))
+    else:  # Daily (and unknown types fall back to daily)
+        d += timedelta(days=interval)
+    return d.isoformat()
+
+
+def maybe_create_next_task_occurrence(user, rec):
+    """Create the next occurrence after a recurring Task is completed.
+
+    Stops when RecurrenceCount occurrences exist or the next due date passes
+    RecurrenceEndDate. Failures are logged, never raised: completing the task
+    is the primary action.
+    """
+    log = logging.getLogger("forcelet")
+    try:
+        if not rec.get("IsRecurring"):
+            return
+        occ = rec.get("OccurrenceNumber") or 1
+        total = rec.get("RecurrenceCount")
+        if total and occ >= total:
+            return
+        rtype = rec.get("RecurrenceType") or "Daily"
+        interval = rec.get("RecurrenceInterval") or 1
+        base = rec.get("DueDate") or utcnow()[:10]
+        next_due = advance_recurrence(base, rtype, interval)
+        end = rec.get("RecurrenceEndDate")
+        if end and next_due > str(end)[:10]:
+            return
+        new = {k: rec.get(k) for k in TASK_RECURRENCE_COPY
+               if rec.get(k) is not None}
+        new.update({"Status": "Not Started", "DueDate": next_due,
+                    "OccurrenceNumber": occ + 1})
+        status, payload = _do_create(user, "Task", new)
+        if status >= 400:
+            log.warning("recurring task: next occurrence not created: %s",
+                        payload)
+    except Exception:
+        log.warning("recurring task: next occurrence failed", exc_info=True)
 
 
 def _do_create(user, obj_name, body, allow_duplicates=False):
@@ -279,6 +521,15 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
     md_err = _datamodel.validate_md_parents_exist(store, obj, clean)
     if md_err:
         return 422, {"error": "Validation failed", "details": [md_err]}
+    if obj_name == "CampaignMember":
+        serr = campaign_member_status_error(
+            store, clean.get("CampaignId"), clean.get("Status"))
+        if serr:
+            return 422, {"error": serr}
+    if obj_name == "Task":
+        terr = task_recurrence_error(None, clean)
+        if terr:
+            return 422, {"error": terr}
     # Declarative duplicate rules (MatchingRule/DuplicateRule) take precedence:
     # an explicit Block/Warn decides the outcome; otherwise the legacy
     # mf_matching_rules check applies.
@@ -311,8 +562,17 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
         return 422, {"error": "Validation rule failed", "details": vr_errors}
     rid = store.insert(obj_name, clean)
     rec = store.get(obj_name, rid)
-    if obj_name == "Case":
-        automation.start_case_milestones(store, obj_name, rec)
+    # Divisions: new records inherit the creator's division (from their
+    # profile's default_division). Admins creating records stay global
+    # unless they move the record explicitly.
+    try:
+        from .. import divisions as _divisions
+        user_div = _divisions.user_division_id(store, security, user)
+        if user_div:
+            _divisions.set_record_division(store, obj_name, rid, user_div)
+    except Exception:
+        pass  # division stamping must never break the save pipeline
+    automation.start_case_milestones(store, obj_name, rec)
     if clean.get("owner_id") and clean["owner_id"] != user["id"]:
         owner = security.get_user(clean["owner_id"])
         if owner:
@@ -345,9 +605,69 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
     payload = serialize(user, obj, final_rec)
     if dup_warning:
         payload["warning"] = dup_warning
-    if obj_name == "OpportunityLineItem":
-        recompute_opp_amount(user, clean.get("OpportunityId"))
+    recompute_stored_rollups(user, obj_name, final_rec)
     return 201, payload
+
+
+#: Legal Contract Status transitions. Terminal states have no outgoing edges.
+CONTRACT_STATUS_FLOW = {
+    "Draft": {"Activated", "Cancelled"},
+    "Activated": {"Expired", "Cancelled"},
+    "Expired": set(),
+    "Cancelled": set(),
+}
+#: Contract terms that freeze once the contract leaves Draft.
+CONTRACT_LOCKED_FIELDS = ("AccountId", "StartDate", "EndDate", "ContractTerm")
+
+#: Built-in CampaignMember statuses used when a campaign defines none.
+DEFAULT_MEMBER_STATUSES = ["Sent", "Responded"]
+
+
+def campaign_member_statuses(store, campaign_id):
+    """Active member-status names for a campaign (defaults if none defined)."""
+    rows = sorted(
+        (r for r in store.config_all("mf_campaign_member_statuses")
+         if r.get("campaign_id") == campaign_id and r.get("active", True)),
+        key=lambda r: (r.get("sort_order") or 0, r.get("name") or ""))
+    return [r["name"] for r in rows] if rows else list(DEFAULT_MEMBER_STATUSES)
+
+
+def campaign_member_status_error(store, campaign_id, status):
+    """Validate a CampaignMember Status against its campaign's statuses."""
+    if not status:
+        return None
+    allowed = campaign_member_statuses(store, campaign_id)
+    if status not in allowed:
+        return (f"Status '{status}' is not a member status of this campaign "
+                f"(allowed: {', '.join(allowed)})")
+    return None
+
+
+def contract_guard_error(rec, clean):
+    """Enforce the Contract lifecycle. Returns an error string or None.
+
+    - Status may only follow CONTRACT_STATUS_FLOW; terminal states are final.
+    - Activating requires a StartDate.
+    - Term fields (account, dates, term length) cannot change once the
+      contract has left Draft.
+    """
+    old_status = rec.get("Status") or "Draft"
+    new_status = clean.get("Status", old_status)
+    if new_status != old_status:
+        allowed = CONTRACT_STATUS_FLOW.get(old_status, set())
+        if new_status not in allowed:
+            return (f"Cannot move Contract from '{old_status}' to "
+                    f"'{new_status}'")
+        if new_status == "Activated" and not (
+                clean.get("StartDate") or rec.get("StartDate")):
+            return "StartDate is required to activate a Contract"
+    if old_status != "Draft":
+        locked = [f for f in CONTRACT_LOCKED_FIELDS
+                  if f in clean and clean[f] != rec.get(f)]
+        if locked:
+            return (f"Cannot change {', '.join(locked)} on a "
+                    f"{old_status} Contract")
+    return None
 
 
 def _do_update(user, obj_name, rid, body, allow_duplicates=False):
@@ -368,6 +688,20 @@ def _do_update(user, obj_name, rid, body, allow_duplicates=False):
     clean, errors = registry.validate_record(obj, values, partial=True)
     if errors:
         return 422, {"error": "Validation failed", "details": errors}
+    if obj_name == "Contract":
+        gerr = contract_guard_error(rec, clean)
+        if gerr:
+            return 422, {"error": gerr}
+    if obj_name == "CampaignMember" and "Status" in clean:
+        serr = campaign_member_status_error(
+            store, clean.get("CampaignId") or rec.get("CampaignId"),
+            clean.get("Status"))
+        if serr:
+            return 422, {"error": serr}
+    if obj_name == "Task":
+        terr = task_recurrence_error(rec, clean)
+        if terr:
+            return 422, {"error": terr}
     for f in _datamodel.md_fields(obj):
         if f["name"] in clean and clean[f["name"]] != rec.get(f["name"]) \
                 and not f.get("reparentable", True):
@@ -409,8 +743,7 @@ def _do_update(user, obj_name, rid, body, allow_duplicates=False):
     automation.log_history(store, obj_name, rid, rec, merged, user)
     store.update(obj_name, rid, clean)
     new_rec = store.get(obj_name, rid)
-    if obj_name == "Case":
-        automation.complete_case_milestones(store, obj_name, new_rec, rec)
+    automation.complete_case_milestones(store, obj_name, new_rec, rec)
     automation.apply_escalation_rules(store, registry, security, obj_name,
                                       new_rec, rec, user)
     terr = automation.run_triggers(store, registry, security, obj_name,
@@ -431,8 +764,11 @@ def _do_update(user, obj_name, rid, body, allow_duplicates=False):
     payload = serialize(user, obj, new_rec)
     if dup_warning:
         payload["warning"] = dup_warning
-    if obj_name == "OpportunityLineItem":
-        recompute_opp_amount(user, merged.get("OpportunityId"))
-        if rec.get("OpportunityId") != merged.get("OpportunityId"):
-            recompute_opp_amount(user, rec.get("OpportunityId"))
+    recompute_stored_rollups(user, obj_name, merged, old_rec=rec)
+    if obj_name == "KnowledgeArticle" and any(
+            k in KB_CONTENT_FIELDS for k in clean):
+        snapshot_kb_version(store, rec, user)
+    if obj_name == "Task" and clean.get("Status") == "Completed" \
+            and rec.get("Status") != "Completed":
+        maybe_create_next_task_occurrence(user, merged)
     return 200, payload

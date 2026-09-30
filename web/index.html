@@ -380,6 +380,28 @@ async function boot(){
   u.focus();
   p.onkeydown=e=>{ if(e.key==="Enter") loginForm(); };
   u.onkeydown=e=>{ if(e.key==="Enter") p.focus(); };
+  applyLoginBranding();
+}
+/* ---- Login screen: public branding + i18n pack (no auth needed) ---- */
+async function applyLoginBranding(){
+  let b={}, pack={};
+  try{ b=await fetch("/api/public/login-branding").then(r=>r.json()); }catch(e){}
+  try{ const lang=(navigator.language||"en").slice(0,2); pack=await fetch("/api/i18n/"+encodeURIComponent(lang)).then(r=>r.json()); }catch(e){}
+  const h2=document.querySelector("#login .card h2");
+  if(h2){
+    if(b.logo_url) h2.insertAdjacentHTML("afterbegin",`<img src="${esc(b.logo_url)}" alt="" style="height:28px;vertical-align:-6px;margin-right:8px">`);
+    if(b.headline) h2.innerHTML=h2.innerHTML.replace(/Forcelet/,esc(b.headline));
+  }
+  const tag=document.querySelector("#login .card p.muted");
+  const tagline=pack["login.tagline"]||b.tagline;
+  if(tag&&tagline) tag.textContent=tagline;
+  if(b.primary_color){ const btn=document.querySelector("#loginbtns .btn"); if(btn) btn.style.background=b.primary_color; }
+  if(b.background){ const lg=document.getElementById("login"); if(lg) lg.style.background=b.background; }
+  const signin=document.querySelector("#loginbtns .btn");
+  if(signin&&pack["login.signin"]) signin.textContent=pack["login.signin"];
+  const u=document.getElementById("li_user"), pw=document.getElementById("li_pass");
+  if(u&&pack["login.username"]) u.placeholder=pack["login.username"];
+  if(pw&&pack["login.password"]) pw.placeholder=pack["login.password"];
 }
 async function loginForm(){
   const username=document.getElementById("li_user").value.trim();
@@ -422,9 +444,27 @@ async function enterApp(){
   navSilent=true; // don't let the initial tab render rewrite a deep-link URL
   try{
     await loadObjects();
+    loadDivisions();
     refreshBell();
+    checkPostLoginFlows();
     await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
   }finally{ navSilent=false; }
+}
+/* ---- Post-login flow steps: announcement banner + 2FA nudge ---- */
+async function checkPostLoginFlows(){
+  try{
+    const r=await api("GET","/api/me/announcement"); if(!r.ok) return;
+    const d=r.data||{};
+    if(d.announcement){
+      document.querySelector("#app header").insertAdjacentHTML("afterend",
+       `<div id="annbar" style="background:#fff8e1;border-bottom:1px solid #f0d97a;padding:10px 16px;display:flex;gap:12px;align-items:center"><div style="flex:1"><b>${esc(d.announcement.title||"Announcement")}</b>${d.announcement.body?`<div>${esc(d.announcement.body)}</div>`:""}</div><button class="btn secondary small" onclick="dismissAnnouncement()">Dismiss</button></div>`);
+    }
+    if(d.totp_nudge) toast("Protect your account: enable two-factor authentication from the account menu.","info");
+  }catch(e){}
+}
+async function dismissAnnouncement(){
+  await api("POST","/api/me/announcement/dismiss");
+  const b=document.getElementById("annbar"); if(b) b.remove();
 }
 /* ---- TOTP enrollment during sign-in (org requires 2FA, not yet enrolled) ---- */
 function showTotpEnroll(){
@@ -581,7 +621,15 @@ async function refreshUserApps(){
 
 let curObj=null, curDesc=null, curLayout=null;
 let inlineEdit=false, splitMode=false, splitId=null;
-let curViews=[], curView=null, curSort=null, curDir="asc", curSearch="";
+let curViews=[], curView=null, curSort=null, curDir="asc", curSearch="", curDiv="";
+let DIVS=[];
+async function loadDivisions(){
+  try{ const r=await api("GET","/api/admin/divisions"); if(r.ok&&Array.isArray(r.data)) DIVS=r.data; }catch(e){}
+}
+function divFilterHtml(){
+  if(!DIVS.length) return "";
+  return `<select id="ldiv" onchange="curDiv=this.value;listPage=0;renderList()" style="max-width:170px" title="Filter by division"><option value="">All divisions</option><option value="global"${curDiv==="global"?" selected":""}>Global (no division)</option>${DIVS.map(d=>`<option value="${d.id}"${curDiv===d.id?" selected":""}>${esc(d.name)}</option>`).join("")}</select>`;
+}
 let listPage=0, listTotal=0; const LIST_SIZE=50;
 async function showObject(name){
   document.getElementById("main").innerHTML=skel(4);
@@ -611,10 +659,13 @@ async function renderList(){
   if(curView) q+=`view=${curView.id}&`;
   if(curSort) q+=`sort=${curSort}&dir=${curDir}&`;
   if(curSearch) q+=`search=${encodeURIComponent(curSearch)}&`;
-  if(!(curObj==="Case"&&curQueue)) q+=`limit=${LIST_SIZE}&offset=${listPage*LIST_SIZE}&`;
-  if(curObj==="Case"&&!caseQueues.length){ const qr=await api("GET","/api/case-queues"); caseQueues=qr.ok&&Array.isArray(qr.data)?qr.data:[]; }
+  if(curDiv) q+=`division=${encodeURIComponent(curDiv)}&`;
+  if(!curQueue) q+=`limit=${LIST_SIZE}&offset=${listPage*LIST_SIZE}&`;
+  if(!objQueues.length){ const qr=await api("GET","/api/case-queues"); objQueues=qr.ok&&Array.isArray(qr.data)?qr.data:[]; }
+  const myQueues=objQueues.filter(x=>(x.object||"Case")===curObj);
+  if(curQueue&&!myQueues.some(x=>x.id===curQueue)) curQueue=null;
   let rows, total=null;
-  if(curObj==="Case"&&curQueue){ const qr=await api("GET",`/api/case-queues/${curQueue}/cases`); rows=qr.ok&&Array.isArray(qr.data)?qr.data:[]; }
+  if(curQueue){ const qr=await api("GET",`/api/case-queues/${curQueue}/cases`); rows=qr.ok&&Array.isArray(qr.data)?qr.data:[]; }
   else{ const r=await api("GET",q); const d=r.data;
     if(d&&!Array.isArray(d)&&Array.isArray(d.rows)){ rows=d.rows; total=d.total; } else rows=d||[]; }
   listTotal=total==null?rows.length:total;
@@ -624,10 +675,12 @@ async function renderList(){
     cols=curView.columns.map(n=>fmap[n]).filter(Boolean);
   }
   if(!cols||!cols.length) cols=curDesc.fields.slice(0,6);
+  if(DIVS.length&&!cols.some(c=>c.name==="Division")) cols=cols.concat([{name:"Division",label:"Division"}]);
   const arrow=c=>curSort===c?(curDir==="asc"?" ▲":" ▼"):"";
   let html=`<div class="btnrow"><h2 style="margin:0">${esc(curDesc.plural)}</h2><span style="flex:1"></span>`;
   html+=`<input id="lsearch" placeholder="Search records..." value="${esc(curSearch)}" style="max-width:170px" onkeydown="if(event.key==='Enter'){curSearch=this.value;listPage=0;renderList();}">`;
   html+=`<select id="lview" onchange="setView(this.value)" style="max-width:200px"><option value="">— All records —</option>${curViews.map(vw=>`<option value="${vw.id}" ${curView&&curView.id===vw.id?"selected":""}>${esc(vw.name)}${vw.shared?" (shared)":""}</option>`).join("")}</select>`;
+  html+=divFilterHtml();
   let moreItems=`<button onclick="document.getElementById('saveview').style.display='flex'">Save view</button>`;
   moreItems+=`<button onclick="showKanban()">Kanban</button>`;
   moreItems+=`<button onclick="exportCsv()">Export CSV</button>`;
@@ -636,10 +689,10 @@ async function renderList(){
   html+=`<span class="dd" id="listmore"><button class="btn secondary small" onclick="toggleDD(event,'listmore')">More ▾</button><span class="dd-menu">${moreItems}</span></span>`;
   if(curDesc.permissions.create) html+=`<button class="btn" onclick="showForm()">+ New ${esc(curDesc.label)}</button>`;
   html+=`</div>`;
-  if(curObj==="Case"&&caseQueues.length){
+  if(myQueues.length){
     html+=`<div class="btnrow" style="margin-top:8px"><span class="muted">Queues:</span>`
-      +`<button class="btn ${curQueue?"secondary":""} small" onclick="curQueue=null;renderList()">All cases</button>`
-      +caseQueues.filter(x=>x.active!==false).map(x=>`<button class="btn ${curQueue===x.id?"":"secondary"} small" onclick="curQueue='${x.id}';renderList()">${esc(x.name)}</button>`).join("")
+      +`<button class="btn ${curQueue?"secondary":""} small" onclick="curQueue=null;renderList()">All ${esc(curDesc.plural||"records")}</button>`
+      +myQueues.filter(x=>x.active!==false).map(x=>`<button class="btn ${curQueue===x.id?"":"secondary"} small" onclick="curQueue='${x.id}';renderList()">${esc(x.name)}</button>`).join("")
       +(me.profile==="System Administrator"?`<button class="btn secondary small" onclick="showQueueAdmin()">Manage</button>`:"")
       +`</div>`;
   }
@@ -700,7 +753,7 @@ function listPager(total){
   return `<div class="btnrow" style="margin-top:8px"><span class="muted">${listTotal} record${listTotal===1?"":"s"} — page ${listPage+1} of ${pages}</span><span style="flex:1"></span><button class="btn secondary small" ${listPage===0?"disabled":""} onclick="listPage--;renderList()">← Prev</button> <button class="btn secondary small" ${listPage+1>=pages?"disabled":""} onclick="listPage++;renderList()">Next →</button></div>`;
 }
 let curKanbanField=null;
-let caseQueues=[], curQueue=null;
+let objQueues=[], curQueue=null;
 async function showKanban(){
   setActive(curObj);
   const r=await api("GET",`/api/kanban/${curObj}`);
@@ -758,6 +811,12 @@ async function showSemanticSearch(q){
     res.map(x=>`<tr><td>${esc(String(x.name)).slice(0,60)}</td><td>${esc(x.label)}</td><td><div style="background:var(--track);border-radius:4px;min-width:90px"><div style="background:var(--accent);height:8px;border-radius:4px;width:${Math.round(x.score*100)}%"></div></div><span class="muted" style="font-size:11px">${x.score}</span></td><td class="muted" style="font-size:12px;max-width:340px">${esc(x.snippet)}</td><td><button class="btn secondary small" onclick="jumpTo('${x.object}','${x.id}')">Open</button></td></tr>`).join("")+`</table></div>`;
   document.getElementById("main").innerHTML=html;
 }
+async function setRecDivision(id){
+  const sel=document.getElementById("rec_div"); if(!sel) return;
+  const r=await api("PUT",`/api/sobjects/${curObj}/${id}/division`,{division_id:sel.value});
+  if(!r.ok){ toast("Failed: "+(r.data&&r.data.error||r.status),"error"); return; }
+  toast("Division updated.","ok"); showDetail(id);
+}
 async function showDetail(id){
   document.getElementById("main").innerHTML=skel(4);
   const dd=await api("GET",`/api/describe/${curObj}`); curDesc=dd.data;
@@ -781,6 +840,10 @@ async function showDetail(id){
   if(curDesc.permissions.edit&&!isBigObj) html+=`<button class="btn" onclick="showForm('${rec.Id}')">Edit</button>`;
   if(curDesc.permissions.edit) html+=`<button class="btn secondary" onclick="findDuplicates('${curObj}','${rec.Id}')">Find duplicates</button>`;
   if(curDesc.permissions.delete&&!isBigObj) html+=`<button class="btn danger" onclick="delRec('${rec.Id}')">Delete</button>`;
+  if(me.profile==="System Administrator"&&!isBigObj){
+    const divId=(DIVS.find(d=>d.name===rec.Division)||{}).id||"";
+    html+=`<select id="rec_div" style="max-width:170px" title="Record division"><option value="">— Global —</option>${DIVS.map(d=>`<option value="${d.id}"${d.id===divId?" selected":""}>${esc(d.name)}</option>`).join("")}</select><button class="btn secondary" onclick="setRecDivision('${rec.Id}')">Set division</button>`;
+  }
   if(curObj==="Quote") html+=`<button class="btn secondary" onclick="dlQuotePdf('${rec.Id}')">Download PDF</button>`;
   if(curObj==="Quote") html+=`<button class="btn secondary" onclick="syncQuote('${rec.Id}')">Sync with Opportunity</button><button class="btn secondary" onclick="unsyncQuote('${rec.Id}')">Stop Sync</button>`;
   html+=`</div>`;
@@ -813,13 +876,15 @@ async function showDetail(id){
   main+=await pathBar(rec);
   if(curObj==="Lead") main+=await scoreCard(rec.Id);
   if(curObj==="Quote") main+=await quoteLinesCard(rec.Id);
-  if(curObj==="Case") main+=await milestonesCard(rec.Id);
-  if(curObj==="Case") main+=await macroBar(rec.Id);
+  main+=await milestonesCard(curObj,rec.Id);
+  if(curObj==="KnowledgeArticle") main+=await kbVersionsCard(rec.Id);
+  if(curObj==="Campaign") main+=await campaignMemberStatusesCard(rec.Id);
+  main+=await macroBar(curObj,rec.Id);
   // Core CRM cards (SalesCore / ServiceCore fragments fill these after render)
   if(curObj==="Opportunity") main+=salesCoreOppCards();
   if(curObj==="Account") main+=accountHierarchyCard();
   if(curObj==="Case") main+=serviceCoreCaseCard();
-  if(["Account","Contact","Opportunity","Case","Lead"].includes(curObj)) main+=notesCard();
+  if(curObj!=="Note") main+=notesCard();
   const ownerName=await userName(rec.OwnerId);
   rail+=`<div class="card"><div class="section-title">System</div><p class="muted">Id ${esc(rec.Id)} \u00b7 Record type ${esc(rec.RecordType)} \u00b7 Owner ${esc(ownerName)} \u00b7 Created ${fmtDateTime(rec.CreatedDate)}</p></div>`;
   const details=`<div class="detail-grid"><div>${main}</div><div>${rail}</div></div>`;
@@ -1090,8 +1155,8 @@ async function scoreCard(recId){
     +`<div class="muted" style="margin-top:4px">${esc(s.grade)} · model accuracy ${s.model_accuracy}</div></div></div>`
     +(factors?`<p class="muted" style="margin:8px 0 0">Top factors: ${factors}</p>`:"")+`</div>`;
 }
-async function milestonesCard(recId){
-  const r=await api("GET",`/api/sobjects/Case/${recId}/milestones`);
+async function milestonesCard(obj,recId){
+  const r=await api("GET",`/api/sobjects/${encodeURIComponent(obj)}/${recId}/milestones`);
   const ms=r.data||[];
   if(!ms.length) return "";
   const now=new Date().toISOString();
@@ -1102,6 +1167,44 @@ async function milestonesCard(recId){
     return `<tr><td>${esc(m.name)}</td><td>${esc((m.due_at||"").slice(0,16).replace("T"," "))}</td><td>${st}</td></tr>`;
   }).join("");
   return `<div class="card"><div class="section-title">SLA milestones</div><table><tr><th>Milestone</th><th>Due</th><th>Status</th></tr>${rows}</table></div>`;
+}
+async function kbVersionsCard(recId){
+  const r=await api("GET",`/api/kb/articles/${recId}/versions`);
+  const vs=Array.isArray(r.data)?r.data:[];
+  if(!vs.length) return "";
+  const rows=vs.map(v=>`<tr><td><b>v${v.version}</b></td><td>${esc(v.title||"")}</td><td class="muted">${esc(v.status||"")}</td><td class="muted">${esc((v.created_date||"").slice(0,16).replace("T"," "))}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="kbViewVersion('${recId}',${v.version})">View</button> <button class="btn secondary small" onclick="kbRestoreVersion('${recId}',${v.version})">Restore</button></td></tr>`).join("");
+  return `<div class="card"><div class="section-title">Article versions (${vs.length})</div><table><tr><th>Version</th><th>Title</th><th>Status</th><th>Saved</th><th></th></tr>${rows}</table><div id="kbv_detail"></div></div>`;
+}
+async function kbViewVersion(recId,version){
+  const r=await api("GET",`/api/kb/articles/${recId}/versions/${version}`);
+  const v=r.data||{};
+  document.getElementById("kbv_detail").innerHTML=`<div class="section-title" style="margin-top:8px">Version ${v.version}</div><p><b>${esc(v.title||"")}</b></p><p class="muted">${esc(v.summary||"")}</p><div style="white-space:pre-wrap">${esc(v.body||"")}</div>`;
+}
+async function kbRestoreVersion(recId,version){
+  if(!confirm(`Restore article to version ${version}? The current content will be saved as a new version first.`)) return;
+  const r=await api("POST",`/api/kb/articles/${recId}/versions/${version}/restore`);
+  r.ok?(toast("Article restored.","ok"),showDetail(recId)):toast("Restore failed: "+((r.data||{}).error||r.status),"error");
+}
+async function campaignMemberStatusesCard(campaignId){
+  const r=await api("GET",`/api/campaigns/${campaignId}/member-statuses`);
+  const ss=Array.isArray(r.data)?r.data:[];
+  const rows=ss.map(x=>`<tr><td>${esc(x.name)}</td><td class="muted">${x.builtin?"Built-in":(x.active?"Active":"Inactive")}</td><td style="white-space:nowrap">${x.id?`<button class="btn secondary small" onclick="cmsToggle('${campaignId}','${x.id}',${!x.active})">${x.active?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="cmsDel('${campaignId}','${x.id}')">Delete</button>`:""}</td></tr>`).join("");
+  return `<div class="card"><div class="section-title">Member statuses</div><table><tr><th>Status</th><th>State</th><th></th></tr>${rows}</table><div class="btnrow" style="margin-top:8px"><input id="cms_new" placeholder="New status name" style="max-width:220px"><button class="btn small" onclick="cmsAdd('${campaignId}')">Add status</button></div></div>`;
+}
+async function cmsAdd(campaignId){
+  const name=document.getElementById("cms_new").value.trim();
+  if(!name) return toast("Enter a status name.","error");
+  const r=await api("POST",`/api/campaigns/${campaignId}/member-statuses`,{name});
+  r.ok?(toast("Status added.","ok"),showDetail(campaignId)):toast("Add failed: "+((r.data||{}).error||r.status),"error");
+}
+async function cmsToggle(campaignId,sid,active){
+  const r=await api("PATCH",`/api/campaigns/${campaignId}/member-statuses/${sid}`,{active});
+  r.ok?(toast("Status updated.","ok"),showDetail(campaignId)):toast("Update failed: "+((r.data||{}).error||r.status),"error");
+}
+async function cmsDel(campaignId,sid){
+  if(!confirm("Delete this member status?")) return;
+  const r=await api("DELETE",`/api/campaigns/${campaignId}/member-statuses/${sid}`);
+  r.ok?(toast("Status deleted.","ok"),showDetail(campaignId)):toast("Delete failed: "+((r.data||{}).error||r.status),"error");
 }
 async function quoteLinesCard(recId){
   const r=await api("GET",`/api/sobjects/QuoteLineItem`);
@@ -1154,7 +1257,7 @@ function renderCoreCrmDetail(obj, recId){
         const ct=document.getElementById("sc_caseteam"); if(ct) ServiceCore.renderCaseTeamPanel(ct,recId);
       }
       const nz=document.getElementById("sc_notes");
-      if(nz&&["Account","Contact","Opportunity","Case","Lead"].includes(obj)) ServiceCore.renderNotes(nz,obj,recId);
+      if(nz&&obj!=="Note") ServiceCore.renderNotes(nz,obj,recId);
     }
   }catch(e){ console.warn("core crm detail render failed",e); }
 }
@@ -1220,10 +1323,11 @@ async function newRelated(childObj,fieldName,parentId){
 }
 async function delRec(id){ if(!confirm("Delete this record?"))return; const r=await api("DELETE",`/api/sobjects/${curObj}/${id}`); r.ok?(toast("Record moved to Recycle Bin.","ok"),showObject(curObj)):toast("Delete failed: "+JSON.stringify(r.data),"error"); }
 async function territoryCard(rec){
-  if(curObj!=="Account"&&curObj!=="Opportunity") return "";
-  const aid=curObj==="Account"?rec.Id:rec.AccountId;
-  if(!aid) return "";
-  const r=await api("GET",`/api/sobjects/Account/${aid}/territories`).catch(()=>({data:[]}));
+  const r=await api("GET",`/api/sobjects/${encodeURIComponent(curObj)}/${rec.Id}/territories`).catch(()=>({data:[]}));
+  const ts=(r&&r.data)||[];
+  return `<div class="card${ts.length?"":" collapsible collapsed"}"><div class="section-title"${ts.length?"":` onclick="toggleCollapse(this)"`}>Territories (${ts.length})</div>`+
+    (ts.length?`<table><tr><th>Name</th></tr>${ts.map(t=>`<tr><td>${esc(t.name)}</td></tr>`).join("")}</table>`:`<p class="muted">No territories assigned yet. Run assignment rules from Setup → Data Model → Territory Assignment.</p>`)+`</div>`;
+}
   const ts=(r&&r.data)||[];
   return `<div class="card${ts.length?"":" collapsible collapsed"}"><div class="section-title"${ts.length?"":` onclick="toggleCollapse(this)"`}>Territories (${ts.length})</div>`+
     (ts.length?`<table><tr><th>Name</th></tr>${ts.map(t=>`<tr><td>${esc(t.name)}</td></tr>`).join("")}</table>`:`<p class="muted">No territories assigned yet. Run assignment rules from Setup → Data Model → Territory Assignment.</p>`)+`</div>`;
@@ -1305,6 +1409,34 @@ async function dynFormInitForm(){
   const card=document.querySelector("#main .card");
   if(card){ card.addEventListener("input",apply); card.addEventListener("change",apply); }
   apply();
+  wireDynamicPicklists(rec);
+  wireTaskRecurrence();
+}
+const TASK_REC_FIELDS=["RecurrenceType","RecurrenceInterval","RecurrenceEndDate","RecurrenceCount"];
+function wireTaskRecurrence(){
+  if(curObj!=="Task") return;
+  const box=document.getElementById("f_IsRecurring");
+  const occ=document.getElementById("ff_OccurrenceNumber");
+  if(occ) occ.style.display="none"; // system-managed
+  if(!box) return;
+  const sync=()=>{ const on=box.checked;
+    TASK_REC_FIELDS.forEach(n=>{ const w=document.getElementById("ff_"+n); if(w) w.style.display=on?"":"none"; }); };
+  box.addEventListener("change",sync);
+  sync();
+}
+async function wireDynamicPicklists(rec){
+  if(curObj!=="CampaignMember") return;
+  const st=document.getElementById("f_Status"), camp=document.getElementById("f_CampaignId");
+  if(!st||!camp||!st.dataset.dynpick) return;
+  const load=async()=>{
+    const cid=camp.value;
+    let names=[];
+    if(cid){ const r=await api("GET",`/api/campaigns/${cid}/member-statuses`); names=(r.data||[]).map(x=>x.name); }
+    const cur=st.value||rec.Status||"";
+    st.innerHTML=`<option value="">—</option>`+names.map(n=>`<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("")+(cur&&!names.includes(cur)?`<option selected>${esc(cur)}</option>`:"");
+  };
+  camp.addEventListener("change",load);
+  await load();
 }
 async function showForm(id){
   if(id&&/__b$/.test(curObj)){ document.getElementById("main").innerHTML=`<div class="err">Big object records are append-only and cannot be edited.</div>`; return; }
@@ -1317,7 +1449,8 @@ async function showForm(id){
     if((!id&&!f.editable)||f.computed) continue;
     let fh=`<label>${esc(f.label)}${f.required?' <b style="color:#c0392b">*</b>':""}${f.type==="MasterDetail"?' <span class="pill">Master-Detail</span>':""}</label>`;
     const val=rec[f.name]??"";
-    if(f.type==="Picklist") fh+=`<select id="f_${f.name}"><option value="">—</option>${(f.picklist_values||[]).map(v=>`<option ${v===val?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
+    if(f.type==="Picklist"&&f.dynamic_picklist) fh+=`<select id="f_${f.name}" data-dynpick="1"><option value="">—</option>${val?`<option selected>${esc(val)}</option>`:""}</select>`;
+    else if(f.type==="Picklist") fh+=`<select id="f_${f.name}"><option value="">—</option>${(f.picklist_values||[]).map(v=>`<option ${v===val?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
     else if(f.type==="MultiPicklist") fh+=`<select id="f_${f.name}" multiple size="4">${(f.picklist_values||[]).map(v=>`<option ${String(val).split(";").includes(v)?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
     else if(f.type==="Checkbox") fh+=`<input type="checkbox" id="f_${f.name}" ${val?"checked":""} style="width:auto">`;
     else if(f.type==="TextArea") fh+=`<textarea id="f_${f.name}" rows="3">${esc(val)}</textarea>`;
@@ -1562,15 +1695,19 @@ async function decideApproval(id,approve){
 const CONDITION_EXAMPLE=`{"and":[{"==":[{"field":"Stage"},"Negotiation"]},{"!=":[{"field_old":"Stage"},"Negotiation"]}]}`;
 
 // ------------------------------------------------------------ forecasts
-let fcPeriod=null;
+let fcPeriod=null, fcType="builtin";
 async function showForecasts(){
   setActive("__forecasts");
   if(!fcPeriod){ const d=new Date(); fcPeriod=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
-  const r=await api("GET",`/api/forecasts?period=${fcPeriod}`);
+  const types=(await api("GET","/api/admin/forecast-types")).data||[];
+  if(!types.some(t=>t.id===fcType)) fcType="builtin";
+  const r=await api("GET",`/api/forecasts?period=${fcPeriod}&type=${fcType}`);
   if(!r.ok){ document.getElementById("main").innerHTML=`<div class="err">${esc(r.data.error||"Failed to load forecasts")}</div>`; return; }
   const rows=r.data.rows||[];
   const maxF=Math.max(1,...rows.map(x=>x.forecast||0));
-  let html=`<div class="btnrow"><h2 style="margin:0">Forecasts</h2><span style="flex:1"></span><label style="margin:0">Period</label><input id="fc_per" type="month" value="${fcPeriod}" style="width:auto"><button class="btn secondary small" onclick="fcPeriod=v('fc_per');showForecasts()">Go</button></div>`;
+  const typeName=(r.data.forecast_type||{}).name||"Forecast";
+  let html=`<div class="btnrow"><h2 style="margin:0">Forecasts</h2><span style="flex:1"></span><label style="margin:0">Type</label><select id="fc_type" style="width:auto" onchange="fcType=this.value;showForecasts()">${types.map(t=>`<option value="${t.id}" ${t.id===fcType?"selected":""}>${esc(t.name)} (${esc(t.object)})</option>`).join("")}</select><label style="margin:0">Period</label><input id="fc_per" type="month" value="${fcPeriod}" style="width:auto"><button class="btn secondary small" onclick="fcPeriod=v('fc_per');showForecasts()">Go</button></div>`;
+  html+=`<p class="muted" style="margin:0 0 8px">${esc(typeName)}${types.length>1?` · <a href="#" onclick="showSetup('forecast-types');return false">manage forecast types</a>`:""}</p>`;
   html+=`<div class="card"><table><tr><th>Salesperson</th><th>Quota</th><th>Closed</th><th>Weighted pipeline</th><th>Forecast</th><th>Attainment</th></tr>`;
   html+=rows.map(x=>{
     const att=x.attainment==null?"—":`${(x.attainment*100).toFixed(1)}%`;
@@ -1580,7 +1717,7 @@ async function showForecasts(){
   html+=`</table><p class="muted">Closed Won counts at full amount; open stages count at Amount × Probability. Lost deals are excluded.</p></div>`;
   if(me.profile==="System Administrator"){
     const users=(await api("GET","/api/admin/users")).data||[];
-    const quotas=(await api("GET","/api/admin/forecast-quotas")).data||[];
+    const quotas=(await api("GET",`/api/admin/forecast-quotas?type=${fcType}`)).data||[];
     html+=`<div class="card"><div class="section-title">Quotas</div><div id="qerr"></div>`
       +`<div class="grid2"><div><label>User</label><select id="q_user">${users.map(u=>`<option value="${u.id}">${esc(u.username)} — ${esc(u.name)}</option>`).join("")}</select></div>`
       +`<div><label>Period</label><input id="q_per" type="month" value="${fcPeriod}"><label>Quota ($)</label><input id="q_amt" type="number" min="0" step="1000"></div></div>`
@@ -1590,7 +1727,7 @@ async function showForecasts(){
   document.getElementById("main").innerHTML=html;
 }
 async function saveQuota(){
-  const r=await api("POST","/api/admin/forecast-quotas",{user_id:v("q_user"),period:v("q_per"),quota:parseFloat(v("q_amt"))});
+  const r=await api("POST","/api/admin/forecast-quotas",{user_id:v("q_user"),period:v("q_per"),quota:parseFloat(v("q_amt")),forecast_type_id:fcType});
   document.getElementById("qerr").innerHTML=r.ok?`<div class="ok">Quota saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
   if(r.ok) showForecasts();
 }
@@ -1685,6 +1822,17 @@ async function showAdmin(section, highlight){
     <label>Object</label><select id="of_obj" onchange="listObjectFields()"></select>
     <div class="btnrow" style="margin-top:12px"><button class="btn secondary" onclick="listObjectFields()">Refresh fields</button><button class="btn danger" onclick="deleteObject()">Delete object…</button></div>
     <div id="of_list"></div></div>
+  <div class="card"><div class="section-title">Calendar sources</div><div id="calserr"></div>
+    <p class="muted">Choose which objects appear on the Calendar and which date field drives each one. Events, Tasks and Service Appointments are the built-in sources; any object with a Date or DateTime field can be added.</p>
+    <div class="grid2"><div><label>Object</label><select id="cals_obj" onchange="calsOnObj()"></select><label>Date field</label><select id="cals_date"></select></div>
+    <div><label>Label field (blank = Subject / Name)</label><select id="cals_label"></select><label>Color</label><input id="cals_color" type="color" value="#6b5ce7" style="height:34px"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="calsSave()">Save source</button><button class="btn secondary" onclick="calsDisable()">Remove from calendar</button><button class="btn secondary" onclick="calsRefresh()">Refresh list</button></div>
+    <div id="cals_list"></div></div>
+  <div class="card"><div class="section-title">Stored roll-up rules</div><div id="ruerr"></div>
+    <p class="muted">Recompute a parent field from its child records on every child create, update or delete — e.g. Opportunity Amount = SUM of line-item TotalPrice. Rules aggregate the acting user's visible child records and write through the normal save pipeline (validation, triggers, flows).</p>
+    <div class="grid2"><div><label>Name</label><input id="ru_name"><label>Child object</label><select id="ru_child">${objs}</select><label>Parent object</label><select id="ru_parent">${objs}</select><label>Link field (on the child, holds the parent id)</label><input id="ru_link" placeholder="OpportunityId"></div>
+    <div><label>Parent field (written by the roll-up)</label><input id="ru_pfield" placeholder="Amount"><label>Child field (aggregated; blank for count)</label><input id="ru_cfield" placeholder="TotalPrice"><label>Function</label><select id="ru_func"><option>sum</option><option>count</option><option>min</option><option>max</option><option>avg</option></select></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="ru_submit" onclick="submitSetupForm('rollup-rules')">Create rule</button><button class="btn secondary" id="ru_cancel" style="display:none" onclick="cancelSetupEdit('rollup-rules')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('rollup-rules')">Refresh list</button></div><div id="ru_list"></div></div>
   <div class="card"><div class="section-title">Validation rule</div><div id="vrerr"></div><p class="muted">Condition is expression JSON — the rule fires when it evaluates to true. Example: <code>${esc(CONDITION_EXAMPLE)}</code></p>
     <div class="grid2"><div><label>Object</label><select id="vr_obj">${objs}</select><label>Name</label><input id="vr_name"></div>
     <div><label>Error message</label><input id="vr_msg"><label>Condition JSON</label><textarea id="vr_cond" rows="3" placeholder='{"<":[{"field":"CloseDate"},{"today":true}]}'></textarea><div class="cb-host" id="cb_vr"></div></div></div>
@@ -1756,11 +1904,26 @@ async function showAdmin(section, highlight){
     <div class="grid2"><div><label>Name</label><input id="ar_name"><label>Object</label><select id="ar_obj">${objs}</select><label>Order</label><input id="ar_ord" type="number" value="10"></div>
     <div><label>Criteria JSON (blank = always)</label><textarea id="ar_crit" rows="2" placeholder='{"==":[{"field":"LeadSource"},"Web"]}'></textarea><div class="cb-host" id="cb_ar"></div><label>Template</label><select id="ar_tpl"></select></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="ar_submit" onclick="submitSetupForm('auto-response-rules')">Create rule</button><button class="btn secondary" id="ar_cancel" style="display:none" onclick="cancelSetupEdit('auto-response-rules')">Cancel</button><button class="btn secondary" onclick="listAutoResponses()">Refresh list</button></div><div id="ar_list"></div></div>
-  <div class="card"><div class="section-title">Case SLA policy</div><div id="slaerr"></div>
-    <p class="muted">Stamps first-response / resolution due-time milestones on new cases. The hourly "Case SLA monitor" job marks breaches and notifies the owner and their manager.</p>
-    <div class="grid2"><div><label>Name</label><input id="sla_name"><label>Priority (blank = any)</label><select id="sla_pri"><option value="">Any</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></div>
-    <div><label>Milestones JSON</label><textarea id="sla_ms" rows="3" placeholder='[{"name":"First response","target_minutes":60},{"name":"Resolution","target_minutes":480}]'></textarea></div></div>
+  <div class="card"><div class="section-title">SLA policy</div><div id="slaerr"></div>
+    <p class="muted">Stamps first-response / resolution due-time milestones on new records. The hourly "Case SLA monitor" job marks breaches and notifies the owner and their manager. Open milestones complete when the record's fields reach the completion values (default: Status = Closed).</p>
+    <div class="grid2"><div><label>Name</label><input id="sla_name"><label>Object</label><select id="sla_obj">${objs}</select><label>Priority (blank = any)</label><select id="sla_pri"><option value="">Any</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></div>
+    <div><label>Milestones JSON</label><textarea id="sla_ms" rows="3" placeholder='[{"name":"First response","target_minutes":60},{"name":"Resolution","target_minutes":480}]'></textarea><label>Completion JSON (field → value; blank = {"Status":"Closed"})</label><textarea id="sla_comp" rows="2" placeholder='{"Status":"Closed"}'></textarea></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="sla_submit" onclick="submitSetupForm('sla-policies')">Create policy</button><button class="btn secondary" id="sla_cancel" style="display:none" onclick="cancelSetupEdit('sla-policies')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('sla-policies')">Refresh list</button></div><div id="sla_list"></div></div>
+  <div class="card"><div class="section-title">Lead field mappings</div><div id="lfmerr"></div>
+    <p class="muted">Map Lead fields onto Account / Contact / Opportunity fields at conversion. Built-in defaults (Name from Company, FirstName/LastName/Email/Phone) apply first; mappings here override them; explicit API options override both.</p>
+    <div class="grid2"><div><label>Name</label><input id="lfm_name" placeholder="Industry mapping"><label>Lead field</label><input id="lfm_lfield" placeholder="Industry"></div>
+    <div><label>Target object</label><select id="lfm_tobj"><option>Account</option><option>Contact</option><option>Opportunity</option></select><label>Target field</label><input id="lfm_tfield" placeholder="Industry"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="lfm_submit" onclick="submitSetupForm('lead-field-mappings')">Create mapping</button><button class="btn secondary" id="lfm_cancel" style="display:none" onclick="cancelSetupEdit('lead-field-mappings')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('lead-field-mappings')">Refresh list</button></div><div id="lfm_list"></div></div>
+  <div class="card"><div class="section-title">Web-to forms</div><div id="w2ferr"></div>
+    <p class="muted">Public intake forms (<code>/api/public/&lt;key&gt;</code>). Field lists are per object — edit which fields the form collects, which are required, and the defaults stamped on submission.</p>
+    <div class="grid2"><div><label>Name</label><input id="w2f_name" placeholder="Web-to-Lead"><label>Key (URL path)</label><input id="w2f_key" placeholder="web-to-lead"><label>Object</label><select id="w2f_obj">${objs}</select><label>Title</label><input id="w2f_title" placeholder="Contact us"></div>
+    <div><label>Fields (comma-separated)</label><input id="w2f_fields" placeholder="FirstName, LastName, Company"><label>Required (comma-separated)</label><input id="w2f_req" placeholder="LastName, Company"><label>Defaults (JSON)</label><input id="w2f_defaults" placeholder='{"LeadSource":"Web"}'></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="w2f_submit" onclick="submitSetupForm('web-to-forms')">Create form</button><button class="btn secondary" id="w2f_cancel" style="display:none" onclick="cancelSetupEdit('web-to-forms')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('web-to-forms')">Refresh list</button></div><div id="w2f_list"></div></div>
+  <div class="card"><div class="section-title">Forecast types</div><div id="fterr"></div>
+    <p class="muted">Forecast revenue-like numbers for any object. Each type maps an amount field, a date field (bucketed by month), and a category field whose values split into won (full amount), lost (excluded), and open (amount × probability, or full amount when no probability field is set). "Opportunity Revenue" is built in.</p>
+    <div class="grid2"><div><label>Name</label><input id="ft_name" placeholder="Services forecast"><label>Object</label><select id="ft_obj">${objs}</select><label>Amount field</label><input id="ft_amt" placeholder="Amount"><label>Date field</label><input id="ft_date" placeholder="CloseDate"></div>
+    <div><label>Category field</label><input id="ft_cat" placeholder="Stage"><label>Won values (comma-separated)</label><input id="ft_won" placeholder="Closed Won"><label>Lost values (comma-separated)</label><input id="ft_lost" placeholder="Closed Lost"><label>Probability field (optional)</label><input id="ft_prob" placeholder="Probability"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="ft_submit" onclick="submitSetupForm('forecast-types')">Create type</button><button class="btn secondary" id="ft_cancel" style="display:none" onclick="cancelSetupEdit('forecast-types')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('forecast-types')">Refresh list</button></div><div id="ft_list"></div></div>
   <div class="card"><div class="section-title">Escalation rule</div><div id="escerr"></div>
     <p class="muted">Criteria = expression JSON (blank = always). Runs on: <b>save</b> (create/update) or <b>sla_breach</b> (from the SLA monitor job). Action JSON: <code>{"type":"set_fields","fields":{"Priority":"Critical"}}</code>, <code>{"type":"reassign","user_id":"u_…"}</code>, or <code>{"type":"notify","to":"manager","message":"…"}</code> ("to" can be owner, manager, or a user id).</p>
     <div class="grid2"><div><label>Name</label><input id="esc_name"><label>Object</label><select id="esc_obj">${objs}</select><label>Runs on</label><select id="esc_on"><option value="save">save</option><option value="sla_breach">sla_breach</option></select></div>
@@ -1791,14 +1954,14 @@ async function showAdmin(section, highlight){
     <p class="muted">One-time org setting. Enabling adds FirstName, LastName, PersonEmail, PersonPhone and IsPersonAccount to Account plus the PersonAccount record type; Account Name is derived from the person name.</p>
     <div class="btnrow"><button class="btn" onclick="enablePersonAccounts()">Enable Person Accounts</button></div><div id="pa2_info" style="margin-top:8px"></div></div>
   <div class="card"><div class="section-title">Territories</div><div id="terrerr"></div>
-    <p class="muted">Territory hierarchy with user assignments and criteria-based assignment rules. Assigning a user to a territory includes its descendants; matching accounts can be opened to territory members through sharing.</p>
+    <p class="muted">Territory hierarchy with user assignments and criteria-based assignment rules. Assigning a user to a territory includes its descendants; matching records can be opened to territory members through sharing.</p>
     <div class="grid2"><div><label>Name</label><input id="terr_name" placeholder="West"><label>Parent territory</label><select id="terr_parent"><option value="">— none (top) —</option></select><label>Description</label><input id="terr_desc"></div>
     <div><label>Add user to territory</label><select id="terrm_user"></select><label>Territory</label><select id="terrm_terr"></select><label>Role</label><input id="terrm_role" placeholder="Sales Rep"></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createTerritory()">Create territory</button><button class="btn secondary" onclick="addTerritoryMember()">Add member</button></div>
     <div id="terr_list" style="margin-top:8px"></div>
     <h4 style="margin-top:14px">Assignment rules</h4>
-    <div class="grid2"><div><label>Rule name</label><input id="trule_name"><label>Criteria JSON (blank = all accounts)</label><textarea id="trule_crit" rows="2" placeholder='{"==":[{"field":"BillingState"},"CA"]}'></textarea></div>
-    <div><label>Territory</label><select id="trule_terr"></select><label>Priority (lower runs first)</label><input id="trule_prio" type="number" value="10"></div></div>
+    <div class="grid2"><div><label>Rule name</label><input id="trule_name"><label>Criteria JSON (blank = all records)</label><textarea id="trule_crit" rows="2" placeholder='{"==":[{"field":"BillingState"},"CA"]}'></textarea></div>
+    <div><label>Territory</label><select id="trule_terr"></select><label>Object</label><select id="trule_obj"></select><label>Priority (lower runs first)</label><input id="trule_prio" type="number" value="10"></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createTerrRule()">Create rule</button><button class="btn secondary" onclick="runTerrAssignment()">Run assignment now</button></div>
     <div id="trule_list" style="margin-top:8px"></div></div>
   <div class="card"><div class="section-title">Big Objects &amp; Archival</div><div id="boerr"></div>
@@ -1839,8 +2002,10 @@ async function showAdmin(section, highlight){
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createApiKey()">Create key</button><button class="btn secondary" onclick="listApiKeys()">Refresh</button></div>
     <div id="ak_list"></div></div>
   <div class="card"><div class="section-title">CSV import</div><div id="imperr"></div>
-    <div class="grid2"><div><label>Object</label><select id="im_obj">${objs}</select><label>Mode</label><select id="im_mode"><option value="insert">Insert</option><option value="upsert">Upsert (match by external ID)</option></select></div><div><label>CSV file (headers = field names)</label><input type="file" id="im_file" accept=".csv"><label>External ID field (upsert mode)</label><input id="im_ext" placeholder="External_Id"></div></div>
-    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="importCsv()">Import</button></div></div>
+    <div class="grid2"><div><label>Object</label><select id="im_obj">${objs}</select><label>Mode</label><select id="im_mode"><option value="insert">Insert</option><option value="upsert">Upsert (match by external ID)</option></select></div><div><label>CSV file (headers = field names)</label><input type="file" id="im_file" accept=".csv"><label>External ID field (upsert mode)</label><input id="im_ext" placeholder="External_Id"><label>On duplicate (insert mode)</label><select id="im_dup"><option value="insert">Insert anyway</option><option value="skip">Skip</option><option value="update">Update matching record</option><option value="report">Report only (no writes)</option></select></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="importCsv()">Import</button></div>
+    <div id="im_result"></div>
+    <div class="section-title" style="font-size:13px;margin-top:14px">Recent import runs</div><div id="im_runs"></div></div>
   <div class="card"><div class="section-title">Users</div><div id="auerr"></div>
     <div class="grid2"><div><label>Username</label><input id="au_user"><label>Full name</label><input id="au_name"><label>Email</label><input id="au_email" type="email"></div>
     <div><label>Temporary password</label><input id="au_pass" type="password" placeholder="User must change at first login"><label>Profile</label><select id="au_prof">${pList.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select>
@@ -1856,6 +2021,18 @@ async function showAdmin(section, highlight){
     <div id="pf_list"></div>
     <div id="pf_new" style="display:none;margin-top:8px"><label>Profile name</label><input id="pf_new_name" style="max-width:260px"><div class="btnrow" style="margin-top:8px"><button class="btn small" onclick="createProfile()">Create</button><button class="btn secondary small" onclick="document.getElementById('pf_new').style.display='none'">Cancel</button></div><div id="pfnewerr"></div></div>
     <div id="pf_editor" style="display:none;margin-top:12px"></div></div>
+  <div class="card"><div class="section-title">Divisions</div><div id="dverr"></div>
+    <p class="muted">Partition records by business unit. Records are global unless assigned to a division; a user whose profile sets a default division sees that division's records plus global ones. Deleting a division that still has records is blocked — move them first.</p>
+    <div class="grid2"><div><label>Name</label><input id="dv_name" placeholder="EMEA"></div>
+    <div><label>Description</label><input id="dv_desc" placeholder="Europe, Middle East, Africa"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="dv_submit" onclick="submitSetupForm('divisions')">Create division</button><button class="btn secondary" id="dv_cancel" style="display:none" onclick="cancelSetupEdit('divisions')">Cancel</button></div>
+    <div id="dv_list"></div><div id="dv_usage" class="muted" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Delegated administration</div><div id="dgerr"></div>
+    <p class="muted">Give non-admin users a limited admin scope: manage users, reset passwords, manage roles or manage profiles. Members can only touch users whose role is inside the group's "limit to roles" list (blank = any role).</p>
+    <div class="grid2"><div><label>Group name</label><input id="dg_name"><label>Members (users)</label><div id="dg_members" style="max-height:120px;overflow:auto"><span class="muted">Loading…</span></div></div>
+    <div><label>Description</label><input id="dg_desc"><label>Scopes</label><div id="dg_scopes"></div></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="dg_submit" onclick="dgSave()">Create group</button><button class="btn secondary" id="dg_cancel" style="display:none" onclick="dgCancel()">Cancel</button></div>
+    <div id="dg_list"></div></div>
   <div class="card"><div class="section-title">Security policies</div><div id="sperr"></div>
     <p class="muted">Apply to new sign-ins immediately; existing sessions keep their current expiry.</p>
     <div class="grid2"><div>
@@ -1904,6 +2081,17 @@ async function showAdmin(section, highlight){
     <label><input type="checkbox" id="cha_mentions" style="width:auto"> @mentions enabled</label>
     <p class="muted">When off, @username mentions are not recorded and no mention notifications are sent.</p>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveChatterSettings()">Save</button></div></div>
+  <div class="card"><div class="section-title">Translation workbench</div><div id="tberr"></div>
+    <p class="muted">Custom labels with per-language translations. Keys use the form <code>section.name</code> (e.g. <code>login.tagline</code>). The public sign-in screen reads its labels from <code>/api/i18n/&lt;lang&gt;</code>.</p>
+    <div class="grid2"><div><label>Key</label><input id="tb_key" placeholder="login.tagline"><label>Default text</label><input id="tb_text"></div>
+    <div><label>Category</label><input id="tb_cat" placeholder="login"><label>Description</label><input id="tb_desc"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="tbSave()">Add label</button></div>
+    <div id="tb_list"></div></div>
+  <div class="card"><div class="section-title">Login branding & flows</div><div id="lberr"></div>
+    <p class="muted">Sign-in screen appearance, the post-login announcement banner, and which flow steps run after each sign-in.</p>
+    <div class="grid2"><div><label>Headline</label><input id="lb_headline"><label>Tagline</label><input id="lb_tagline"><label>Logo URL</label><input id="lb_logo" placeholder="https://…"><label>Primary color</label><input id="lb_color" placeholder="#2f80ed"><label>Background (CSS)</label><input id="lb_bg" placeholder="linear-gradient(135deg,#1f6feb,#6e40c9)"></div>
+    <div><label><input type="checkbox" id="lb_ann_on" style="width:auto"> Show announcement after login</label><label>Announcement title</label><input id="lb_ann_title"><label>Announcement body</label><textarea id="lb_ann_body" rows="3"></textarea><label>Post-login flow steps</label><div id="lb_flow" class="muted">Loading…</div></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="lbSave()">Save</button></div></div>
   <div class="card"><div class="section-title">Login history</div>
     <p class="muted">Every sign-in attempt, successful or failed.</p>
     <div class="grid2"><div><label>Username contains</label><input id="lh_user"></div><div><label>Status</label><select id="lh_success"><option value="">All</option><option value="1">Successful</option><option value="0">Failed</option></select></div></div>
@@ -1969,6 +2157,12 @@ async function showAdmin(section, highlight){
     <div class="grid2"><div><label>Label</label><input id="xo_label" placeholder="Products"><label>API name</label><input id="xo_api" placeholder="Products__x"><label>Named credential (optional)</label><input id="xo_cred" placeholder="erp-cred"></div>
     <div><label>OData service root</label><input id="xo_url" placeholder="https://example.com/odata"><label>Entity set</label><input id="xo_entity" placeholder="Products"><label>Key field</label><input id="xo_key" value="Id"></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createXObject()">Save object</button><button class="btn secondary" onclick="listXObjects()">Refresh</button></div><div id="xo_list" style="margin-top:8px"></div></div>
+  <div class="card"><div class="section-title">Test data seeding</div><div id="sderr"></div>
+    <p class="muted">Templates generate synthetic records for testing. Pattern tokens: <code>{seq}</code>, <code>{int:1-100}</code>, <code>{first}</code>, <code>{last}</code>, <code>{word}</code>, <code>{pick:a|b|c}</code>, <code>{bool}</code>, <code>{email}</code>. Running a template writes real records — confirm before each run.</p>
+    <div class="grid2"><div><label>Name</label><input id="sd_name"><label>Object</label><select id="sd_obj">${objs}</select><label>Count (max 1000)</label><input id="sd_count" type="number" value="50" min="1" max="1000"></div>
+    <div><label>Field rules JSON</label><textarea id="sd_rules" rows="5" placeholder='[{"field":"Name","mode":"pattern","pattern":"{pick:Acme|Globex} {int:100-999}"},{"field":"Industry","mode":"picklist_random"}]'></textarea><label><input type="checkbox" id="sd_active" style="width:auto" checked> Active</label></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="sd_submit" onclick="sdSave()">Create template</button><button class="btn secondary" id="sd_cancel" style="display:none" onclick="sdCancel()">Cancel</button></div>
+    <div id="sd_list"></div></div>
   <div class="card"><div class="section-title">Duplicate rules, email alerts & forecasting</div>
     <p class="muted">Declarative duplicate management (matching rules declare which fields identify a duplicate; duplicate rules Block or Warn on create/update), templated email alerts that fire on record create/update, and forecast quotas with category rollups over open opportunities. Duplicate blocks are enforced on every record save.</p>
     <div id="cc_plat"></div></div>
@@ -1995,9 +2189,9 @@ const CARD_SECTION={
  "Relationships":"datamodel","Person Accounts":"datamodel","Territories":"datamodel","Big Objects & Archival":"datamodel",
  "App Manager":"apps",
  "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Dynamic Forms":"automation","Approval process":"automation","Assignment rule":"automation","Case SLA policy":"automation","Escalation rule":"automation","Auto-response rule":"automation",
- "Users":"security","Create role":"security","Permission set":"security","Profiles":"security","Security policies":"security","Sharing rule (criteria-based)":"security","Duplicate matching rule":"security","API keys":"security",
+ "Users":"security","Create role":"security","Permission set":"security","Profiles":"security","Security policies":"security","Sharing rule (criteria-based)":"security","Duplicate matching rule":"security","Divisions":"security","Delegated administration":"security","API keys":"security",
  "Webhook":"integrations","Named credential (HTTP callouts)":"integrations","Email template":"integrations","CSV import":"integrations","Metadata package":"integrations","Change sets":"integrations",
- "Company settings":"company","Community portal":"company","Chatter settings":"company",
+ "Company settings":"company","Community portal":"company","Chatter settings":"company","Translation workbench":"company","Login branding & flows":"company",
  "Bulk API 2.0":"devops","Streaming events":"devops","Sandboxes":"devops","Source tracking":"devops","Custom metadata types":"devops","Custom settings":"devops","External objects":"devops",
  "Scheduled job":"monitoring","Field history tracking":"monitoring","Audit trail & change events":"monitoring","AI lead scoring":"monitoring","Login history":"monitoring","Storage usage":"monitoring",
  "Duplicate rules, email alerts & forecasting":"corecrm","Case teams & entitlements":"corecrm",
@@ -2009,6 +2203,7 @@ const SETUP_TILES=[
  {section:"datamodel",card:"Record type",desc:"Per-type picklists & defaults",kind:"record-types"},
  {section:"datamodel",card:"Page layouts",desc:"Visual page-layout editor"},
  {section:"datamodel",card:"Sales path",desc:"Stage guidance paths"},
+ {section:"datamodel",card:"Stored roll-up rule",desc:"Parent fields recomputed from child records",kind:"rollup-rules"},
  {section:"datamodel",card:"Relationships",desc:"Lookup & master-detail, cascade delete"},
  {section:"datamodel",card:"Person Accounts",desc:"B2C person records on Account"},
  {section:"datamodel",card:"Territories",desc:"Hierarchy, assignment rules, sharing"},
@@ -2021,7 +2216,9 @@ const SETUP_TILES=[
  {section:"automation",card:"Dynamic Forms",desc:"Conditional field visibility"},
  {section:"automation",card:"Approval process",desc:"Multi-step approvals",kind:"approval-processes"},
  {section:"automation",card:"Assignment rule",desc:"Round-robin & rule assignment",kind:"assignment-rules"},
- {section:"automation",card:"Case SLA policy",desc:"Milestones & breach tracking",kind:"sla-policies"},
+ {section:"automation",card:"Lead field mapping",desc:"Lead conversion field mappings",kind:"lead-field-mappings"},
+ {section:"automation",card:"Web-to form",desc:"Public intake forms and their field lists",kind:"web-to-forms"},
+ {section:"automation",card:"SLA policy",desc:"Milestones & breach tracking",kind:"sla-policies"},
  {section:"automation",card:"Escalation rule",desc:"Save & breach escalations",kind:"escalation-rules"},
  {section:"automation",card:"Auto-response rule",desc:"Instant email replies",kind:"auto-response-rules"},
  {section:"security",card:"Users",desc:"Create, edit, deactivate & unlock users",url:"/api/admin/users"},
@@ -2031,11 +2228,13 @@ const SETUP_TILES=[
  {section:"security",card:"Permission set",desc:"Additive grants",kind:"permission-sets"},
  {section:"security",card:"Sharing rule (criteria-based)",desc:"Criteria sharing",kind:"sharing-rules"},
  {section:"security",card:"Duplicate matching rule",desc:"Duplicate detection",kind:"matching-rules"},
+ {section:"security",card:"Divisions",desc:"Record partitions by business unit",kind:"divisions"},
+ {section:"security",card:"Delegated administration",desc:"Limited-scope admin groups",url:"/api/admin/delegated-groups"},
  {section:"security",card:"API keys",desc:"Integration keys",url:"/api/api-keys"},
  {section:"integrations",card:"Webhook",desc:"Signed HTTP callbacks",kind:"webhooks"},
  {section:"integrations",card:"Named credential (HTTP callouts)",desc:"Callout auth & secrets",url:"/api/admin/named-credentials"},
  {section:"integrations",card:"Email template",desc:"Merge-field templates",kind:"email-templates"},
- {section:"integrations",card:"CSV import",desc:"Bulk insert / upsert"},
+ {section:"integrations",card:"CSV import",desc:"Bulk insert / upsert, duplicates & retry"},
  {section:"integrations",card:"Metadata package",desc:"Export / import org config"},
  {section:"integrations",card:"Change sets",desc:"Deploy selected metadata"},
  {section:"devops",card:"Bulk API 2.0",desc:"CSV ingest jobs with per-row results"},
@@ -2045,9 +2244,12 @@ const SETUP_TILES=[
  {section:"devops",card:"Custom metadata types",desc:"Deployable typed config (__mdt)"},
  {section:"devops",card:"Custom settings",desc:"Org-wide key/value config"},
  {section:"devops",card:"External objects",desc:"OData-backed virtual objects (__x)"},
+ {section:"devops",card:"Test data seeding",desc:"Seed templates & runs",url:"/api/admin/seed-templates"},
  {section:"company",card:"Company settings",desc:"Organization name, locale & currency"},
  {section:"company",card:"Community portal",desc:"Portal branding & access"},
  {section:"company",card:"Chatter settings",desc:"Feed & @mention control"},
+ {section:"company",card:"Translation workbench",desc:"Custom labels & languages",url:"/api/admin/labels"},
+ {section:"company",card:"Login branding & flows",desc:"Sign-in screen & announcements"},
  {section:"monitoring",card:"Scheduled job",desc:"Python on a schedule",kind:"scheduled-jobs"},
  {section:"monitoring",card:"Field history tracking",desc:"Per-object change log control"},
  {section:"monitoring",card:"Audit trail & change events",desc:"Who changed what"},
@@ -2111,11 +2313,12 @@ function setupAfterRender(section, highlight){
   for(const [kind,cfg] of Object.entries(SETUP_KINDS)){ if(cfg.cardSection===sec.id) refreshSetupList(kind); }
   for(const b of COND_BUILDERS){ if(b.section===sec.id) cbInit(b.id,b.objSel,b.target); }
   // custom read-only lists
-  if(sec.id==="security"){ listSetupUsers(); listSetupRoles(); listProfiles(); loadSecurityPolicies(); }
-  if(sec.id==="company"){ loadOrgSettings(); loadPortalSettings(); loadChatterSettings(); }
+  if(sec.id==="security"){ listSetupUsers(); listSetupRoles(); listProfiles(); loadSecurityPolicies(); divUsage(); dgInit(); }
+  if(sec.id==="company"){ loadOrgSettings(); loadPortalSettings(); loadChatterSettings(); tbList(); lbLoad(); }
   if(sec.id==="monitoring"){ loadLoginHistory(0); loadStorage(); }
-  if(sec.id==="datamodel"){ listSetupObjects(); listObjectFields(); leList(); leFields(); }
-  if(sec.id==="integrations"){ listNamedCreds(); listChangeSets(); }
+  if(sec.id==="datamodel"){ listSetupObjects(); listObjectFields(); leList(); leFields(); calsRefresh(); }
+  if(sec.id==="integrations"){ listNamedCreds(); listChangeSets(); importRunsList(); }
+  if(sec.id==="devops"){ sdList(); }
   if(sec.id==="monitoring"){ listJobs(); loadHistoryTracking(); }
   if(sec.id==="corecrm"){ renderCoreCrmSetup(); }
   if(highlight){
@@ -2174,6 +2377,14 @@ const SETUP_KINDS={
    fields:[["name","dr_name"],["object","dr_obj"],["fields","dr_fields","csv"],["active",null,"const",true]]},
  "record-types":{cardTitle:"Record type",cardSection:"datamodel",listEl:"rt_list",errEl:"rterr",submit:"rt_submit",cancel:"rt_cancel",cols:[["Name","name"],["Object","object"],["Default","is_default"]],noActive:true,
    fields:[["name","rt_name"],["label","rt_label"],["object","rt_obj"],["picklist_overrides","rt_over","json",{}],["is_default","rt_def","check"]]},
+ "rollup-rules":{cardTitle:"Stored roll-up rule",cardSection:"datamodel",listEl:"ru_list",errEl:"ruerr",submit:"ru_submit",cancel:"ru_cancel",cols:[["Name","name"],["Child","child_object"],["Parent","parent_object"],["Parent field","parent_field"],["Func","func"]],
+   fields:[["name","ru_name"],["child_object","ru_child"],["parent_object","ru_parent"],["link_field","ru_link"],["parent_field","ru_pfield"],["child_field","ru_cfield"],["func","ru_func"],["active",null,"const",true]]},
+ "lead-field-mappings":{cardTitle:"Lead field mapping",cardSection:"automation",listEl:"lfm_list",errEl:"lfmerr",submit:"lfm_submit",cancel:"lfm_cancel",cols:[["Name","name"],["Lead field","lead_field"],["Target","target_object"],["Target field","target_field"]],
+   fields:[["name","lfm_name"],["lead_field","lfm_lfield"],["target_object","lfm_tobj"],["target_field","lfm_tfield"],["active",null,"const",true]]},
+ "web-to-forms":{cardTitle:"Web-to form",cardSection:"automation",listEl:"w2f_list",errEl:"w2ferr",submit:"w2f_submit",cancel:"w2f_cancel",cols:[["Name","name"],["Key","key"],["Object","object"]],
+   fields:[["name","w2f_name"],["key","w2f_key"],["object","w2f_obj"],["title","w2f_title"],["fields","w2f_fields","csv"],["required","w2f_req","csv"],["defaults","w2f_defaults","json"],["active",null,"const",true]]},
+ "forecast-types":{cardTitle:"Forecast type",cardSection:"automation",listEl:"ft_list",errEl:"fterr",submit:"ft_submit",cancel:"ft_cancel",cols:[["Name","name"],["Object","object"],["Amount","amount_field"],["Date","date_field"]],noActive:true,filter:r=>r.id!=="builtin",
+   fields:[["name","ft_name"],["object","ft_obj"],["amount_field","ft_amt"],["date_field","ft_date"],["category_field","ft_cat"],["won_values","ft_won","csv"],["lost_values","ft_lost","csv"],["probability_field","ft_prob"]]},
  "webhooks":{cardTitle:"Webhook",cardSection:"integrations",listEl:"wh_list",errEl:"wherr",submit:"wh_submit",cancel:"wh_cancel",cols:[["Name","name"],["Object","object"],["URL","url"]],
    fields:[["name","wh_name"],["object","wh_obj"],["url","wh_url"],["events","wh_ev","csv"],["active",null,"const",true]]},
  "scheduled-jobs":{cardTitle:"Scheduled job",cardSection:"monitoring",listEl:"sj_list",errEl:"sjerr",submit:"sj_submit",cancel:"sj_cancel",cols:[["Name","name"],["Schedule","cron"],["Every (min)","interval_minutes"],["Run as","run_as"],["Last run","last_run"]],extra:"runJob",
@@ -2184,11 +2395,13 @@ const SETUP_KINDS={
    fields:[["name","et_name"],["subject","et_subj"],["body","et_body"]]},
  "auto-response-rules":{cardTitle:"Auto-response rule",cardSection:"automation",listEl:"ar_list",errEl:"arerr",submit:"ar_submit",cancel:"ar_cancel",cols:[["Name","name"],["Object","object"],["Order","order"]],
    fields:[["name","ar_name"],["object","ar_obj"],["order","ar_ord","int",10],["criteria","ar_crit","json",{}],["template_id","ar_tpl"],["active",null,"const",true]]},
- "sla-policies":{cardTitle:"Case SLA policy",cardSection:"automation",listEl:"sla_list",errEl:"slaerr",submit:"sla_submit",cancel:"sla_cancel",cols:[["Name","name"],["Priority","priority"]],constFields:{object:"Case"},
-   fields:[["name","sla_name"],["priority","sla_pri","blankstar"],["milestones","sla_ms","json",[]],["active",null,"const",true]]},
+ "sla-policies":{cardTitle:"SLA policy",cardSection:"automation",listEl:"sla_list",errEl:"slaerr",submit:"sla_submit",cancel:"sla_cancel",cols:[["Name","name"],["Object","object"],["Priority","priority"]],
+   fields:[["name","sla_name"],["object","sla_obj"],["priority","sla_pri","blankstar"],["milestones","sla_ms","json",[]],["completion","sla_comp","json",null],["active",null,"const",true]]},
  "escalation-rules":{cardTitle:"Escalation rule",cardSection:"automation",listEl:"esc_list",errEl:"escerr",submit:"esc_submit",cancel:"esc_cancel",cols:[["Name","name"],["Object","object"],["Runs on","trigger_on"]],
    fields:[["name","esc_name"],["object","esc_obj"],["trigger_on","esc_on"],["criteria","esc_crit","json",{}],["action","esc_act","json",{}],["active",null,"const",true]]},
  "permission-sets":{cardTitle:"Permission set",cardSection:"security",listEl:"ps_list",cols:[["Name","name"],["Label","label"]],noActive:true,extra:"psEdit",actions:{del:true}},
+ "divisions":{cardTitle:"Division",cardSection:"security",listEl:"dv_list",errEl:"dverr",submit:"dv_submit",cancel:"dv_cancel",cols:[["Name","name"],["Description","description"]],noActive:true,
+   fields:[["name","dv_name"],["description","dv_desc"],["active",null,"const",true]]},
 };
 const SETUP_CACHE={};
 let SETUP_EDIT={kind:null,rid:null};
@@ -2497,11 +2710,13 @@ async function createProfile(){
 async function editProfile(name){
   const ed=document.getElementById("pf_editor"); if(!ed) return;
   ed.style.display=""; ed.innerHTML=`<p class="muted">Loading permissions…</p>`;
-  const [pr,objs]=await Promise.all([api("GET","/api/admin/profiles/"+encodeURIComponent(name)),api("GET","/api/objects")]);
+  const [pr,objs,divs]=await Promise.all([api("GET","/api/admin/profiles/"+encodeURIComponent(name)),api("GET","/api/objects"),api("GET","/api/admin/divisions")]);
   if(!pr.ok){ ed.innerHTML=`<div class="err">${esc((pr.data||{}).error||"Failed to load")}</div>`; return; }
   const p=pr.data||{name}, op=p.object_permissions||{}, fp=p.field_permissions||{};
+  const divList=divs.ok&&Array.isArray(divs.data)?divs.data:[];
   const list=((objs.data||[])).slice().sort((a,b)=>a.name.localeCompare(b.name));
   let h=`<div class="section-title" style="font-size:14px">Permissions — ${esc(name)}</div>
+  <div class="grid2" style="margin-bottom:10px"><div><label>Default division</label><select id="pf_div"><option value="">— Global (no division) —</option>${divList.map(d=>`<option value="${d.id}"${p.default_division===d.id?" selected":""}>${esc(d.name)}</option>`).join("")}</select></div><div><p class="muted" style="margin-top:22px">Users on this profile see this division's records plus global records.</p></div></div>
   <p class="muted">Tick object permissions; use Fields to restrict individual fields (all fields are readable/editable by default).</p>
   <table><tr><th>Object</th><th>Create</th><th>Read</th><th>Edit</th><th>Delete</th><th></th></tr>`;
   for(const o of list){
@@ -2541,7 +2756,8 @@ async function saveProfile(name){
   // so untouched objects keep their existing restrictions.
   const cur=await api("GET","/api/admin/profiles/"+encodeURIComponent(name));
   const fp=Object.assign({},(cur.data||{}).field_permissions||{},fpTouched);
-  const r=await api("PUT","/api/admin/profiles/"+encodeURIComponent(name),{object_permissions:op,field_permissions:fp});
+  const divSel=document.getElementById("pf_div");
+  const r=await api("PUT","/api/admin/profiles/"+encodeURIComponent(name),{object_permissions:op,field_permissions:fp,default_division:divSel?divSel.value:""});
   document.getElementById("pferr2").innerHTML=r.ok?`<div class="ok">Permissions saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
   if(r.ok) listProfiles();
 }
@@ -2774,8 +2990,50 @@ async function listObjectFields(){
     return `<tr><td><code>${esc(f.name)}</code></td><td>${esc(f.label)}</td><td>${esc(f.type)}${f.formula?" (formula)":""}${f.rollup?" (roll-up)":""}</td><td>${f.required?"✓":"—"}</td><td>${active?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td>${f.value_count!=null?f.value_count:"—"}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="editFieldRow('${f.name}')">Edit</button> <button class="btn secondary small" onclick="toggleFieldActive('${f.name}',${active})">${active?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="delFieldRow('${f.name}')">Delete</button></td></tr><tr id="of_edit_${f.name}" style="display:none"><td colspan="7"></td></tr>`;
   }).join("")}</table>`:`<p class="muted">No fields yet — add one above.</p>`;
 }
-async function toggleFieldActive(fname,currently){
-  const obj=v("of_obj");
+/* ============ calendar sources (Setup card) ============ */
+async function calsRefresh(){
+  const sel=document.getElementById("cals_obj"); if(!sel) return;
+  const cur=sel.value;
+  sel.innerHTML=(objects||[]).map(o=>`<option value="${esc(o.name)}">${esc(o.label||o.name)}</option>`).join("");
+  if([...sel.options].some(o=>o.value===cur)) sel.value=cur;
+  await calsOnObj();
+  const r=await api("GET","/api/calendar-sources");
+  const rows=r.ok?r.data:[];
+  document.getElementById("cals_list").innerHTML=rows.length
+    ?`<table style="margin-top:10px"><tr><th>Object</th><th>Date field</th><th>Label field</th><th>Color</th></tr>${rows.map(x=>`<tr><td><code>${esc(x.obj)}</code></td><td><code>${esc(x.start)}</code></td><td><code>${esc(x.label_field||"—")}</code></td><td><span class="pill" style="background:${esc(x.color)}22;color:${esc(x.color)}">${esc(x.color)}</span></td></tr>`).join("")}</table>`
+    :`<p class="muted">No calendar sources configured.</p>`;
+}
+async function calsOnObj(){
+  const obj=document.getElementById("cals_obj").value; if(!obj) return;
+  const r=await api("GET","/api/describe/"+encodeURIComponent(obj));
+  if(!r.ok) return;
+  const fs=r.data.fields||[];
+  const dates=fs.filter(f=>f.type==="Date"||f.type==="DateTime");
+  const texts=fs.filter(f=>["Text","TextArea","Picklist","Phone","Email","URL"].includes(f.type));
+  document.getElementById("cals_date").innerHTML=`<option value="">— none —</option>`+dates.map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join("");
+  document.getElementById("cals_label").innerHTML=`<option value="">— default —</option>`+texts.map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join("");
+  const raw=r.data.calendar_date_field;
+  document.getElementById("cals_date").value=raw==null?"":raw;
+  document.getElementById("cals_label").value=r.data.calendar_label_field||"";
+  document.getElementById("cals_color").value=/^#[0-9a-fA-F]{6}$/.test(r.data.calendar_color||"")?r.data.calendar_color:"#6b5ce7";
+}
+async function calsSave(){
+  const obj=document.getElementById("cals_obj").value;
+  const body={calendar_date_field:document.getElementById("cals_date").value||null,
+              calendar_label_field:document.getElementById("cals_label").value||null,
+              calendar_color:document.getElementById("cals_color").value||null};
+  const r=await api("PUT","/api/admin/objects/"+encodeURIComponent(obj),body);
+  document.getElementById("calserr").innerHTML=r.ok?`<div class="ok">Calendar source saved.</div>`:`<div class="err">${esc((r.data||{}).error||"Failed")}</div>`;
+  if(r.ok) calsRefresh();
+}
+async function calsDisable(){
+  const obj=document.getElementById("cals_obj").value;
+  if(!confirm(`Remove ${obj} from the calendar?`)) return;
+  const r=await api("PUT","/api/admin/objects/"+encodeURIComponent(obj),{calendar_date_field:""});
+  document.getElementById("calserr").innerHTML=r.ok?`<div class="ok">Removed from the calendar.</div>`:`<div class="err">${esc((r.data||{}).error||"Failed")}</div>`;
+  if(r.ok) calsRefresh();
+}
+async function toggleFieldActive(fname,currently){  const obj=v("of_obj");
   const verb=currently?"Deactivate":"Activate";
   const note=currently?" It will disappear from record forms, lists and the API, but its stored data is kept and the field can be reactivated.":" It will reappear in record forms, lists and the API.";
   if(!confirm(`${verb} field '${fname}' on ${obj}?${note}`)) return;
@@ -2941,9 +3199,221 @@ async function importCsv(){
   const file=document.getElementById("im_file").files[0];
   if(!file){ document.getElementById("imperr").innerHTML=`<div class="err">Choose a CSV file first.</div>`; return; }
   const fd=new FormData(); fd.append("file",file);
-  const mode=v("im_mode"), ext=v("im_ext");
-  const r=await fetch(`/api/admin/import/${v("im_obj")}?mode=${mode}&external_id_field=${encodeURIComponent(ext)}`,{method:"POST",headers:{"Authorization":"Bearer "+token},body:fd}).then(r=>r.json());
-  document.getElementById("imperr").innerHTML=`<div class="${r.failed?"err":"ok"}">Created ${r.created||0}, updated ${r.updated||0}, failed ${r.failed}.</div>`;
+  const mode=v("im_mode"), ext=v("im_ext"), dup=v("im_dup");
+  const r=await fetch(`/api/admin/import/${v("im_obj")}?mode=${mode}&external_id_field=${encodeURIComponent(ext)}&on_duplicate=${dup}`,{method:"POST",headers:{"Authorization":"Bearer "+token},body:fd}).then(r=>r.json());
+  const el=document.getElementById("imperr"); if(el) el.innerHTML="";
+  document.getElementById("im_result").innerHTML=`<div class="${r.failed?"err":"ok"}" style="margin-top:10px">Created ${r.created||0}, updated ${r.updated||0}, skipped ${r.skipped||0}, failed ${r.failed}.</div>`+
+   (r.error_csv_url&&r.failed?`<div class="btnrow" style="margin-top:8px"><a class="btn secondary small" href="${esc(r.error_csv_url)}" download>Download failed rows (${r.failed})</a><button class="btn secondary small" onclick="importRetry('${r.run_id}')">Retry failed rows</button></div>`:"")+
+   (r.errors&&r.errors.length?`<table style="margin-top:8px"><tr><th>CSV row</th><th>Error</th></tr>${r.errors.map(e=>`<tr><td>${e.row}</td><td>${esc((e.details||[]).join("; "))}</td></tr>`).join("")}</table>`:"");
+  importRunsList();
+}
+async function importRunsList(){
+  const el=document.getElementById("im_runs"); if(!el) return;
+  const r=await api("GET","/api/admin/import-runs"); const runs=r.ok&&Array.isArray(r.data)?r.data:[];
+  el.innerHTML=runs.length?`<table><tr><th>When</th><th>Object</th><th>Mode</th><th>Created</th><th>Updated</th><th>Skipped</th><th>Failed</th><th></th></tr>`+
+   runs.map(x=>`<tr><td>${esc((x.created_at||"").slice(0,16).replace("T"," "))}</td><td>${esc(x.object||"")}</td><td>${esc(x.mode||"")}${x.on_duplicate&&x.on_duplicate!=="insert"?" / "+esc(x.on_duplicate):""}</td><td>${x.created||0}</td><td>${x.updated||0}</td><td>${x.skipped||0}</td><td>${x.failed||0}</td><td style="white-space:nowrap">${x.failed?`<button class="btn secondary small" onclick="importRetry('${x.id}')">Retry</button> `:""}<a class="btn secondary small" href="/api/admin/import-runs/${x.id}/errors.csv" download>Errors CSV</a></td></tr>`).join("")+`</table>`:`<p class="muted">No imports yet.</p>`;
+}
+async function importRetry(rid){
+  if(!confirm("Retry the failed rows of this import run?")) return;
+  const r=await api("POST",`/api/admin/import-runs/${rid}/retry`);
+  if(!r.ok){ toast("Retry failed: "+(r.data&&r.data.error||r.status),"error"); return; }
+  const d=r.data||{};
+  toast(`Retry: ${d.created||0} created, ${d.updated||0} updated, ${d.skipped||0} skipped, ${d.failed||0} still failing.`,d.failed?"info":"ok");
+  importRunsList();
+}
+/* ---------- Divisions: record-usage counts ---------- */
+async function divUsage(){
+  const el=document.getElementById("dv_usage"); if(!el) return;
+  const r=await api("GET","/api/admin/divisions/usage");
+  if(!r.ok) return;
+  const u=r.data||{}, total=Object.values(u).reduce((a,b)=>a+b,0);
+  el.textContent=total?`Record assignments: ${Object.entries(u).map(([id,n])=>`${id.slice(0,8)}: ${n}`).join(", ")}`:"No records are assigned to any division yet.";
+}
+/* ---------- Delegated administration groups ---------- */
+const DG_SCOPES=[["users","Manage users"],["passwords","Reset passwords / unlock"],["profiles","Manage profiles"],["roles","Manage roles"]];
+let DG_EDIT=null, DG_CACHE=[];
+async function dgInit(){
+  const ur=await api("GET","/api/admin/users");
+  const users=(ur.data&&ur.data.rows)||ur.data||[];
+  document.getElementById("dg_members").innerHTML=users.length?users.map(u=>`<label style="display:block;font-weight:normal;margin:2px 0"><input type="checkbox" data-dg-user="${u.id}" style="width:auto"> ${esc(u.username)}</label>`).join(""):`<span class="muted">No users.</span>`;
+  document.getElementById("dg_scopes").innerHTML=DG_SCOPES.map(s=>`<label style="display:block;font-weight:normal;margin:4px 0"><input type="checkbox" data-dg-scope="${s[0]}" style="width:auto"> ${s[1]}</label><input data-dg-roles="${s[0]}" placeholder="Limit to roles (comma-separated, blank = any)" style="margin:-2px 0 6px 22px;max-width:280px">`).join("");
+  dgList();
+}
+async function dgList(){
+  const el=document.getElementById("dg_list"); if(!el) return;
+  const r=await api("GET","/api/admin/delegated-groups"); DG_CACHE=r.ok&&Array.isArray(r.data)?r.data:[];
+  el.innerHTML=DG_CACHE.length?`<table style="margin-top:10px"><tr><th>Group</th><th>Scopes</th><th>Members</th><th></th></tr>`+
+   DG_CACHE.map(g=>`<tr><td><b>${esc(g.name)}</b>${g.description?`<div class="muted">${esc(g.description)}</div>`:""}</td><td>${(g.scopes||[]).map(s=>esc(s.scope)+(s.roles&&s.roles.length?` (${s.roles.map(esc).join(", ")})`:"")).join("<br>")||"—"}</td><td>${(g.member_usernames||[]).map(esc).join(", ")||"—"}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="dgEdit('${g.id}')">Edit</button> <button class="btn danger small" onclick="dgDel('${g.id}')">Delete</button></td></tr>`).join("")+`</table>`:`<p class="muted">No delegated groups yet.</p>`;
+}
+async function dgSave(){
+  const errEl=document.getElementById("dgerr"); errEl.innerHTML="";
+  const name=v("dg_name"); if(!name){ errEl.innerHTML=`<div class="err">Group name is required.</div>`; return; }
+  const members=[...document.querySelectorAll("[data-dg-user]:checked")].map(c=>c.dataset.dgUser);
+  const scopes=DG_SCOPES.filter(s=>document.querySelector(`[data-dg-scope="${s[0]}"]`).checked).map(s=>{
+    const roles=(document.querySelector(`[data-dg-roles="${s[0]}"]`).value||"").split(",").map(x=>x.trim()).filter(Boolean);
+    return roles.length?{scope:s[0],roles}:{scope:s[0]};
+  });
+  const body={name,description:v("dg_desc"),members,scopes};
+  const r=DG_EDIT
+    ?await api("PUT","/api/admin/delegated-groups/"+DG_EDIT,body)
+    :await api("POST","/api/admin/delegated-groups",body);
+  if(!r.ok){ errEl.innerHTML=`<div class="err">${esc((r.data||{}).error||"Failed")}${r.data&&r.data.details?`: ${esc(r.data.details.join("; "))}`:""}</div>`; return; }
+  toast(DG_EDIT?"Group saved.":"Group created.","ok"); dgCancel(); dgList();
+}
+function dgEdit(id){
+  const g=DG_CACHE.find(x=>x.id===id); if(!g) return;
+  DG_EDIT=id;
+  document.getElementById("dg_name").value=g.name||"";
+  document.getElementById("dg_desc").value=g.description||"";
+  document.querySelectorAll("[data-dg-user]").forEach(c=>{ c.checked=(g.members||[]).includes(c.dataset.dgUser); });
+  DG_SCOPES.forEach(s=>{
+    const entry=(g.scopes||[]).find(e=>e.scope===s[0]);
+    document.querySelector(`[data-dg-scope="${s[0]}"]`).checked=!!entry;
+    document.querySelector(`[data-dg-roles="${s[0]}"]`).value=entry&&entry.roles?entry.roles.join(", "):"";
+  });
+  document.getElementById("dg_submit").textContent="Save changes";
+  document.getElementById("dg_cancel").style.display="";
+  document.getElementById("dg_submit").scrollIntoView({behavior:"smooth",block:"center"});
+}
+function dgCancel(){
+  DG_EDIT=null;
+  document.getElementById("dg_name").value=""; document.getElementById("dg_desc").value="";
+  document.querySelectorAll("[data-dg-user]").forEach(c=>{ c.checked=false; });
+  document.querySelectorAll("[data-dg-scope]").forEach(c=>{ c.checked=false; });
+  document.querySelectorAll("[data-dg-roles]").forEach(c=>{ c.value=""; });
+  document.getElementById("dg_submit").textContent="Create group";
+  document.getElementById("dg_cancel").style.display="none";
+  document.getElementById("dgerr").innerHTML="";
+}
+async function dgDel(id){
+  if(!confirm("Delete this delegated group? Members lose their delegated scopes.")) return;
+  const r=await api("DELETE","/api/admin/delegated-groups/"+id);
+  r.ok?(toast("Deleted.","ok"),dgList()):toast("Failed: "+(r.data&&r.data.error||r.status),"error");
+}
+/* ---------- Test data seeding ---------- */
+let SD_EDIT=null, SD_CACHE=[];
+async function sdList(){
+  const el=document.getElementById("sd_list"); if(!el) return;
+  const r=await api("GET","/api/admin/seed-templates"); SD_CACHE=r.ok&&Array.isArray(r.data)?r.data:[];
+  el.innerHTML=SD_CACHE.length?`<table style="margin-top:10px"><tr><th>Template</th><th>Object</th><th>Count</th><th>Last run</th><th></th></tr>`+
+   SD_CACHE.map(t=>`<tr><td><b>${esc(t.name)}</b>${t.active?"":' <span class="pill pill-off">Inactive</span>'}</td><td>${esc(t.object||"")}</td><td>${t.count||0}</td><td>${t.last_run?esc(String(t.last_run.at).slice(0,16).replace("T"," "))+" — "+t.last_run.created+" created":"—"}</td><td style="white-space:nowrap"><button class="btn small" onclick="sdRun('${t.id}')">Run</button> <button class="btn secondary small" onclick="sdEdit('${t.id}')">Edit</button> <button class="btn danger small" onclick="sdDel('${t.id}')">Delete</button></td></tr>`).join("")+`</table>`:`<p class="muted">No seed templates yet.</p>`;
+}
+async function sdSave(){
+  const errEl=document.getElementById("sderr"); errEl.innerHTML="";
+  const name=v("sd_name"); if(!name){ errEl.innerHTML=`<div class="err">Template name is required.</div>`; return; }
+  let rules; try{ rules=JSON.parse(document.getElementById("sd_rules").value||"[]"); }catch(e){ errEl.innerHTML=`<div class="err">Field rules is not valid JSON.</div>`; return; }
+  const body={name,object:v("sd_obj"),count:parseInt(v("sd_count")||"0",10),field_rules:rules,active:document.getElementById("sd_active").checked};
+  const r=SD_EDIT?await api("PUT","/api/admin/seed-templates/"+SD_EDIT,body):await api("POST","/api/admin/seed-templates",body);
+  if(!r.ok){ errEl.innerHTML=`<div class="err">${esc((r.data||{}).error||"Failed")}${r.data&&r.data.details?`: ${esc(r.data.details.join("; "))}`:""}</div>`; return; }
+  toast(SD_EDIT?"Template saved.":"Template created.","ok"); sdCancel(); sdList();
+}
+function sdEdit(id){
+  const t=SD_CACHE.find(x=>x.id===id); if(!t) return;
+  SD_EDIT=id;
+  document.getElementById("sd_name").value=t.name||"";
+  document.getElementById("sd_obj").value=t.object||"";
+  document.getElementById("sd_count").value=t.count||50;
+  document.getElementById("sd_rules").value=JSON.stringify(t.field_rules||[],null,2);
+  document.getElementById("sd_active").checked=t.active!==false;
+  document.getElementById("sd_submit").textContent="Save changes";
+  document.getElementById("sd_cancel").style.display="";
+  document.getElementById("sd_submit").scrollIntoView({behavior:"smooth",block:"center"});
+}
+function sdCancel(){
+  SD_EDIT=null;
+  document.getElementById("sd_name").value=""; document.getElementById("sd_count").value=50;
+  document.getElementById("sd_rules").value=""; document.getElementById("sd_active").checked=true;
+  document.getElementById("sd_submit").textContent="Create template";
+  document.getElementById("sd_cancel").style.display="none";
+  document.getElementById("sderr").innerHTML="";
+}
+async function sdDel(id){
+  if(!confirm("Delete this seed template?")) return;
+  const r=await api("DELETE","/api/admin/seed-templates/"+id);
+  r.ok?(toast("Deleted.","ok"),sdList()):toast("Failed: "+(r.data&&r.data.error||r.status),"error");
+}
+async function sdRun(id){
+  const t=SD_CACHE.find(x=>x.id===id);
+  if(!confirm(`Run template "${t?t.name:id}"? This writes ${t?t.count:""} real ${(t&&t.object)||""} records.`)) return;
+  const r=await api("POST",`/api/admin/seed-templates/${id}/run`,{confirm:true});
+  if(!r.ok){ toast("Run failed: "+(r.data&&r.data.error||r.status),"error"); return; }
+  const d=r.data||{};
+  toast(`Seeded ${d.created||0} record(s)${d.failed?`, ${d.failed} failed`:""}.`,d.failed?"info":"ok");
+  sdList();
+}
+/* ---------- Translation workbench ---------- */
+let TB_CACHE=[], TB_OPEN=null;
+async function tbList(){
+  const el=document.getElementById("tb_list"); if(!el) return;
+  const r=await api("GET","/api/admin/labels"); TB_CACHE=r.ok&&Array.isArray(r.data)?r.data:[];
+  el.innerHTML=TB_CACHE.length?`<table style="margin-top:10px"><tr><th>Key</th><th>Default text</th><th>Category</th><th></th></tr>`+
+   TB_CACHE.map(l=>`<tr><td><code>${esc(l.key)}</code></td><td>${esc(l.default_text||"")}</td><td>${esc(l.category||"—")}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="tbTrans('${l.id}')">Translations</button> <button class="btn danger small" onclick="tbDel('${l.id}')">Delete</button></td></tr>`+
+   (TB_OPEN===l.id?`<tr><td colspan="4"><div id="tb_tr_${l.id}"><p class="muted">Loading…</p></div></td></tr>`:"")).join("")+`</table>`:`<p class="muted">No custom labels yet.</p>`;
+  if(TB_OPEN){ const open=TB_CACHE.find(l=>l.id===TB_OPEN); if(open) tbTransRender(open); }
+}
+async function tbSave(){
+  const errEl=document.getElementById("tberr"); errEl.innerHTML="";
+  const body={key:v("tb_key"),default_text:v("tb_text"),category:v("tb_cat"),description:v("tb_desc")};
+  const r=await api("POST","/api/admin/labels",body);
+  if(!r.ok){ errEl.innerHTML=`<div class="err">${esc((r.data||{}).error||"Failed")}${r.data&&r.data.details?`: ${esc(r.data.details.join("; "))}`:""}</div>`; return; }
+  document.getElementById("tb_key").value=""; document.getElementById("tb_text").value="";
+  document.getElementById("tb_cat").value=""; document.getElementById("tb_desc").value="";
+  toast("Label added.","ok"); tbList();
+}
+async function tbDel(id){
+  if(!confirm("Delete this label and all its translations?")) return;
+  const r=await api("DELETE","/api/admin/labels/"+id);
+  r.ok?(toast("Deleted.","ok"),tbList()):toast("Failed: "+(r.data&&r.data.error||r.status),"error");
+}
+async function tbTrans(labelId){
+  TB_OPEN=TB_OPEN===labelId?null:labelId;
+  tbList();
+}
+async function tbTransRender(label){
+  const host=document.getElementById("tb_tr_"+label.id); if(!host) return;
+  const r=await api("GET",`/api/admin/labels/${label.id}/translations`);
+  const trs=r.ok&&Array.isArray(r.data)?r.data:[];
+  host.innerHTML=`<div style="padding:8px;background:var(--row-alt,#f7f9fc);border-radius:6px">
+   <b>Translations — <code>${esc(label.key)}</code></b>
+   ${trs.length?`<table style="margin-top:6px"><tr><th>Language</th><th>Text</th><th></th></tr>${trs.map(t=>`<tr><td>${esc(t.language)}</td><td>${esc(t.text)}</td><td><button class="btn danger small" onclick="tbTransDel('${t.id}','${label.id}')">Delete</button></td></tr>`).join("")}</table>`:`<p class="muted">No translations yet — the default text is used.</p>`}
+   <div class="btnrow" style="margin-top:8px"><input id="tbt_lang_${label.id}" placeholder="Language (e.g. es)" style="max-width:160px"><input id="tbt_text_${label.id}" placeholder="Translated text" style="max-width:320px"><button class="btn small" onclick="tbTransSave('${label.id}')">Save translation</button></div></div>`;
+}
+async function tbTransSave(labelId){
+  const language=document.getElementById("tbt_lang_"+labelId).value.trim();
+  const text=document.getElementById("tbt_text_"+labelId).value;
+  if(!language){ toast("Language is required.","error"); return; }
+  const r=await api("POST",`/api/admin/labels/${labelId}/translations`,{language,text});
+  if(!r.ok){ toast("Failed: "+(r.data&&r.data.error||r.status)+(r.data&&r.data.details?": "+r.data.details.join("; "):""),"error"); return; }
+  const label=TB_CACHE.find(l=>l.id===labelId); if(label) tbTransRender(label);
+  toast("Translation saved.","ok");
+}
+async function tbTransDel(tid,labelId){
+  if(!confirm("Delete this translation?")) return;
+  const r=await api("DELETE","/api/admin/translations/"+tid);
+  if(r.ok){ const label=TB_CACHE.find(l=>l.id===labelId); if(label) tbTransRender(label); }
+  else toast("Failed: "+(r.data&&r.data.error||r.status),"error");
+}
+/* ---------- Login branding & flows ---------- */
+let LB_FLOW=[];
+async function lbLoad(){
+  const r=await api("GET","/api/admin/settings/login"); const d=r.data||{};
+  const set=(id,val)=>{const e=document.getElementById(id); if(e) e.value=val||"";};
+  set("lb_headline",d.headline); set("lb_tagline",d.tagline); set("lb_logo",d.logo_url);
+  set("lb_color",d.primary_color); set("lb_bg",d.background);
+  const ao=document.getElementById("lb_ann_on"); if(ao) ao.checked=!!d.announcement_enabled;
+  set("lb_ann_title",d.announcement_title); set("lb_ann_body",d.announcement_body);
+  LB_FLOW=d.login_flow||[];
+  const host=document.getElementById("lb_flow");
+  if(host) host.innerHTML=LB_FLOW.length?LB_FLOW.map((s,i)=>`<label style="display:block;font-weight:normal;margin:4px 0"><input type="checkbox" data-lb-flow="${i}" style="width:auto"${s.enabled?" checked":""}> ${esc(s.label||s.key)}</label>`).join(""):`<span class="muted">No flow steps.</span>`;
+}
+async function lbSave(){
+  const errEl=document.getElementById("lberr"); errEl.innerHTML="";
+  const flow=LB_FLOW.map((s,i)=>({...s,enabled:!!document.querySelector(`[data-lb-flow="${i}"]`).checked}));
+  const body={headline:v("lb_headline"),tagline:v("lb_tagline"),logo_url:v("lb_logo"),primary_color:v("lb_color"),background:v("lb_bg"),
+    announcement_enabled:document.getElementById("lb_ann_on").checked,announcement_title:v("lb_ann_title"),announcement_body:v("lb_ann_body"),login_flow:flow};
+  const r=await api("PUT","/api/admin/settings/login",body);
+  if(!r.ok){ errEl.innerHTML=`<div class="err">${esc((r.data||{}).error||"Failed")}</div>`; return; }
+  toast("Login branding saved.","ok"); lbLoad();
 }
 async function listAutoResponses(){
   const t=await api("GET","/api/email-templates");
@@ -2957,12 +3427,9 @@ async function createPath(){
   if(r.ok) listPaths();
 }
 async function listPaths(){
-  const objs=["Opportunity","Lead","Case"];
-  let html="";
-  for(const o of objs){
-    const r=await api("GET",`/api/paths/${o}`);
-    if(r.data) html+=`<p><b>${esc(o)}</b> → field <code>${esc(r.data.field)}</code> <button class="btn secondary small" onclick="delPath('${r.data.id}')">Delete</button></p>`;
-  }
+  const r=await api("GET","/api/admin/paths");
+  const rows=Array.isArray(r.data)?r.data:[];
+  const html=rows.map(p=>`<p><b>${esc(p.object)}</b> → field <code>${esc(p.field||"—")}</code> <button class="btn secondary small" onclick="delPath('${p.id}')">Delete</button></p>`).join("");
   document.getElementById("pa_list").innerHTML=html||`<p class="muted">No paths configured.</p>`;
 }
 async function delPath(pid){
@@ -2998,6 +3465,8 @@ async function refreshTerrSelects(){
   if(tp) tp.innerHTML=thtml;
   if(tm) tm.innerHTML=opts(ts,x=>`<option value="${x.id}">${"&nbsp;".repeat(x.depth*2)}${esc(x.name)}</option>`);
   if(tr) tr.innerHTML=opts(ts,x=>`<option value="${x.id}">${"&nbsp;".repeat(x.depth*2)}${esc(x.name)}</option>`);
+  const to=document.getElementById("trule_obj");
+  if(to&&!to.options.length){ const d=await api("GET","/api/describe"); to.innerHTML=(d.data||[]).map(o=>`<option value="${esc(o.name)}" ${o.name==="Account"?"selected":""}>${esc(o.label||o.name)}</option>`).join(""); }
   const mu=document.getElementById("terrm_user");
   if(mu) mu.innerHTML=opts(us,x=>`<option value="${x.id}">${esc(x.username||x.name)}</option>`);
 }
@@ -3046,6 +3515,7 @@ async function createTerrRule(){
   let crit={}; try{ const c=v("trule_crit"); if(c) crit=JSON.parse(c); }catch(e){ document.getElementById("terrerr").innerHTML=`<div class="err">Criteria is not valid JSON.</div>`; return; }
   const r=await api("POST","/api/admin/territory-rules",{name:document.getElementById("trule_name").value.trim(), criteria:crit,
     territory_id:document.getElementById("trule_terr").value,
+    object:document.getElementById("trule_obj").value||"Account",
     priority:parseInt(document.getElementById("trule_prio").value||"10",10), active:true});
   document.getElementById("terrerr").innerHTML=r.ok?`<div class="ok">Rule created.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
   if(r.ok) listTerrRules();
@@ -3054,7 +3524,7 @@ async function listTerrRules(){
   const host=document.getElementById("trule_list"); if(!host) return;
   const [r,t]=await Promise.all([api("GET","/api/admin/territory-rules"),api("GET","/api/admin/territories")]);
   const names={}; flattenTerrs(t.data||[]).forEach(x=>names[x.id]=x.name);
-  host.innerHTML=(r.data||[]).map(x=>`<div class="rowline"><b>${esc(x.name)}</b><span class="muted">prio ${x.priority} → ${esc(names[x.territory_id]||x.territory_id||"")}</span>
+  host.innerHTML=(r.data||[]).map(x=>`<div class="rowline"><b>${esc(x.name)}</b><span class="muted">${esc(x.object||"Account")} · prio ${x.priority} → ${esc(names[x.territory_id]||x.territory_id||"")}</span>
     <span class="pill">${x.active?"active":"inactive"}</span><span style="margin-left:auto"></span>
     <button class="btn secondary small" onclick="toggleTerrRule('${x.id}',${!x.active})">${x.active?"Deactivate":"Activate"}</button>
     <button class="btn secondary small" onclick="delTerrRule('${x.id}')">✕</button></div>`).join("")||`<p class="muted">No assignment rules yet.</p>`;
@@ -3069,7 +3539,8 @@ async function delTerrRule(id){
 }
 async function runTerrAssignment(){
   const r=await api("POST","/api/admin/territory-rules/run");
-  document.getElementById("terrerr").innerHTML=r.ok?`<div class="ok">Assigned ${r.data.accounts_assigned} account(s) across ${r.data.rules_run} rule(s).</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+  const n=r.ok?(r.data.records_assigned??r.data.accounts_assigned):0;
+  document.getElementById("terrerr").innerHTML=r.ok?`<div class="ok">Assigned ${n} record(s) across ${r.data.rules_run} rule(s).</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
 }
 async function listBigObjects(){
   const host=document.getElementById("bo_list"); if(!host) return;
@@ -4546,13 +5017,19 @@ async function previewFile(fid,filename,mime){
 }
 if(!window.__lbKey){ window.__lbKey=true; document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeLightbox(); }); }
 
-/* ============ calendar view (events / tasks / service appointments) ============ */
+/* ============ calendar view (registry-driven sources, see /api/calendar-sources) ============ */
 let calCursor=null, calView="month";
+function calLabel(s,it){ const f=s.label_field; return (f&&it[f])||it.Subject||it.Name||"("+(s.obj||"item")+")"; }
 const CAL_SOURCES=[
- {obj:"Event",start:"StartDateTime",color:"#0176d3",label:r=>r.Subject||"(event)"},
- {obj:"Task",start:"DueDate",color:"#2e9e4f",label:r=>r.Subject||"(task)"},
- {obj:"ServiceAppointment",start:"ScheduledStart",color:"#d98a1f",label:r=>r.Subject||r.Name||"(appt)"},
+ {obj:"Event",start:"StartDateTime",color:"#0176d3",label_field:"Subject"},
+ {obj:"Task",start:"DueDate",color:"#2e9e4f",label_field:"Subject"},
+ {obj:"ServiceAppointment",start:"ScheduledStart",color:"#d98a1f",label_field:"Subject"},
 ];
+async function calSources(){
+  const r=await api("GET","/api/calendar-sources");
+  if(r.ok&&Array.isArray(r.data)&&r.data.length) return r.data;
+  return CAL_SOURCES; // offline fallback keeps the classic three sources
+}
 function calShift(dir){ const [y,m]=calCursor.split("-").map(Number); const d=new Date(y,m-1+dir,1); calCursor=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; showCalendar(); }
 async function showCalendar(){
   setActive("__calendar");
@@ -4561,7 +5038,8 @@ async function showCalendar(){
   const [y,m]=calCursor.split("-").map(Number);
   const dim=new Date(y,m,0).getDate(), from=`${calCursor}-01`, to=`${calCursor}-${String(dim).padStart(2,"0")}`;
   const items=[];
-  for(const s of CAL_SOURCES){
+  const sources=await calSources();
+  for(const s of sources){
     const r=await api("GET",`/api/sobjects/${s.obj}?sort=${s.start}&dir=asc`);
     if(!r.ok) continue;
     for(const rec of (r.data||[])){
@@ -4578,7 +5056,7 @@ async function showCalendar(){
   if(calView==="agenda"){
     items.sort((a,b)=>(a[a._src.start]||"").localeCompare(b[b._src.start]||""));
     html+=`<div class="card">`+(items.length?items.map(it=>
-      `<div style="padding:8px 4px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center"><span class="muted" style="min-width:150px">${esc((it[it._src.start]||"").slice(0,16).replace("T"," "))}</span><span class="pill" style="background:${it._src.color}22;color:${it._src.color}">${esc(it._src.obj)}</span><a href="#" onclick="jumpTo('${it._src.obj}','${it.Id}');return false"><b>${esc(it._src.label(it))}</b></a></div>`
+      `<div style="padding:8px 4px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center"><span class="muted" style="min-width:150px">${esc((it[it._src.start]||"").slice(0,16).replace("T"," "))}</span><span class="pill" style="background:${it._src.color}22;color:${it._src.color}">${esc(it._src.obj)}</span><a href="#" onclick="jumpTo('${it._src.obj}','${it.Id}');return false"><b>${esc(calLabel(it._src,it))}</b></a></div>`
     ).join(""):`<p class="muted">Nothing scheduled this month.</p>`)+`</div>`;
   }else{
     const lead=new Date(y,m-1,1).getDay();
@@ -4593,7 +5071,7 @@ async function showCalendar(){
       const its=items.filter(i=>i._day===day);
       html+=`<div class="cal-cell${day===today?" cal-today":""}" ondragover="event.preventDefault()" ondrop="calDrop(event,'${day}')">`
         +`<div class="cal-date">${parseInt(day.slice(8),10)}</div>`
-        +its.slice(0,4).map(it=>`<div class="cal-chip" draggable="true" ondragstart="calDrag(event,'${it._src.obj}','${it.Id}','${it._src.start}','${esc((it[it._src.start]||"").slice(0,10))}')" title="${esc(it._src.label(it))} — drag to reschedule" onclick="jumpTo('${it._src.obj}','${it.Id}')" style="border-left:3px solid ${it._src.color}">${esc(it._src.label(it).slice(0,22))}</div>`).join("")
+        +its.slice(0,4).map(it=>`<div class="cal-chip" draggable="true" ondragstart="calDrag(event,'${it._src.obj}','${it.Id}','${it._src.start}','${esc((it[it._src.start]||"").slice(0,10))}')" title="${esc(calLabel(it._src,it))} — drag to reschedule" onclick="jumpTo('${it._src.obj}','${it.Id}')" style="border-left:3px solid ${it._src.color}">${esc(calLabel(it._src,it).slice(0,22))}</div>`).join("")
         +(its.length>4?`<div class="muted" style="font-size:11px">+${its.length-4} more</div>`:"")
         +`</div>`;
     }
@@ -4625,20 +5103,20 @@ async function dlQuotePdf(id){
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-/* ============ case macros (record page) ============ */
-async function macroBar(id){
+/* ============ agent macros (record page, any object) ============ */
+async function macroBar(obj,id){
   const r=await api("GET","/api/macros");
-  const macros=Array.isArray(r.data)?r.data.filter(m=>m.active!==false&&(!m.object||m.object==="Case")):[];
+  const macros=Array.isArray(r.data)?r.data.filter(m=>m.active!==false&&(!m.object||m.object===obj)):[];
   if(!macros.length) return "";
   return `<div class="card"><div class="section-title">Agent macros</div><div class="btnrow">`
     +`<select id="macro_sel" style="max-width:260px">${macros.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select>`
-    +`<button class="btn small" onclick="applyMacroCase('${id}')">Run macro</button>`
+    +`<button class="btn small" onclick="applyMacro('${obj}','${id}')">Run macro</button>`
     +(me.profile==="System Administrator"?`<button class="btn secondary small" onclick="showQueueAdmin()">Manage macros</button>`:"")
     +`</div></div>`;
 }
-async function applyMacroCase(id){
+async function applyMacro(obj,id){
   const mid=document.getElementById("macro_sel").value;
-  const r=await api("POST",`/api/sobjects/Case/${id}/apply-macro`,{macro_id:mid});
+  const r=await api("POST",`/api/sobjects/${encodeURIComponent(obj)}/${id}/apply-macro`,{macro_id:mid});
   if(r.ok){ toast("Macro applied: "+(r.data.applied||[]).join(", ")+".","ok"); showDetail(id); }
   else toast("Macro failed: "+((r.data||{}).error||r.status),"error");
 }
@@ -4650,25 +5128,27 @@ async function showQueueAdmin(){
   const [qs,ms]=await Promise.all([api("GET","/api/case-queues"),api("GET","/api/macros")]);
   const queues=Array.isArray(qs.data)?qs.data:[], macros=Array.isArray(ms.data)?ms.data:[];
   let html=`<div class="btnrow"><button class="btn secondary" onclick="showObject('Case')">← Back to Cases</button><h2 style="margin:0">Queues &amp; Macros</h2></div>`;
-  html+=`<div class="card"><div class="section-title">Case queues (${queues.length})</div><div id="qerr"></div><table>`
-    +queues.map(q=>`<tr><td><b>${esc(q.name)}</b></td><td class="muted">${esc(JSON.stringify(q.filters||{}).slice(0,80))}</td><td>${q.active!==false?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="queueToggle('${q.id}',${q.active!==false})">${q.active!==false?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="queueDel('${q.id}')">Delete</button></td></tr>`).join("")
-    +`</table><div class="section-title" style="margin-top:12px">New queue</div><div class="grid2"><div><label>Name</label><input id="nq_name" placeholder="Urgent queue"></div><div><label>Filter JSON</label><input id="nq_filt" placeholder='{"==":[{"field":"Priority"},"High"]}'></div></div><div class="btnrow" style="margin-top:8px"><button class="btn" onclick="queueCreate()">Create queue</button></div></div>`;
+  const queueObjs=(objects||[]).map(o=>`<option${o.name==="Case"?" selected":""}>${esc(o.name)}</option>`).join("");
+  html+=`<div class="card"><div class="section-title">Queues (${queues.length})</div><div id="qerr"></div><table>`
+    +queues.map(q=>`<tr><td><b>${esc(q.name)}</b></td><td class="muted">${esc(q.object||"Case")}</td><td class="muted">${esc(JSON.stringify(q.filters||{}).slice(0,80))}</td><td>${q.active!==false?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="queueToggle('${q.id}',${q.active!==false})">${q.active!==false?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="queueDel('${q.id}')">Delete</button></td></tr>`).join("")
+    +`</table><div class="section-title" style="margin-top:12px">New queue</div><div class="grid2"><div><label>Name</label><input id="nq_name" placeholder="Urgent queue"><label>Object</label><select id="nq_obj">${queueObjs}</select></div><div><label>Filter JSON</label><input id="nq_filt" placeholder='{"==":[{"field":"Priority"},"High"]}'></div></div><div class="btnrow" style="margin-top:8px"><button class="btn" onclick="queueCreate()">Create queue</button></div></div>`;
+  const macroObjs=(objects||[]).map(o=>`<option${o.name==="Case"?" selected":""}>${esc(o.name)}</option>`).join("");
   html+=`<div class="card"><div class="section-title">Agent macros (${macros.length})</div><div id="merr"></div><table>`
-    +macros.map(m=>`<tr><td><b>${esc(m.name)}</b></td><td class="muted">${esc((m.actions||[]).map(a=>Object.keys(a)[0]).join(", "))}</td><td>${m.active!==false?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="macroToggle('${m.id}',${m.active!==false})">${m.active!==false?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="macroDel('${m.id}')">Delete</button></td></tr>`).join("")
-    +`</table><div class="section-title" style="margin-top:12px">New macro</div><div class="grid2"><div><label>Name</label><input id="nm_name" placeholder="Close as solved"></div><div><label>Actions JSON</label><input id="nm_act" placeholder='[{"set_fields":{"Status":"Closed"}},{"add_comment":"Done"}]'></div></div><p class="muted">Action types: <code>set_fields</code>, <code>add_comment</code>, <code>reassign</code> (user id).</p><div class="btnrow"><button class="btn" onclick="macroCreate()">Create macro</button></div></div>`;
+    +macros.map(m=>`<tr><td><b>${esc(m.name)}</b></td><td class="muted">${esc(m.object||"Case")}</td><td class="muted">${esc((m.actions||[]).map(a=>Object.keys(a)[0]).join(", "))}</td><td>${m.active!==false?'<span class="pill pill-on">Active</span>':'<span class="pill pill-off">Inactive</span>'}</td><td style="white-space:nowrap"><button class="btn secondary small" onclick="macroToggle('${m.id}',${m.active!==false})">${m.active!==false?"Deactivate":"Activate"}</button> <button class="btn danger small" onclick="macroDel('${m.id}')">Delete</button></td></tr>`).join("")
+    +`</table><div class="section-title" style="margin-top:12px">New macro</div><div class="grid2"><div><label>Name</label><input id="nm_name" placeholder="Close as solved"><label>Object</label><select id="nm_obj">${macroObjs}</select></div><div><label>Actions JSON</label><input id="nm_act" placeholder='[{"set_fields":{"Status":"Closed"}},{"add_comment":"Done"}]'></div></div><p class="muted">Action types: <code>set_fields</code>, <code>add_comment</code>, <code>reassign</code> (user id).</p><div class="btnrow"><button class="btn" onclick="macroCreate()">Create macro</button></div></div>`;
   document.getElementById("main").innerHTML=html;
 }
 function jparse(id,errEl){ try{ return JSON.parse(document.getElementById(id).value||"{}"); }catch(e){ document.getElementById(errEl).innerHTML=`<div class="err">Invalid JSON: ${esc(e.message)}</div>`; return null; } }
 async function queueCreate(){
   const filt=jparse("nq_filt","qerr"); if(!filt) return;
-  const r=await api("POST","/api/case-queues",{name:v("nq_name"),filters:filt});
+  const r=await api("POST","/api/case-queues",{name:v("nq_name"),object:document.getElementById("nq_obj").value,filters:filt});
   r.ok?(toast("Queue created.","ok"),showQueueAdmin()):toast("Failed: "+((r.data||{}).error||r.status),"error");
 }
 async function queueToggle(id,active){ const r=await api("PUT",`/api/case-queues/${id}`,{active:!active}); r.ok?showQueueAdmin():toast("Failed.","error"); }
 async function queueDel(id){ if(!confirm("Delete this queue?")) return; const r=await api("DELETE",`/api/case-queues/${id}`); r.ok?showQueueAdmin():toast("Failed.","error"); }
 async function macroCreate(){
   let acts; try{ acts=JSON.parse(document.getElementById("nm_act").value||"[]"); }catch(e){ document.getElementById("merr").innerHTML=`<div class="err">Invalid JSON: ${esc(e.message)}</div>`; return; }
-  const r=await api("POST","/api/macros",{name:v("nm_name"),object:"Case",actions:acts});
+  const r=await api("POST","/api/macros",{name:v("nm_name"),object:document.getElementById("nm_obj").value,actions:acts});
   r.ok?(toast("Macro created.","ok"),showQueueAdmin()):toast("Failed: "+((r.data||{}).error||r.status),"error");
 }
 async function macroToggle(id,active){ const r=await api("PUT",`/api/macros/${id}`,{active:!active}); r.ok?showQueueAdmin():toast("Failed.","error"); }

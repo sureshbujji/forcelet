@@ -20,7 +20,7 @@ from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
 from ._shared import (
     _audit, _do_create, _do_update, _visible_records,
-    current_user, recompute_opp_amount, require_admin, require_auth, serialize, ctx,
+    current_user, recompute_stored_rollups, require_admin, require_auth, serialize, ctx,
 )
 
 
@@ -60,6 +60,22 @@ def register(app: Flask):
                            if f["type"] in ("Text", "TextArea", "Email", "Phone", "URL")}
             rows = [r for r in rows
                     if any(q in str(r.get(fn) or "").lower() for fn in text_fields)]
+        div_param = request.args.get("division")
+        if div_param is not None:
+            # Explicit division filter: a division id or name, or "global"
+            # for records with no division.
+            from .. import divisions as _divisions
+            if div_param.strip().lower() in ("global", "none", ""):
+                rows = [r for r in rows
+                        if not _divisions.record_division_id(
+                            store, obj_name, r.get("id") or "")]
+            else:
+                div = _divisions.get_division(store, div_param) \
+                    or _divisions.get_division_by_name(store, div_param)
+                want = div["id"] if div else div_param
+                rows = [r for r in rows
+                        if _divisions.record_division_id(
+                            store, obj_name, r.get("id") or "") == want]
         sort_key = request.args.get("sort") or (view or {}).get("sort_by")
         reverse = (request.args.get("dir") or (view or {}).get("sort_dir") or "asc").lower() == "desc"
         if sort_key:
@@ -171,6 +187,8 @@ def register(app: Flask):
             return jsonify({"error": "Not found"}), 404
         if automation.pending_request_for(store, obj_name, rid) and not security.is_admin(user):
             return jsonify({"error": "Record is locked: an approval request is pending"}), 423
+        if obj_name == "Contract" and (rec.get("Status") or "Draft") != "Draft":
+            return jsonify({"error": "Only Draft Contracts can be deleted"}), 422
         try:
             datamodel.assert_mutable(obj)
         except ValueError as e:
@@ -186,9 +204,7 @@ def register(app: Flask):
         cascaded = datamodel.cascade_delete(store, registry, user, obj_name, rid)
         store.recycle_put(obj_name, rec, user["id"])
         store.delete(obj_name, rid)
-        if obj_name == "OpportunityLineItem" and rec.get("OpportunityId"):
-            # Keep Opportunity.Amount in sync for generic line-item deletes.
-            recompute_opp_amount(user, rec["OpportunityId"])
+        recompute_stored_rollups(user, obj_name, rec)
         terr = automation.run_triggers(store, registry, security, obj_name,
                                       "after_delete", rec, None, user)
         # after_delete cannot roll back; errors are surfaced as warnings

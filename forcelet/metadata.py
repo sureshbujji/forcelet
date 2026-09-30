@@ -73,7 +73,8 @@ class MetadataRegistry:
         if ftype == "MasterDetail":
             from .datamodel import validate_master_detail
             validate_master_detail(self, obj_name, field)
-        if ftype in ("Picklist", "MultiPicklist") and not field.get("picklist_values"):
+        if ftype in ("Picklist", "MultiPicklist") and not field.get("picklist_values") \
+                and not field.get("dynamic_picklist"):
             raise ValueError("Picklist fields require 'picklist_values'")
         full = {
             "name": fname,
@@ -83,6 +84,7 @@ class MetadataRegistry:
             "unique": bool(field.get("unique", False)),
             "length": field.get("length"),
             "picklist_values": field.get("picklist_values"),
+            "dynamic_picklist": bool(field.get("dynamic_picklist")),
             "reference_to": field.get("reference_to"),
             "default": field.get("default"),
             "formula": field.get("formula"),  # expression JSON; computed on read, never stored

@@ -121,12 +121,12 @@ def test_sla_breach_engine_marks_and_notifies(client, admin, leo, maya):
         import datetime
         past = (datetime.datetime.now(datetime.timezone.utc)
                 - datetime.timedelta(hours=3)).isoformat(timespec="seconds")
-        for m in automation.case_milestones(st, cid):
+        for m in automation.case_milestones(st, "Case", cid):
             m["due_at"] = past
             st.config_put("mf_case_milestones", m)
         breached = automation.check_sla_breaches(st, sec)
         assert len(breached) == 2
-        assert all(m["breached"] for m in automation.case_milestones(st, cid))
+        assert all(m["breached"] for m in automation.case_milestones(st, "Case", cid))
         # owner (leo) and his manager (maya) were notified
         for u in (leo_u, sec.get_user_by_username("maya")):
             notes = st.notifications_for(u["id"], unread_only=True)

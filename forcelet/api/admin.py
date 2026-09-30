@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from functools import wraps
@@ -17,14 +18,17 @@ from werkzeug.utils import secure_filename
 
 from .. import automation
 from .. import crypto as _crypto
+from .. import delegated as _delegated
+from .. import divisions as _divisions
 from ..expressions import eval_expr, record_context
 from ..field_types import FIELD_TYPES, validate_value
 from ..security import reset_login_attempts_for_user
-from ..settings import (CHATTER_KEY, ORG_KEY, PORTAL_KEY, SECURITY_KEY,
+from ..settings import (CHATTER_KEY, LOGIN_KEY, ORG_KEY, PORTAL_KEY, SECURITY_KEY,
                         check_password_policy, get_settings, save_settings)
 from ._shared import (
     _audit, _do_create, _do_update, _visible_records,
-    current_user, rate_limit, require_admin, require_auth, serialize, ctx,
+    current_user, rate_limit, require_admin, require_admin_scope,
+    require_auth, serialize, ctx,
 )
 
 
@@ -52,7 +56,147 @@ def register(app: Flask):
         "auto-response-rules": "mf_auto_responses",
         "sla-policies": "mf_sla_policies",
         "escalation-rules": "mf_escalation_rules",
+        "rollup-rules": "mf_rollup_rules",
+        "lead-field-mappings": "mf_lead_field_mappings",
+        "web-to-forms": "mf_web_to_forms",
+        "divisions": "mf_divisions",
     }
+
+    def _delegated_target_ok(scopes, target_role):
+        """403 response unless the caller may act on the target user.
+
+        Full admins always pass; delegated admins pass when one of their
+        scope entries covers the target's role (see delegated.target_in_scope).
+        """
+        user = request.mf_user
+        if security.is_admin(user):
+            return None
+        for scope in scopes:
+            if _delegated.target_in_scope(store, user, scope, target_role):
+                return None
+        return jsonify({"error": "Target is outside your delegated "
+                                 "administration scope"}), 403
+
+    def _validate_sla_policy(policy):
+        """422 response or None. ``policy`` is the merged policy dict."""
+        obj = policy.get("object") or "Case"
+        if not registry.get_object(obj):
+            return jsonify({"error": f"Unknown object '{obj}'"}), 422
+        comp = policy.get("completion")
+        if comp is not None:
+            if (not isinstance(comp, dict) or not comp
+                    or any(not isinstance(k, str) for k in comp)):
+                return jsonify({"error": (
+                    "completion must be a non-empty {field: value} map")}), 422
+            fields = {f["name"] for f in
+                      (registry.get_object(obj) or {}).get("fields", [])}
+            bad = [k for k in comp if k not in fields]
+            if bad:
+                return jsonify({"error": (
+                    f"completion field(s) not on {obj}"),
+                    "details": bad}), 422
+        return None
+
+    def _validate_rollup_rule(rule):
+        """422 response or None. ``rule`` is the merged rule dict."""
+        from ._shared import ROLLUP_FUNCS
+        for key in ("child_object", "parent_object", "link_field",
+                    "parent_field"):
+            if not rule.get(key):
+                return jsonify(
+                    {"error": f"{key} is required"}), 422
+        cdef = registry.get_object(rule["child_object"])
+        pdef = registry.get_object(rule["parent_object"])
+        if not cdef:
+            return jsonify({"error": (
+                f"Unknown child object '{rule['child_object']}'")}), 422
+        if not pdef:
+            return jsonify({"error": (
+                f"Unknown parent object '{rule['parent_object']}'")}), 422
+        cfields = {f["name"]: f for f in cdef.get("fields", [])}
+        pfields = {f["name"]: f for f in pdef.get("fields", [])}
+        func = rule.get("func") or "sum"
+        if func not in ROLLUP_FUNCS:
+            return jsonify({"error": (
+                f"func must be one of {list(ROLLUP_FUNCS)}")}), 422
+        if not cfields.get(rule["link_field"]):
+            return jsonify({"error": (
+                f"link_field '{rule['link_field']}' is not on "
+                f"{rule['child_object']}")}), 422
+        pf = pfields.get(rule["parent_field"])
+        if not pf:
+            return jsonify({"error": (
+                f"parent_field '{rule['parent_field']}' is not on "
+                f"{rule['parent_object']}")}), 422
+        if pf.get("formula") or pf.get("rollup"):
+            return jsonify({"error": (
+                "parent_field must not be a formula or roll-up field")}), 422
+        if func != "count":
+            if not rule.get("child_field"):
+                return jsonify(
+                    {"error": "child_field is required"}), 422
+            if not cfields.get(rule["child_field"]):
+                return jsonify({"error": (
+                    f"child_field '{rule['child_field']}' is not on "
+                    f"{rule['child_object']}")}), 422
+        return None
+
+    def _validate_lead_field_mapping(m):
+        """422 response or None. ``m`` is the merged mapping dict."""
+        for key in ("lead_field", "target_object", "target_field"):
+            if not m.get(key):
+                return jsonify(
+                    {"error": f"{key} is required"}), 422
+        if m["target_object"] not in ("Account", "Contact", "Opportunity"):
+            return jsonify({"error": (
+                "target_object must be Account, Contact or Opportunity")}), 422
+        lead_fields = {f["name"] for f in
+                       (registry.get_object("Lead") or {}).get("fields", [])}
+        if m["lead_field"] not in lead_fields:
+            return jsonify({"error": (
+                f"lead_field '{m['lead_field']}' is not on Lead")}), 422
+        target_fields = {f["name"]: f for f in
+                         (registry.get_object(m["target_object"]) or {})
+                         .get("fields", [])}
+        tf = target_fields.get(m["target_field"])
+        if not tf:
+            return jsonify({"error": (
+                f"target_field '{m['target_field']}' is not on "
+                f"{m['target_object']}")}), 422
+        if tf.get("formula") or tf.get("rollup"):
+            return jsonify({"error": (
+                "target_field must not be a formula or roll-up field")}), 422
+        return None
+
+    def _validate_web_to_form(f):
+        """422 response or None. ``f`` is the merged form dict."""
+        if not f.get("key"):
+            return jsonify({"error": "key is required"}), 422
+        obj_name = f.get("object") or "Lead"
+        obj = registry.get_object(obj_name)
+        if not obj:
+            return jsonify({"error": f"Unknown object '{obj_name}'"}), 422
+        fields = f.get("fields") or []
+        if not isinstance(fields, list) or not fields:
+            return jsonify({"error": "fields must be a non-empty list"}), 422
+        obj_fields = {fd["name"]: fd for fd in obj.get("fields", [])}
+        for fn in fields:
+            fd = obj_fields.get(fn)
+            if not fd:
+                return jsonify({"error": (
+                    f"field '{fn}' is not on {obj_name}")}), 422
+            if fd.get("formula") or fd.get("rollup"):
+                return jsonify({"error": (
+                    f"field '{fn}' is computed and cannot be web-submitted")}), 422
+        for fn in f.get("required") or []:
+            if fn not in fields:
+                return jsonify({"error": (
+                    f"required field '{fn}' is not in fields")}), 422
+        for dk in (f.get("defaults") or {}):
+            if dk not in obj_fields:
+                return jsonify({"error": (
+                    f"default field '{dk}' is not on {obj_name}")}), 422
+        return None
 
     @app.get("/api/admin/<kind>")
     @require_auth
@@ -171,6 +315,42 @@ def register(app: Flask):
             if err:
                 return jsonify({"error": err}), 422
             body["next_run"] = automation.compute_next_run(sched)
+        if kind == "divisions":
+            name = (body.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": "Division name is required"}), 422
+            if _divisions.get_division_by_name(store, name):
+                return jsonify({"error": f"A division named '{name}' "
+                                          "already exists"}), 422
+            body["name"] = name
+            body.setdefault("active", True)
+            body.setdefault("description", "")
+        if kind == "sla-policies":
+            body.setdefault("object", "Case")
+            err = _validate_sla_policy(body)
+            if err:
+                return err
+        if kind == "rollup-rules":
+            body.setdefault("func", "sum")
+            body.setdefault("active", True)
+            err = _validate_rollup_rule(body)
+            if err:
+                return err
+        if kind == "lead-field-mappings":
+            body.setdefault("active", True)
+            err = _validate_lead_field_mapping(body)
+            if err:
+                return err
+        if kind == "web-to-forms":
+            body.setdefault("active", True)
+            err = _validate_web_to_form(body)
+            if err:
+                return err
+            dup = [r for r in store.config_all(table)
+                   if r.get("key") == body.get("key")]
+            if dup:
+                return jsonify({"error": (
+                    f"key '{body.get('key')}' already exists")}), 422
         rid = store.config_put(table, body)
         _audit("create", kind, body.get("name") or rid)
         return jsonify(store.config_get(table, rid)), 201
@@ -188,6 +368,15 @@ def register(app: Flask):
             return jsonify({"error": "Not found"}), 404
         body = request.json or {}
         body.pop("id", None)
+        if kind == "divisions" and "name" in body:
+            name = (body.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": "Division name is required"}), 422
+            other = _divisions.get_division_by_name(store, name)
+            if other and other["id"] != rid:
+                return jsonify({"error": f"A division named '{name}' "
+                                          "already exists"}), 422
+            body["name"] = name
         if kind == "scheduled-jobs" and (body.get("cron") or "").strip():
             from .. import cron as _cron
             try:
@@ -215,6 +404,22 @@ def register(app: Flask):
                     merged["next_run"] = automation.compute_next_run(sched)
         else:
             merged = {**old, **body}
+        if kind == "sla-policies":
+            err = _validate_sla_policy(merged)
+            if err:
+                return err
+        if kind == "rollup-rules":
+            err = _validate_rollup_rule(merged)
+            if err:
+                return err
+        if kind == "lead-field-mappings":
+            err = _validate_lead_field_mapping(merged)
+            if err:
+                return err
+        if kind == "web-to-forms":
+            err = _validate_web_to_form(merged)
+            if err:
+                return err
         store.config_put(table, {**merged, "id": rid})
         _audit("update", kind, merged.get("name") or rid)
         return jsonify(store.config_get(table, rid))
@@ -227,6 +432,11 @@ def register(app: Flask):
         if not table:
             return jsonify({"error": "Unknown config type"}), 404
         old = store.config_get(table, rid)
+        if kind == "divisions" and old:
+            n = _divisions.count_records(store, rid)
+            if n:
+                return jsonify({"error": f"Division has {n} assigned record(s) — "
+                                         "move them to another division first"}), 409
         ok = store.config_delete(table, rid)
         if ok:
             _audit("delete", kind, (old or {}).get("name") or rid)
@@ -322,18 +532,87 @@ def register(app: Flask):
         _audit("delete", "object", obj_name)
         return jsonify({"deleted": True})
 
-    @app.get("/api/admin/users")
+    # ----------------------------------------- object-level settings (A2)
+    #: Settings an admin may change on an existing object definition.
+    OBJECT_SETTINGS = ("label", "plural", "calendar_date_field",
+                       "calendar_label_field", "calendar_color")
+
+    @app.put("/api/admin/objects/<obj_name>")
     @require_auth
     @require_admin
+    def admin_update_object(obj_name):
+        obj = registry.get_object(obj_name)
+        if not obj:
+            return jsonify({"error": f"Unknown object '{obj_name}'"}), 404
+        body = request.json or {}
+        if body.get("name") and body["name"] != obj_name:
+            return jsonify(
+                {"error": "Renaming an object is not supported"}), 422
+        fields = {f["name"]: f for f in obj.get("fields", [])}
+        updates = {}
+        if "label" in body or "plural" in body:
+            for key in ("label", "plural"):
+                if key in body:
+                    val = (body.get(key) or "").strip()
+                    if not val:
+                        return jsonify(
+                            {"error": f"{key} must not be blank"}), 422
+                    updates[key] = val
+        if "calendar_date_field" in body:
+            # "" = explicitly removed from the calendar;
+            # null = clear the override (built-ins fall back to their default)
+            raw = body.get("calendar_date_field")
+            val = (raw or "").strip() if raw is not None else ""
+            if raw is None:
+                updates["calendar_date_field"] = None
+            else:
+                if val:
+                    f = fields.get(val)
+                    if not f or f.get("type") not in ("Date", "DateTime"):
+                        return jsonify({"error": (
+                            "calendar_date_field must be an existing "
+                            "Date or DateTime field")}), 422
+                updates["calendar_date_field"] = val
+        if "calendar_label_field" in body:
+            val = (body.get("calendar_label_field") or "").strip()
+            if val and val not in fields:
+                return jsonify(
+                    {"error": "calendar_label_field must be an existing "
+                             "field"}), 422
+            updates["calendar_label_field"] = val or None
+        if "calendar_color" in body:
+            val = (body.get("calendar_color") or "").strip()
+            if val and not re.fullmatch(
+                    r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", val):
+                return jsonify(
+                    {"error": "calendar_color must be a hex color like "
+                             "#0176d3"}), 422
+            updates["calendar_color"] = val or None
+        unknown = [k for k in body if k not in OBJECT_SETTINGS + ("name",)]
+        if unknown:
+            return jsonify(
+                {"error": f"Unknown object setting(s): {', '.join(unknown)}"}
+            ), 422
+        obj.update(updates)
+        store.meta_put("mf_objects", obj_name, obj)
+        _audit("update", "object", obj_name)
+        return jsonify(obj)
+
+    @app.get("/api/admin/users")
+    @require_auth
+    @require_admin_scope("users")
     def admin_list_users():
         return jsonify([{k: v for k, v in u.items() if k != "password_hash"}
                         for u in security.list_users()])
 
     @app.post("/api/admin/users")
     @require_auth
-    @require_admin
+    @require_admin_scope("users")
     def admin_create_user():
         body = request.json or {}
+        denied = _delegated_target_ok(("users",), body.get("role"))
+        if denied:
+            return denied
         password = body.get("password") or "forcelet"
         sec = get_settings(store, SECURITY_KEY)
         perr = check_password_policy(password, body.get("username", ""), sec)
@@ -351,11 +630,15 @@ def register(app: Flask):
 
     @app.put("/api/admin/users/<uid>")
     @require_auth
-    @require_admin
+    @require_admin_scope("users")
     def admin_update_user(uid):
         target = security.get_user(uid)
         if not target:
             return jsonify({"error": "Unknown user"}), 404
+        denied = _delegated_target_ok(
+            ("users",), (request.json or {}).get("role", target.get("role")))
+        if denied:
+            return denied
         body = request.json or {}
         if target["id"] == request.mf_user["id"] and "is_active" in body \
                 and not body["is_active"]:
@@ -374,11 +657,14 @@ def register(app: Flask):
 
     @app.delete("/api/admin/users/<uid>")
     @require_auth
-    @require_admin
+    @require_admin_scope("users")
     def admin_delete_user(uid):
         target = security.get_user(uid)
         if not target:
             return jsonify({"error": "Unknown user"}), 404
+        denied = _delegated_target_ok(("users",), target.get("role"))
+        if denied:
+            return denied
         if target["id"] == request.mf_user["id"]:
             return jsonify({"error": "You cannot delete your own account"}), 422
         try:
@@ -395,11 +681,14 @@ def register(app: Flask):
 
     @app.post("/api/admin/users/<uid>/reset-password")
     @require_auth
-    @require_admin
+    @require_admin_scope("users", "passwords")
     def admin_reset_password(uid):
         target = security.get_user(uid)
         if not target:
             return jsonify({"error": "Unknown user"}), 404
+        denied = _delegated_target_ok(("users", "passwords"), target.get("role"))
+        if denied:
+            return denied
         if target["id"] == request.mf_user["id"]:
             return jsonify({"error": "Use Change Password for your own account"}), 422
         temp = secrets.token_urlsafe(12)
@@ -416,11 +705,14 @@ def register(app: Flask):
 
     @app.post("/api/admin/users/<uid>/unlock")
     @require_auth
-    @require_admin
+    @require_admin_scope("users", "passwords")
     def admin_unlock_user(uid):
         target = security.get_user(uid)
         if not target:
             return jsonify({"error": "Unknown user"}), 404
+        denied = _delegated_target_ok(("users", "passwords"), target.get("role"))
+        if denied:
+            return denied
         if target["id"] == request.mf_user["id"]:
             return jsonify({"error": "You cannot unlock your own account"}), 422
         reset_login_attempts_for_user(target["username"])
@@ -429,8 +721,14 @@ def register(app: Flask):
 
     @app.post("/api/admin/users/<uid>/permission-sets")
     @require_auth
-    @require_admin
+    @require_admin_scope("users")
     def admin_assign_ps(uid, ):
+        target = security.get_user(uid)
+        if not target:
+            return jsonify({"error": "Unknown user"}), 404
+        denied = _delegated_target_ok(("users",), target.get("role"))
+        if denied:
+            return denied
         try:
             user = security.assign_permission_set(uid, (request.json or {}).get("permission_set", ""))
         except ValueError as e:
@@ -441,7 +739,7 @@ def register(app: Flask):
 
     @app.get("/api/admin/users/<uid>/permission-sets")
     @require_auth
-    @require_admin
+    @require_admin_scope("users")
     def admin_user_ps(uid):
         user = security.get_user(uid)
         if not user:
@@ -456,8 +754,14 @@ def register(app: Flask):
 
     @app.delete("/api/admin/users/<uid>/permission-sets/<psid>")
     @require_auth
-    @require_admin
+    @require_admin_scope("users")
     def admin_unassign_ps(uid, psid):
+        target = security.get_user(uid)
+        if not target:
+            return jsonify({"error": "Unknown user"}), 404
+        denied = _delegated_target_ok(("users",), target.get("role"))
+        if denied:
+            return denied
         try:
             user = security.unassign_permission_set(uid, psid)
         except ValueError as e:
@@ -467,13 +771,13 @@ def register(app: Flask):
 
     @app.get("/api/admin/roles")
     @require_auth
-    @require_admin
+    @require_admin_scope("roles")
     def admin_list_roles():
         return jsonify(security.list_roles())
 
     @app.post("/api/admin/roles")
     @require_auth
-    @require_admin
+    @require_admin_scope("roles")
     def admin_create_role():
         body = request.json or {}
         try:
@@ -485,7 +789,7 @@ def register(app: Flask):
 
     @app.put("/api/admin/roles/<name>")
     @require_auth
-    @require_admin
+    @require_admin_scope("roles")
     def admin_update_role(name):
         body = request.json or {}
         try:
@@ -503,7 +807,7 @@ def register(app: Flask):
 
     @app.delete("/api/admin/roles/<name>")
     @require_auth
-    @require_admin
+    @require_admin_scope("roles")
     def admin_delete_role(name):
         try:
             security.delete_role(name)
@@ -516,13 +820,13 @@ def register(app: Flask):
 
     @app.get("/api/admin/profiles")
     @require_auth
-    @require_admin
+    @require_admin_scope("profiles")
     def admin_list_profiles():
         return jsonify(security.list_profiles())
 
     @app.post("/api/admin/profiles")
     @require_auth
-    @require_admin
+    @require_admin_scope("profiles")
     def admin_create_profile():
         body = request.json or {}
         try:
@@ -575,7 +879,7 @@ def register(app: Flask):
 
     @app.get("/api/admin/profiles/<name>")
     @require_auth
-    @require_admin
+    @require_admin_scope("profiles")
     def admin_get_profile(name):
         prof = security.get_profile(name)
         if not prof:
@@ -584,7 +888,7 @@ def register(app: Flask):
 
     @app.put("/api/admin/profiles/<name>")
     @require_auth
-    @require_admin
+    @require_admin_scope("profiles")
     def admin_update_profile(name):
         prof = security.get_profile(name)
         if not prof:
@@ -617,13 +921,23 @@ def register(app: Flask):
         prof["field_permissions"] = {o: {f: {k: bool(v) for k, v in (fp or {}).items()}
                                          for f, fp in (fs or {}).items()}
                                      for o, fs in (field_perms or {}).items()}
+        if "default_division" in body:
+            div_id = (body.get("default_division") or "").strip()
+            if div_id:
+                div = _divisions.get_division(store, div_id)
+                if not div:
+                    return jsonify({"error": f"Unknown division '{div_id}'"}), 422
+                prof["default_division"] = div_id
+            else:
+                prof.pop("default_division", None)
         store.meta_put("mf_profiles", name, prof)
         _audit("update", "profile", name)
         return jsonify(prof)
 
     # ------------------------------------------------- org & admin settings
     _SETTING_BLOBS = {"org": ORG_KEY, "security": SECURITY_KEY,
-                      "portal": PORTAL_KEY, "chatter": CHATTER_KEY}
+                      "portal": PORTAL_KEY, "chatter": CHATTER_KEY,
+                      "login": LOGIN_KEY}
 
     @app.get("/api/admin/settings/<blob>")
     @require_auth

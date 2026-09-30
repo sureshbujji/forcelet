@@ -266,6 +266,13 @@ class Security:
                        _seen: set | None = None) -> bool:
         if self.is_admin(user):
             return True
+        # Divisions partition visibility on top of every other sharing rule:
+        # a user sees records in their own division plus global records.
+        if obj_name and record and record.get("id"):
+            from . import divisions as _divisions
+            if not _divisions.record_visible_to_user(
+                    self.store, self, user, obj_name, record):
+                return False
         if obj_name:
             obj_def = self.store.meta_get("mf_objects", obj_name)
             if obj_def and obj_def.get("org_wide_visible"):

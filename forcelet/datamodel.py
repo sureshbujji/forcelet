@@ -183,6 +183,14 @@ def ensure_territory_tables(store):
         c.execute("""CREATE TABLE IF NOT EXISTS mf_account_territories
                      (account_id TEXT, territory_id TEXT,
                       PRIMARY KEY (account_id, territory_id))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS mf_record_territories
+                     (object TEXT, record_id TEXT, territory_id TEXT,
+                      PRIMARY KEY (object, record_id, territory_id))""")
+        # one-time migration: legacy account assignments become object='Account'
+        c.execute("""INSERT OR IGNORE INTO mf_record_territories
+                     (object, record_id, territory_id)
+                     SELECT 'Account', account_id, territory_id
+                     FROM mf_account_territories""")
         store.conn.commit()
 
 
@@ -250,17 +258,24 @@ def territory_members(store, territory_id: str) -> list:
         "SELECT * FROM mf_territory_members WHERE territory_id=?", (territory_id,)).fetchall()]
 
 
-def account_territories(store, account_id: str) -> list:
+def record_territories(store, obj_name: str, record_id: str) -> list:
+    """Territory ids assigned to any record (per-object)."""
     ensure_territory_tables(store)
     return [r["territory_id"] for r in store._execute(
-        "SELECT territory_id FROM mf_account_territories WHERE account_id=?",
-        (account_id,)).fetchall()]
+        "SELECT territory_id FROM mf_record_territories WHERE object=? AND record_id=?",
+        (obj_name, record_id)).fetchall()]
+
+
+def account_territories(store, account_id: str) -> list:
+    return record_territories(store, "Account", account_id)
 
 
 def run_territory_assignment(store, registry, rule_id: str | None = None) -> dict:
-    """Evaluate active assignment rules against Accounts; rebuild associations.
+    """Evaluate active assignment rules; each rule targets its own object.
 
-    Returns {"accounts_assigned": n, "rules_run": m}.
+    Rules without an explicit object keep the legacy behavior (Account).
+    Returns {"records_assigned": n, "rules_run": m} (plus the legacy
+    "accounts_assigned" alias for backward compatibility).
     """
     ensure_territory_tables(store)
     rules = [r for r in store.config_all(TERRITORY_RULE_TABLE)
@@ -268,38 +283,42 @@ def run_territory_assignment(store, registry, rule_id: str | None = None) -> dic
     rules.sort(key=lambda r: (r.get("priority") or 0))
     if rule_id and not rules:
         raise ValueError("Unknown or inactive rule")
-    accounts = store.query("Account", limit=100000)
     assigned = 0
     for rule in rules:
         criteria = rule.get("criteria") or {}
         tid = rule.get("territory_id")
+        obj_name = rule.get("object") or "Account"
         if not tid or not store.config_get(TERRITORY_TABLE, tid):
             continue
-        for acc in accounts:
+        if not registry.get_object(obj_name):
+            continue
+        for rec in store.query(obj_name, limit=100000):
             try:
-                match = eval_expr(criteria, record_context(acc))
+                match = eval_expr(criteria, record_context(rec))
             except Exception:
                 match = False
             if match:
-                store._execute("INSERT OR IGNORE INTO mf_account_territories"
-                               " (account_id, territory_id) VALUES (?, ?)",
-                               (acc["id"], tid))
+                store._execute("INSERT OR IGNORE INTO mf_record_territories"
+                               " (object, record_id, territory_id) VALUES (?, ?, ?)",
+                               (obj_name, rec["id"], tid))
                 assigned += 1
     store._commit()
-    return {"accounts_assigned": assigned, "rules_run": len(rules)}
+    return {"records_assigned": assigned, "accounts_assigned": assigned,
+            "rules_run": len(rules)}
 
 
 def territory_grants_access(store, user: dict, obj_name: str, record: dict) -> bool:
-    """True when the user's territories cover this record (Account/Opportunity)."""
+    """True when the user's territories cover this record (any object).
+
+    Opportunities additionally inherit their account's territories
+    (legacy behavior).
+    """
     ensure_territory_tables(store)
-    account_id = None
-    if obj_name == "Account":
-        account_id = record.get("id")
-    elif obj_name == "Opportunity":
+    terr_ids = set(record_territories(store, obj_name, record.get("id")))
+    if obj_name == "Opportunity":
         account_id = record.get("AccountId") or record.get("account_id")
-    if not account_id:
-        return False
-    terr_ids = set(account_territories(store, account_id))
+        if account_id:
+            terr_ids |= set(record_territories(store, "Account", account_id))
     if not terr_ids:
         return False
     return bool(terr_ids & user_territory_ids(store, user["id"]))

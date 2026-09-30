@@ -55,6 +55,17 @@ _CASE_ENTITLEMENT_TABLE = "mf_case_entitlement"
 NOTE_PARENTS = ("Account", "Contact", "Opportunity", "Case", "Lead")
 
 
+def _is_note_parent(registry, parent_type: str) -> bool:
+    """Notes may attach to any registered object except Note itself.
+
+    The old NOTE_PARENTS tuple is kept for backward compatibility (existing
+    integrations/tests may reference it); the API validates against the
+    object registry so custom objects work too.
+    """
+    return bool(parent_type) and parent_type != "Note" \
+        and registry.get_object(parent_type) is not None
+
+
 def _fragment_path() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(os.path.dirname(here))
@@ -666,9 +677,9 @@ def register(app: Flask):
         user = request.mf_user
         body = dict(request.json or {})
         parent_type = body.get("ParentType")
-        if parent_type not in NOTE_PARENTS:
+        if not _is_note_parent(registry, parent_type):
             return jsonify(
-                {"error": f"ParentType must be one of {list(NOTE_PARENTS)}"}), 422
+                {"error": "ParentType must be a valid object name"}), 422
         parent = _get_visible_parent(user, parent_type, body.get("ParentId") or "")
         if parent is None:
             return jsonify({"error": "Parent record not found"}), 404
@@ -695,7 +706,7 @@ def register(app: Flask):
         user = request.mf_user
         parent_type = request.args.get("parent_type")
         parent_id = request.args.get("parent_id")
-        if parent_type not in NOTE_PARENTS or not parent_id:
+        if not parent_id or not _is_note_parent(registry, parent_type):
             return jsonify(
                 {"error": "parent_type and parent_id are required"}), 422
         parent = _get_visible_parent(user, parent_type, parent_id)
@@ -765,7 +776,7 @@ def register(app: Flask):
         user = request.mf_user
         parent_type = request.args.get("parent_type")
         parent_id = request.args.get("parent_id")
-        if parent_type not in NOTE_PARENTS or not parent_id:
+        if not parent_id or not _is_note_parent(registry, parent_type):
             return jsonify(
                 {"error": "parent_type and parent_id are required"}), 422
         parent = _get_visible_parent(user, parent_type, parent_id)
@@ -793,5 +804,6 @@ def register(app: Flask):
                 _case_entitlement_payload(store, security, user, registry,
                                              parent_id, application) \
                 if application else None
-            out["milestones"] = automation.case_milestones(store, parent_id)
+            out["milestones"] = automation.case_milestones(
+                store, "Case", parent_id)
         return jsonify(out)

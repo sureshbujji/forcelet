@@ -152,8 +152,8 @@ def test_backup_create_and_list(client, tmp_path, monkeypatch):
 
 
 def test_migrations_baseline_version(app):
-    assert app.mf_store.meta_kv_get("schema_version") == "3"
-    assert run_migrations(app.mf_store) == 3
+    assert app.mf_store.meta_kv_get("schema_version") == "5"
+    assert run_migrations(app.mf_store) == 5
 
 
 # ------------------------------------------------------- scheduler lock

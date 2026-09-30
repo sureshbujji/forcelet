@@ -67,6 +67,9 @@ def register(app: Flask):
                 fields.append(f2)
         return jsonify({"name": obj["name"], "label": obj["label"], "plural": obj["plural"],
                         "is_custom": obj["is_custom"], "fields": fields,
+                        "calendar_date_field": obj.get("calendar_date_field"),
+                        "calendar_label_field": obj.get("calendar_label_field"),
+                        "calendar_color": obj.get("calendar_color"),
                         "record_types": [{"name": r["name"], "label": r.get("label", r["name"]),
                                           "is_default": bool(r.get("is_default"))}
                                          for r in automation.get_record_types(store, obj_name)],

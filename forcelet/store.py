@@ -88,6 +88,7 @@ class Store:
                       "mf_auto_responses", "mf_paths", "mf_ml_models",
                       "mf_sla_policies", "mf_case_milestones", "mf_escalation_rules",
                       "mf_named_credentials", "mf_forecast_quotas", "mf_flow_runs",
+                      "mf_forecast_types",
                       "mf_apps",
                       "mf_dashboards", "mf_case_queues", "mf_macros",
                       "mf_bulk_jobs", "mf_report_subs", "mf_flow_versions",
@@ -95,8 +96,14 @@ class Store:
                       "mf_cmdt_records", "mf_custom_settings",
                       "mf_installed_packages", "mf_external_objects",
                       "mf_territories", "mf_territory_rules",
+                      "mf_lead_field_mappings", "mf_web_to_forms",
+                      "mf_kb_versions",
+                      "mf_campaign_member_statuses",
                       "mf_person_accounts", "mf_archive_rules",
-                      "mf_dynamic_forms"):
+                      "mf_dynamic_forms", "mf_divisions", "mf_seed_templates",
+                      "mf_import_runs", "mf_custom_labels", "mf_translations",
+                      "mf_rollup_rules",
+                      "mf_delegated_groups"):
             c.execute(f"""CREATE TABLE IF NOT EXISTS {table}
                           (id TEXT PRIMARY KEY, definition TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS mf_history

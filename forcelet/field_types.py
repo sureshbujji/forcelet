@@ -86,6 +86,8 @@ def validate_value(field: dict, value):
         return True, 1 if truthy else 0, None
 
     if ftype == "Picklist":
+        if field.get("dynamic_picklist"):
+            return True, str(value), None  # validated per-context by app logic
         allowed = field.get("picklist_values") or []
         if allowed and str(value) not in allowed:
             return False, None, f"{label} must be one of {allowed}"

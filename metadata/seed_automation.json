@@ -890,5 +890,64 @@
    "name": "Event end not before start",
    "object": "Event"
   }
+ ],
+ "rollup_rules": [
+  {
+   "name": "Opportunity amount from line items",
+   "child_object": "OpportunityLineItem",
+   "parent_object": "Opportunity",
+   "link_field": "OpportunityId",
+   "parent_field": "Amount",
+   "child_field": "TotalPrice",
+   "func": "sum",
+   "active": true
+  }
+ ],
+ "web_to_forms": [
+  {
+   "key": "web-to-lead",
+   "name": "Web-to-Lead",
+   "object": "Lead",
+   "title": "Contact us",
+   "fields": [
+    "FirstName",
+    "LastName",
+    "Company",
+    "Email",
+    "Phone",
+    "Rating"
+   ],
+   "required": [
+    "LastName",
+    "Company"
+   ],
+   "defaults": {
+    "LeadSource": "Web"
+   },
+   "active": true
+  },
+  {
+   "key": "web-to-case",
+   "name": "Web-to-Case",
+   "object": "Case",
+   "title": "Open a support case",
+   "fields": [
+    "FirstName",
+    "LastName",
+    "Email",
+    "Subject",
+    "Priority",
+    "Description"
+   ],
+   "required": [
+    "LastName",
+    "Subject"
+   ],
+   "defaults": {
+    "Origin": "Web",
+    "Priority": "Medium"
+   },
+   "active": true
+  }
  ]
 }

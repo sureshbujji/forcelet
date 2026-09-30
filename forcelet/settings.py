@@ -14,6 +14,7 @@ ORG_KEY = "org_settings"
 SECURITY_KEY = "security_settings"
 PORTAL_KEY = "portal_settings"
 CHATTER_KEY = "chatter_settings"
+LOGIN_KEY = "login_settings"
 
 ORG_DEFAULTS = {
     "org_name": "Forcelet",
@@ -53,11 +54,29 @@ CHATTER_DEFAULTS = {
     "mentions_enabled": True,
 }
 
+# Login branding + post-login flow toggles, honored by the sign-in screens
+# (web/index.html and web/portal.html) and the post-login announcement API.
+LOGIN_DEFAULTS = {
+    "logo_url": "",
+    "headline": "Forcelet",
+    "tagline": "",  # empty = fall back to the i18n login.tagline label
+    "primary_color": "#0176d3",
+    "background": "",  # CSS background value for the login screen
+    "announcement_enabled": False,
+    "announcement_title": "",
+    "announcement_body": "",
+    "login_flow": [  # ordered post-login steps an admin can toggle
+        {"key": "announcement_banner", "enabled": True},
+        {"key": "totp_enrollment_nudge", "enabled": True},
+    ],
+}
+
 _DEFAULTS = {
     ORG_KEY: ORG_DEFAULTS,
     SECURITY_KEY: SECURITY_DEFAULTS,
     PORTAL_KEY: PORTAL_DEFAULTS,
     CHATTER_KEY: CHATTER_DEFAULTS,
+    LOGIN_KEY: LOGIN_DEFAULTS,
 }
 
 
@@ -99,6 +118,8 @@ def save_settings(store, key: str, patch: dict) -> dict:
         clean[k] = v
     if key == SECURITY_KEY:
         _validate_security(clean, get_settings(store, key))
+    if key == LOGIN_KEY:
+        _validate_login(clean)
     if key == ORG_KEY and "fiscal_year_start_month" in clean:
         m = clean["fiscal_year_start_month"]
         if not 1 <= m <= 12:
@@ -126,6 +147,29 @@ def _validate_security(patch: dict, current: dict):
     if merged["totp_required"] == "profiles" and not merged["totp_required_profiles"]:
         raise ValueError("totp_required_profiles needs at least one profile "
                          "when totp_required is 'profiles'")
+
+
+def _validate_login(patch: dict):
+    import re as _re
+    if "primary_color" in patch:
+        if not _re.match(r"^#[0-9a-fA-F]{6}$", patch["primary_color"] or ""):
+            raise ValueError("primary_color must be a hex color like '#0176d3'")
+    if "logo_url" in patch and patch["logo_url"]:
+        u = patch["logo_url"]
+        if not (u.startswith("https://") or u.startswith("http://")
+                or u.startswith("data:image/") or u.startswith("/")):
+            raise ValueError("logo_url must be an http(s) URL, a data:image URI, "
+                             "or a site-relative path")
+    if "login_flow" in patch:
+        flow = patch["login_flow"]
+        keys = {s.get("key") for s in
+                LOGIN_DEFAULTS["login_flow"]}
+        for step in flow:
+            if not isinstance(step, dict) or step.get("key") not in keys:
+                raise ValueError(
+                    f"login_flow steps must use keys {sorted(keys)}")
+            if not isinstance(step.get("enabled"), bool):
+                raise ValueError("login_flow step 'enabled' must be true/false")
 
 
 def check_password_policy(password: str, username: str, settings: dict) -> str | None:

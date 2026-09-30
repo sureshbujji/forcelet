@@ -91,6 +91,32 @@ async function loadPortalSettings(){
   }catch(e){}
   document.title = portalCfg.title + " — Customer Portal";
   document.querySelector("header h1").textContent = portalCfg.title;
+  applyLoginBranding();
+}
+
+/* Shared sign-in branding: logo, primary color, translated labels (public). */
+async function applyLoginBranding(){
+  try{
+    const b = await fetch(API+"/api/public/login-branding").then(r=>r.json());
+    if(b.logo_url){
+      const h1=document.querySelector("header h1");
+      if(h1&&!h1.querySelector("img")) h1.insertAdjacentHTML("afterbegin",'<img src="'+esc(b.logo_url)+'" alt="" style="height:26px;vertical-align:-5px;margin-right:8px">');
+    }
+    if(b.primary_color){
+      const st=document.createElement("style");
+      st.textContent=".btn:not(.secondary){background:"+b.primary_color+"}";
+      document.head.appendChild(st);
+    }
+    const lang=(navigator.language||"en").slice(0,2);
+    window.__i18n=await fetch(API+"/api/i18n/"+encodeURIComponent(lang)).then(r=>r.json());
+  }catch(e){}
+  brandLoginView();
+}
+function brandLoginView(){
+  if(view!=="login"||!window.__i18n||!window.__i18n["login.signin"]) return;
+  const m=document.getElementById("main");
+  const h2=m.querySelector(".card h2"); if(h2) h2.textContent=window.__i18n["login.signin"];
+  const btn=m.querySelector(".card .btn"); if(btn) btn.textContent=window.__i18n["login.signin"];
 }
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
@@ -244,6 +270,7 @@ async function render(){
   else if(view==="reports")h=await reportsView();
   else if(view==="profile")h=await profileView();
   m.innerHTML=h;
+  brandLoginView();
   wire();
 }
 function wire(){

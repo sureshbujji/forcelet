@@ -91,6 +91,38 @@ def _m003_duplicate_rule_criteria(store):
         pass
 
 
+@migration(4, "divisions: record->division assignment table")
+def _m004_record_divisions(store):
+    store._execute(
+        """CREATE TABLE IF NOT EXISTS mf_record_divisions
+           (object_name TEXT NOT NULL, record_id TEXT NOT NULL,
+            division_id TEXT NOT NULL,
+            PRIMARY KEY (object_name, record_id))""")
+    store._execute(
+        "CREATE INDEX IF NOT EXISTS idx_record_divisions_div "
+        "ON mf_record_divisions (division_id)")
+    store._commit()
+
+
+@migration(5, "notes: ParentType becomes free-text so notes work on any object")
+def _m005_note_parent_type(store):
+    # Note.ParentType was a Picklist locked to 5 standard objects. Widen it
+    # to Text(64) so notes can attach to custom objects too; the API now
+    # validates the parent type against the object registry instead.
+    obj = store.meta_get("mf_objects", "Note")
+    if obj:
+        changed = False
+        for f in obj.get("fields", []):
+            if f.get("name") == "ParentType" and f.get("type") == "Picklist":
+                f["type"] = "Text"
+                f["length"] = 64
+                f["picklist_values"] = None
+                changed = True
+        if changed:
+            store.meta_put("mf_objects", "Note", obj)
+    # The column is already TEXT either way; nothing to alter.
+
+
 def run_migrations(store) -> int:
     """Apply every pending migration. Returns the resulting schema version."""
     raw = store.meta_kv_get("schema_version", "0") or "0"

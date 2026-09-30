@@ -83,6 +83,7 @@ def register(app: Flask):
         datamodel.ensure_territory_tables(store)
         store._execute("DELETE FROM mf_territory_members WHERE territory_id=?", (tid,))
         store._execute("DELETE FROM mf_account_territories WHERE territory_id=?", (tid,))
+        store._execute("DELETE FROM mf_record_territories WHERE territory_id=?", (tid,))
         for rule in store.config_all(datamodel.TERRITORY_RULE_TABLE):
             if rule.get("territory_id") == tid:
                 store.config_delete(datamodel.TERRITORY_RULE_TABLE, rule["id"])
@@ -144,8 +145,12 @@ def register(app: Flask):
         body = request.get_json(silent=True) or {}
         if not store.config_get(datamodel.TERRITORY_TABLE, body.get("territory_id") or ""):
             return jsonify({"error": "Unknown territory"}), 422
+        obj_name = body.get("object") or "Account"
+        if not registry.get_object(obj_name):
+            return jsonify({"error": f"Unknown object '{obj_name}'"}), 422
         rid = store.config_put(datamodel.TERRITORY_RULE_TABLE, {
             "name": body.get("name") or "Rule",
+            "object": obj_name,
             "territory_id": body.get("territory_id"),
             "criteria": body.get("criteria") or {},
             "priority": int(body.get("priority") or 0),
@@ -162,6 +167,8 @@ def register(app: Flask):
             return jsonify({"error": "Not found"}), 404
         body = request.get_json(silent=True) or {}
         body.pop("id", None)
+        if body.get("object") and not registry.get_object(body["object"]):
+            return jsonify({"error": f"Unknown object '{body['object']}'"}), 422
         store.config_put(datamodel.TERRITORY_RULE_TABLE, {**old, **body, "id": rid})
         _audit("update", "territory-rule", old.get("name") or rid)
         return jsonify(store.config_get(datamodel.TERRITORY_RULE_TABLE, rid))
@@ -194,6 +201,18 @@ def register(app: Flask):
         if not acc or not security.can_see_record(user, acc, "Account"):
             return jsonify({"error": "Not found"}), 404
         tids = datamodel.account_territories(store, rid)
+        terrs = {t["id"]: t["name"] for t in store.config_all(datamodel.TERRITORY_TABLE)}
+        return jsonify([{"id": t, "name": terrs.get(t, "?")} for t in tids])
+
+    @app.get("/api/sobjects/<obj_name>/<rid>/territories")
+    @require_auth
+    def record_territories(obj_name, rid):
+        user = request.mf_user
+        obj = registry.get_object(obj_name)
+        rec = obj and store.get(obj_name, rid)
+        if not obj or not rec or not security.can_see_record(user, rec, obj_name):
+            return jsonify({"error": "Not found"}), 404
+        tids = datamodel.record_territories(store, obj_name, rid)
         terrs = {t["id"]: t["name"] for t in store.config_all(datamodel.TERRITORY_TABLE)}
         return jsonify([{"id": t, "name": terrs.get(t, "?")} for t in tids])
 

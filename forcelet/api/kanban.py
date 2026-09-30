@@ -62,6 +62,12 @@ def register(app: Flask):
             return jsonify({"error": "Unknown object or no access"}), 404
         return jsonify(automation.get_path(store, obj_name))
 
+    @app.get("/api/admin/paths")
+    @require_auth
+    @require_admin
+    def list_paths_ep():
+        return jsonify(store.config_all("mf_paths"))
+
     @app.post("/api/admin/paths")
     @require_auth
     @require_admin

@@ -40,7 +40,7 @@ from flask import Flask, jsonify, request
 
 from ._shared import (
     _do_create, _do_update, _visible_records, current_user, require_auth,
-    serialize, ctx,
+    recompute_stored_rollups, serialize, ctx,
 )
 
 # Serializes check-then-act sequences (split total validation, quote sync)
@@ -116,9 +116,7 @@ def _recycle_delete(user, obj_name, rid):
         return False
     store.recycle_put(obj_name, rec, user["id"])
     store.delete(obj_name, rid)
-    if obj_name == "OpportunityLineItem" and rec.get("OpportunityId"):
-        # keep Opportunity.Amount in sync (mirrors the generic delete hook)
-        _recompute_amount(user, rec["OpportunityId"])
+    recompute_stored_rollups(user, obj_name, rec)
     return True
 
 

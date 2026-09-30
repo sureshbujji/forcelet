@@ -1,4 +1,4 @@
-"""Case SLA milestones. — Forcelet REST API domain module.
+"""SLA milestones (per-object). — Forcelet REST API domain module.
 
 By Suresh Itha — part of the Forcelet platform.
 """
@@ -34,4 +34,4 @@ def register(app: Flask):
         if not obj or not rec or not security.can_see_record(
                 request.mf_user, rec, obj_name):
             return jsonify({"error": "Not found"}), 404
-        return jsonify(automation.case_milestones(store, rid))
+        return jsonify(automation.case_milestones(store, obj_name, rid))

@@ -17,7 +17,7 @@ from .. import totp_util
 from ..pdfgen import build_pdf
 from ..expressions import eval_expr, record_context
 from ._shared import (
-    _audit, _do_update, _visible_records,
+    DEFAULT_MEMBER_STATUSES, _audit, _do_update, _visible_records,
     issue_session, require_admin, require_auth, serialize,
 )
 
@@ -45,6 +45,59 @@ def register(app: Flask):
         return jsonify({u["id"]: (u.get("name") or u.get("username") or u["id"])
                         for u in security.list_users()})
 
+    # --------------------------------------------------- calendar sources (A2)
+    # Built-in calendar sources: which object + date field each feeds. Admins
+    # may override the field/label/color per object, or enable calendar
+    # rendering for any other object, via PUT /api/admin/objects/<obj>.
+    _CALENDAR_DEFAULTS = {
+        "Event": {"start": "StartDateTime", "color": "#0176d3",
+                  "label_field": "Subject"},
+        "Task": {"start": "DueDate", "color": "#2e9e4f",
+                 "label_field": "Subject"},
+        "ServiceAppointment": {"start": "ScheduledStart", "color": "#d98a1f",
+                               "label_field": "Subject"},
+    }
+
+    @app.get("/api/calendar-sources")
+    @require_auth
+    def calendar_sources():
+        user = request.mf_user
+
+        def _source(obj, dflt):
+            raw = obj.get("calendar_date_field")
+            if raw == "":
+                return None  # explicitly removed from the calendar
+            start = raw or dflt["start"]
+            fmap = {f["name"]: f for f in obj.get("fields", [])}
+            f = fmap.get(start)
+            if not f or f.get("type") not in ("Date", "DateTime"):
+                return None
+            return {"obj": obj["name"], "start": start,
+                    "color": obj.get("calendar_color") or dflt["color"],
+                    "label_field": (obj.get("calendar_label_field")
+                                    or dflt["label_field"])}
+
+        out, seen = [], set()
+        for name, dflt in _CALENDAR_DEFAULTS.items():
+            obj = registry.get_object(name)
+            if not obj or not security.can(user, "read", name):
+                continue
+            src = _source(obj, dflt)
+            if src:
+                out.append(src)
+                seen.add(name)
+        for obj in registry.list_objects():
+            name = obj["name"]
+            if name in seen or not obj.get("calendar_date_field"):
+                continue
+            if not security.can(user, "read", name):
+                continue
+            src = _source(obj, {"start": None, "color": "#6b5ce7",
+                                "label_field": "Name"})
+            if src:
+                out.append(src)
+        return jsonify(out)
+
     # ------------------------------------------------------------ case queues
     @app.get("/api/case-queues")
     @require_auth
@@ -58,7 +111,11 @@ def register(app: Flask):
         body = request.json or {}
         if not body.get("name"):
             return jsonify({"error": "name is required"}), 422
-        q = {"name": body["name"], "filters": body.get("filters") or {},
+        qobj = body.get("object") or "Case"
+        if not registry.get_object(qobj):
+            return jsonify({"error": f"Unknown object '{qobj}'"}), 422
+        q = {"name": body["name"], "object": qobj,
+             "filters": body.get("filters") or {},
              "active": body.get("active", True)}
         rid = store.config_put(_queue_table(store), q)
         _audit("create", "case-queue", q["name"])
@@ -73,6 +130,11 @@ def register(app: Flask):
             return jsonify({"error": "Not found"}), 404
         body = request.json or {}
         body.pop("id", None)
+        if "object" in body:
+            qobj = body.get("object") or "Case"
+            if not registry.get_object(qobj):
+                return jsonify({"error": f"Unknown object '{qobj}'"}), 422
+            body["object"] = qobj
         store.config_put(_queue_table(store), {**q, **body, "id": qid})
         _audit("update", "case-queue", q.get("name") or qid)
         return jsonify(store.config_get(_queue_table(store), qid))
@@ -93,8 +155,11 @@ def register(app: Flask):
         q = store.config_get(_queue_table(store), qid)
         if not q:
             return jsonify({"error": "Not found"}), 404
-        obj = registry.get_object("Case")
-        records, _ = _visible_records(user, "Case")
+        qobj = q.get("object") or "Case"
+        obj = registry.get_object(qobj)
+        if not obj:
+            return jsonify({"error": f"Unknown object '{qobj}'"}), 422
+        records, _ = _visible_records(user, qobj)
         filt = q.get("filters") or {}
         rows = []
         for r in records:
@@ -119,7 +184,11 @@ def register(app: Flask):
         body = request.json or {}
         if not body.get("name") or not isinstance(body.get("actions"), list):
             return jsonify({"error": "name and actions[] are required"}), 422
-        m = {"name": body["name"], "object": body.get("object") or "Case",
+        mobj = body.get("object") or "Case"
+        if not registry.get_object(mobj):
+            return jsonify(
+                {"error": f"Unknown object '{mobj}'"}), 422
+        m = {"name": body["name"], "object": mobj,
              "actions": body["actions"], "active": body.get("active", True)}
         rid = store.config_put("mf_macros", m)
         _audit("create", "macro", m["name"])
@@ -134,6 +203,12 @@ def register(app: Flask):
             return jsonify({"error": "Not found"}), 404
         body = request.json or {}
         body.pop("id", None)
+        if "object" in body:
+            mobj = body.get("object") or "Case"
+            if not registry.get_object(mobj):
+                return jsonify(
+                    {"error": f"Unknown object '{mobj}'"}), 422
+            body["object"] = mobj
         store.config_put("mf_macros", {**m, **body, "id": mid})
         _audit("update", "macro", m.get("name") or mid)
         return jsonify(store.config_get("mf_macros", mid))
@@ -553,6 +628,173 @@ def register(app: Flask):
                              "score": score})
         hits.sort(key=lambda h: -h["score"])
         return jsonify([{k: h[k] for k in ("id", "title", "summary")} for h in hits[:5]])
+
+    # ------------------------------------------------------------ KB article versions
+    def _kb_article_or_404(article_id, user):
+        rec = store.get("KnowledgeArticle", article_id)
+        if not rec or not security.can_see_record(user, rec, "KnowledgeArticle"):
+            return None
+        return rec
+
+    @app.get("/api/kb/articles/<article_id>/versions")
+    @require_auth
+    def kb_versions(article_id):
+        user = request.mf_user
+        if not _kb_article_or_404(article_id, user):
+            return jsonify({"error": "Not found"}), 404
+        rows = sorted(
+            (r for r in store.config_all("mf_kb_versions")
+             if r.get("article_id") == article_id),
+            key=lambda r: -(r.get("version") or 0))
+        return jsonify([{
+            "id": r["id"], "version": r.get("version"),
+            "title": r.get("title"), "status": r.get("status"),
+            "category": r.get("category"),
+            "created_by": r.get("created_by"),
+            "created_date": r.get("created_date")} for r in rows])
+
+    @app.get("/api/kb/articles/<article_id>/versions/<int:version>")
+    @require_auth
+    def kb_version_detail(article_id, version):
+        user = request.mf_user
+        if not _kb_article_or_404(article_id, user):
+            return jsonify({"error": "Not found"}), 404
+        row = next((r for r in store.config_all("mf_kb_versions")
+                    if r.get("article_id") == article_id
+                    and r.get("version") == version), None)
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify(row)
+
+    @app.post("/api/kb/articles/<article_id>/versions/<int:version>/restore")
+    @require_auth
+    def kb_version_restore(article_id, version):
+        user = request.mf_user
+        rec = _kb_article_or_404(article_id, user)
+        if not rec:
+            return jsonify({"error": "Not found"}), 404
+        if not security.can(user, "edit", "KnowledgeArticle"):
+            return jsonify({"error": "No edit access on KnowledgeArticle"}), 403
+        row = next((r for r in store.config_all("mf_kb_versions")
+                    if r.get("article_id") == article_id
+                    and r.get("version") == version), None)
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        snap = row.get("snapshot") or {}
+        fields = {k: snap.get(k) for k in
+                  ("Title", "Summary", "Body", "Category", "Status")
+                  if snap.get(k) not in (None, "")}
+        status, payload = _do_update(user, "KnowledgeArticle", article_id, fields)
+        if status >= 400:
+            return jsonify(payload), status
+        _audit("restore", "kb-version", f"{article_id} v{version}")
+        return jsonify({**payload, "restored_version": version})
+
+
+    # ------------------------------------------------------------ campaign member statuses
+    def _campaign_or_404(cid, user):
+        rec = store.get("Campaign", cid)
+        if not rec or not security.can_see_record(user, rec, "Campaign"):
+            return None
+        return rec
+
+    def _member_status_rows(cid):
+        return sorted(
+            (r for r in store.config_all("mf_campaign_member_statuses")
+             if r.get("campaign_id") == cid),
+            key=lambda r: (r.get("sort_order") or 0, r.get("name") or ""))
+
+    @app.get("/api/campaigns/<cid>/member-statuses")
+    @require_auth
+    def campaign_member_statuses_list(cid):
+        user = request.mf_user
+        if not _campaign_or_404(cid, user):
+            return jsonify({"error": "Not found"}), 404
+        return jsonify([{
+            "id": r["id"], "name": r["name"],
+            "sort_order": r.get("sort_order") or 0,
+            "active": r.get("active", True)}
+            for r in _member_status_rows(cid)] or
+            [{"id": None, "name": n, "sort_order": i, "active": True,
+              "builtin": True}
+             for i, n in enumerate(DEFAULT_MEMBER_STATUSES)])
+
+    @app.post("/api/campaigns/<cid>/member-statuses")
+    @require_auth
+    def campaign_member_status_create(cid):
+        user = request.mf_user
+        if not _campaign_or_404(cid, user):
+            return jsonify({"error": "Not found"}), 404
+        if not security.can(user, "edit", "Campaign"):
+            return jsonify({"error": "No edit access on Campaign"}), 403
+        body = request.get_json(force=True, silent=True) or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "name is required"}), 422
+        rows = _member_status_rows(cid)
+        if not rows:
+            # first customization: materialize the built-in defaults as rows
+            # so the campaign's list stays explicit and complete
+            for i, n in enumerate(DEFAULT_MEMBER_STATUSES):
+                store.config_put("mf_campaign_member_statuses", {
+                    "campaign_id": cid, "name": n, "active": True,
+                    "sort_order": i})
+            rows = _member_status_rows(cid)
+        if name.lower() in {r["name"].lower() for r in rows}:
+            return jsonify({"error": f"Status '{name}' already exists"}), 422
+        rid = store.config_put("mf_campaign_member_statuses", {
+            "campaign_id": cid, "name": name, "active": True,
+            "sort_order": max([r.get("sort_order") or 0 for r in rows] + [0]) + 1})
+        _audit("create", "campaign-member-status", f"{cid}:{name}")
+        return jsonify(store.config_get("mf_campaign_member_statuses", rid)), 201
+
+    @app.patch("/api/campaigns/<cid>/member-statuses/<sid>")
+    @require_auth
+    def campaign_member_status_update(cid, sid):
+        user = request.mf_user
+        if not _campaign_or_404(cid, user):
+            return jsonify({"error": "Not found"}), 404
+        if not security.can(user, "edit", "Campaign"):
+            return jsonify({"error": "No edit access on Campaign"}), 403
+        row = next((r for r in _member_status_rows(cid)
+                    if str(r["id"]) == str(sid)), None)
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        body = request.get_json(force=True, silent=True) or {}
+        upd = {}
+        if "name" in body:
+            name = (body.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": "name cannot be blank"}), 422
+            upd["name"] = name
+        if "active" in body:
+            upd["active"] = bool(body.get("active"))
+        if "sort_order" in body:
+            upd["sort_order"] = body.get("sort_order") or 0
+        rid = store.config_put("mf_campaign_member_statuses", {**row, **upd})
+        row = store.config_get("mf_campaign_member_statuses", rid)
+        _audit("update", "campaign-member-status", f"{cid}:{row['name']}")
+        return jsonify(row)
+
+    @app.delete("/api/campaigns/<cid>/member-statuses/<sid>")
+    @require_auth
+    def campaign_member_status_delete(cid, sid):
+        user = request.mf_user
+        if not _campaign_or_404(cid, user):
+            return jsonify({"error": "Not found"}), 404
+        if not security.can(user, "edit", "Campaign"):
+            return jsonify({"error": "No edit access on Campaign"}), 403
+        row = next((r for r in _member_status_rows(cid)
+                    if str(r["id"]) == str(sid)), None)
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        in_use = any(m.get("CampaignId") == cid and m.get("Status") == row["name"]
+                     for m in store.query("CampaignMember", limit=100000))
+        if in_use:
+            return jsonify({"error": f"Status '{row['name']}' is in use by members"}), 422
+        store.config_delete("mf_campaign_member_statuses", row["id"])
+        _audit("delete", "campaign-member-status", f"{cid}:{row['name']}")
+        return jsonify({"ok": True})
 
 
 def _login_with_totp(orig_view, security):
