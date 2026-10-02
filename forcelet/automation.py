@@ -13,9 +13,57 @@ import urllib.request
 from .expressions import eval_expr, record_context, render_value
 from . import crypto as _crypto
 from . import history_tracking as _history_tracking
+from . import queues as _queues
 from .store import new_id, utcnow
 
 MAX_FLOW_DEPTH = 3
+
+#: Governor limits for flow execution (per top-level run_flows call, including
+#: nested subflows/decisions/loops). A 1,000-row import fires flows per record,
+#: so each invocation gets its own budget; when the budget is exhausted the run
+#: stops and records a visible __flow_governor__ history entry instead of
+#: silently hammering DML and external callouts.
+FLOW_ACTION_BUDGET = 500
+FLOW_CALLOUT_BUDGET = 10
+
+
+def _new_flow_budget() -> dict:
+    return {"actions": FLOW_ACTION_BUDGET, "callouts": FLOW_CALLOUT_BUDGET,
+            "tripped": False}
+
+
+def _governor_tripped(store, record: dict, user: dict, oname: str, reason: str,
+                      budget: dict):
+    """Record a visible history entry the first time the budget trips."""
+    if budget.get("tripped"):
+        return
+    budget["tripped"] = True
+    try:
+        store._execute(
+            "INSERT INTO mf_history (id, object_name, record_id, field_name, old_value,"
+            " new_value, changed_by, changed_at) VALUES (?,?,?,?,?,?,?,?)",
+            (new_id(), oname, record.get("id"), "__flow_governor__", None,
+             f"Flow execution stopped: {reason}", user["id"], utcnow()),
+        )
+        store._commit()
+    except Exception:
+        pass
+
+
+def _check_flow_budget(store, record: dict, user: dict, oname: str,
+                       budget: dict, callout: bool = False) -> bool:
+    """Consume one unit of budget. Returns False when exhausted (and records it)."""
+    if budget is None:
+        return True
+    key = "callouts" if callout else "actions"
+    if budget[key] <= 0:
+        _governor_tripped(store, record, user, oname,
+                          f"{key} budget exhausted "
+                          f"({FLOW_CALLOUT_BUDGET if callout else FLOW_ACTION_BUDGET} max)",
+                          budget)
+        return False
+    budget[key] -= 1
+    return True
 
 
 # ------------------------------------------------------------ validation rules
@@ -109,33 +157,203 @@ def picklist_values_for(store, obj_name: str, record_type: str, field: dict):
 
 # ------------------------------------------------------------ flows
 def run_flows(store, registry, security, obj_name: str, event: str,
-              record: dict, old_record: dict | None, user: dict, depth: int = 0):
-    """Run matching flows. event in ('create', 'update'). Runs in system mode."""
+              record: dict, old_record: dict | None, user: dict, depth: int = 0,
+              _budget: dict | None = None):
+    """Run matching flows. event in ('create', 'update'). Runs in system mode.
+
+    ``_budget`` threads the governor through nested subflows/decisions/loops;
+    a fresh budget is created per top-level call.
+    """
     if depth >= MAX_FLOW_DEPTH:
         return
+    budget = _budget if _budget is not None else _new_flow_budget()
     for flow in store.config_all("mf_flows"):
         if not flow.get("active", True) or flow.get("object") != obj_name:
             continue
         trigger = flow.get("trigger", "on_create_or_update")
+        if trigger == "none":
+            continue  # subflow-only: invoked via {type: subflow}, never by trigger
         if trigger == "on_create" and event != "create":
             continue
         if trigger == "on_update" and event != "update":
             continue
         try:
-            if not eval_expr(flow.get("condition") or {}, record_context(record),
-                             record_context(old_record)):
+            cond = flow.get("condition")
+            if cond and not eval_expr(cond, record_context(record),
+                                      record_context(old_record)):
                 continue
         except Exception:
             continue
-        for action in flow.get("actions") or []:
-            _run_flow_action(store, registry, security, action, record, user, depth,
-                             obj_name)
+        _run_action_list(store, registry, security, flow.get("actions") or [],
+                         record, user, depth, obj_name, budget,
+                         flow.get("id"), flow.get("name"))
+
+
+class _FlowWait(Exception):
+    """Raised by a wait action to pause the enclosing action list.
+
+    Carries the resume time and a snapshot of the working record; the
+    list runner persists the *remaining* actions and returns.
+    """
+    def __init__(self, resume_at, record_snapshot: dict):
+        super().__init__("flow wait")
+        self.resume_at = resume_at
+        self.record_snapshot = record_snapshot
+
+
+def _json_safe(value):
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except Exception:
+        return {}
+
+
+def _wait_resume_at(action: dict):
+    """Compute the resume datetime for a wait action, or None if invalid/past."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    until = action.get("until")
+    if until:
+        try:
+            dt = datetime.fromisoformat(str(until))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt if dt > now else None
+        except ValueError:
+            return None
+    minutes = (action.get("duration_minutes")
+               or (action.get("duration_hours") or 0) * 60
+               or (action.get("duration_days") or 0) * 1440)
+    try:
+        minutes = float(minutes)
+    except (TypeError, ValueError):
+        return None
+    if minutes <= 0:
+        return None
+    return now + timedelta(minutes=minutes)
+
+
+def _persist_flow_wait(store, resume_at, remaining: list, record: dict,
+                       user: dict, obj_name: str | None,
+                       flow_id: str | None, flow_name: str | None):
+    """Persist a paused flow action list for later resume by the scheduler."""
+    row = {
+        "id": new_id(),
+        "flow_id": flow_id,
+        "flow_name": flow_name,
+        "obj_name": obj_name,
+        "record_id": record.get("id"),
+        "actions": _json_safe(remaining),
+        "record": _json_safe(record),
+        "user_id": user.get("id"),
+        "resume_at": resume_at.isoformat(),
+        "created_at": utcnow(),
+    }
+    store.config_put("mf_flow_waits", row)
+    return row["id"]
+
+
+def _run_action_list(store, registry, security, actions: list, record: dict,
+                     user: dict, depth: int, obj_name: str | None,
+                     budget: dict, flow_id: str | None = None,
+                     flow_name: str | None = None):
+    """Execute an action list in order.
+
+    A ``wait`` action raises _FlowWait; the remaining actions are persisted
+    to mf_flow_waits and the list stops here (resume via process_due_flow_waits).
+    """
+    actions = actions or []
+    i = 0
+    while i < len(actions):
+        try:
+            _run_flow_action(store, registry, security, actions[i], record,
+                             user, depth, obj_name, budget)
+        except _FlowWait as w:
+            _persist_flow_wait(store, w.resume_at, actions[i + 1:], w.record_snapshot,
+                               user, obj_name, flow_id, flow_name)
+            return
+        i += 1
+
+
+def process_due_flow_waits(store, registry, security) -> list:
+    """Resume flow action lists whose wait has elapsed. Returns resumed wait ids.
+
+    Called from the scheduler tick. Each wait runs with a fresh governor
+    budget; a missing/deactivated user or a corrupt row retires the wait.
+    """
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    resumed = []
+    for w in store.config_all("mf_flow_waits"):
+        try:
+            resume_at = datetime.fromisoformat(w.get("resume_at") or "")
+            if resume_at.tzinfo is None:
+                resume_at = resume_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            store.config_delete("mf_flow_waits", w.get("id"))
+            continue
+        if resume_at > now:
+            continue
+        user = security.get_user(w.get("user_id") or "")
+        if not user or not user.get("is_active", True):
+            store.config_delete("mf_flow_waits", w.get("id"))
+            continue
+        try:
+            record = dict(w.get("record") or {})
+            _run_action_list(store, registry, security, w.get("actions") or [],
+                             record, user, 0, w.get("obj_name"),
+                             _new_flow_budget(), w.get("flow_id"), w.get("flow_name"))
+        except Exception:
+            pass
+        store.config_delete("mf_flow_waits", w.get("id"))
+        resumed.append(w.get("id"))
+    return resumed
+
+
+#: Every action type the flow engine executes. Unknown types are rejected at
+#: save time by validate_flow_actions (they used to be silently ignored).
+FLOW_ACTION_TYPES = (
+    "set_fields", "create_record", "log", "http_callout",
+    "send_notification", "decision", "subflow", "invocable",
+    "loop", "get_records", "assignment", "delete_record", "wait",
+)
+
+
+def validate_flow_actions(actions) -> list:
+    """Return error strings for unknown flow action types (recursive).
+
+    Walks nested decision outcomes and loop bodies; subflow bodies are
+    validated when the referenced flow itself is saved.
+    """
+    errors = []
+
+    def walk(acts, path):
+        for i, a in enumerate(acts or []):
+            a = a or {}
+            atype = a.get("type")
+            where = f"{path}[{i}]"
+            if atype not in FLOW_ACTION_TYPES:
+                errors.append(f"{where}: unknown action type {atype!r}")
+                continue
+            if atype == "decision":
+                for oi, o in enumerate(a.get("outcomes") or []):
+                    walk((o or {}).get("actions"),
+                         f"{where}.outcomes[{oi}].actions")
+                walk(a.get("default_actions"), f"{where}.default_actions")
+            elif atype == "loop":
+                walk(a.get("actions"), f"{where}.actions")
+
+    walk(actions, "actions")
+    return errors
 
 
 def _run_flow_action(store, registry, security, action: dict, record: dict, user: dict,
-                     depth: int, obj_name: str | None = None):
-    atype = action.get("type")
+                     depth: int, obj_name: str | None = None,
+                     _budget: dict | None = None):
     oname = obj_name or record.get("_object", "?")
+    if not _check_flow_budget(store, record, user, oname, _budget):
+        return
+    atype = action.get("type")
     if atype == "set_fields":
         obj = registry.get_object(action.get("object") or "")
         target_id = render_value(action.get("record_id") or "{{Trigger.Id}}",
@@ -174,6 +392,8 @@ def _run_flow_action(store, registry, security, action: dict, record: dict, user
         )
         store._commit()
     elif atype == "http_callout":
+        if not _check_flow_budget(store, record, user, oname, _budget, callout=True):
+            return
         ctx = record_context(record)
         res = invoke_callout(
             store, action.get("credential") or "",
@@ -191,6 +411,173 @@ def _run_flow_action(store, registry, security, action: dict, record: dict, user
              user["id"], utcnow()),
         )
         store._commit()
+    elif atype == "send_notification":
+        send_custom_notification(store, security, {
+            "notification_type": action.get("notification_type"),
+            "title": render_value(action.get("title") or "", record_context(record), user),
+            "body": render_value(action.get("body") or "", record_context(record), user),
+            "recipients": render_value(action.get("recipients") or {}, record_context(record), user),
+            "object_name": oname,
+            "record_id": record.get("id"),
+        }, record, user)
+    elif atype == "decision":
+        # Branching: first outcome whose condition is true runs its actions.
+        # {type: decision, outcomes: [{label, condition, actions}], default_actions: []}
+        ctx = record_context(record)
+        matched = False
+        for outcome in action.get("outcomes") or []:
+            try:
+                if eval_expr(outcome.get("condition") or {}, ctx, {}):
+                    matched = True
+                    _run_action_list(store, registry, security, outcome.get("actions"),
+                                     record, user, depth, obj_name, _budget)
+                    break
+            except Exception:
+                continue
+        if not matched:
+            _run_action_list(store, registry, security, action.get("default_actions"),
+                             record, user, depth, obj_name, _budget)
+    elif atype == "subflow":
+        # Invoke another flow's actions with mapped inputs.
+        # {type: subflow, flow: <id|name>, inputs: {var: template}}
+        sub = _find_flow(store, action.get("flow"))
+        if sub and sub.get("active", True) and depth + 1 < MAX_FLOW_DEPTH:
+            inputs = render_value(action.get("inputs") or {},
+                                  record_context(record), user)
+            sub_record = {**record, **inputs}  # inputs as {{Trigger.<var>}}
+            _run_action_list(store, registry, security, sub.get("actions"),
+                             sub_record, user, depth + 1, obj_name, _budget,
+                             sub.get("id"), sub.get("name"))
+    elif atype == "invocable":
+        # Call a code-registered invocable action.
+        # {type: invocable, name: <action name>, inputs: {...}}
+        fn = INVOCABLE_ACTIONS.get(action.get("name") or "")
+        if fn:
+            inputs = render_value(action.get("inputs") or {},
+                                  record_context(record), user)
+            try:
+                outputs = fn({"record": record, "inputs": inputs,
+                              "user": user, "store": store,
+                              "registry": registry, "security": security}) or {}
+            except Exception:
+                outputs = {}
+            if isinstance(outputs, dict):
+                record.update(outputs)  # outputs feed subsequent actions
+    elif atype == "loop":
+        # Iterate over a collection, running sub-actions per item.
+        # {type: loop, collection: "{{Trigger.items}}" | [...], item_var: "item",
+        #  actions: [...]}. Governor budget caps runaway iterations.
+        raw = action.get("collection")
+        if isinstance(raw, str):
+            rendered = render_value(raw, record_context(record), user)
+            if isinstance(rendered, list):
+                items = rendered
+            else:
+                try:
+                    items = json.loads(rendered) if isinstance(rendered, str) else []
+                except Exception:
+                    items = []
+        elif isinstance(raw, list):
+            items = raw
+        else:
+            items = []
+        item_var = action.get("item_var") or "item"
+        for item in items:
+            loop_record = {**record, item_var: item}
+            _run_action_list(store, registry, security, action.get("actions"),
+                             loop_record, user, depth, obj_name, _budget)
+    elif atype == "get_records":
+        # Query records into a flow variable.
+        # {type: get_records, object: "Contact", filters: {AccountId: "{{Trigger.Id}}"},
+        #  limit: 50, variable: "contacts"}
+        obj = registry.get_object(action.get("object") or "")
+        if obj:
+            filters = render_value(action.get("filters") or {},
+                                   record_context(record), user)
+            try:
+                limit = max(1, min(int(action.get("limit") or 100), 500))
+            except (TypeError, ValueError):
+                limit = 100
+            rows = []
+            for r in store.query(obj["name"], limit=10000):
+                if all(str(r.get(k)) == str(v) for k, v in filters.items()):
+                    rows.append(r)
+                    if len(rows) >= limit:
+                        break
+            record[action.get("variable") or "records"] = rows
+    elif atype == "assignment":
+        # Set a flow variable on the working record.
+        # {type: assignment, variable: "total", value: "{{Trigger.Amount}}"}
+        var = action.get("variable")
+        if var:
+            record[var] = render_value(action.get("value"),
+                                       record_context(record), user)
+    elif atype == "delete_record":
+        # Delete a record by id (runs delete triggers + emits change).
+        # {type: delete_record, object: "Task", record_id: "{{Trigger.task_id}}"}
+        obj = registry.get_object(action.get("object") or "")
+        target_id = render_value(action.get("record_id") or "",
+                                 record_context(record), user)
+        if obj and target_id:
+            rec = store.get(obj["name"], target_id)
+            if rec:
+                errs = run_triggers(store, registry, security, obj["name"],
+                                    "before_delete", rec, None, user, depth + 1)
+                if not errs:
+                    store.delete(obj["name"], target_id)
+                    run_triggers(store, registry, security, obj["name"],
+                                 "after_delete", rec, None, user, depth + 1)
+                    store.emit_change(obj["name"], target_id, "delete", user)
+    elif atype == "wait":
+        # Pause the flow; remaining actions resume via the scheduler.
+        # {type: wait, duration_minutes: 60} | {duration_hours} | {duration_days}
+        # | {until: "<iso datetime>"}. A past/invalid wait is a no-op.
+        resume_at = _wait_resume_at(action)
+        if resume_at is not None:
+            raise _FlowWait(resume_at, dict(record))
+
+
+def _find_flow(store, ref: str):
+    """Find a flow by id or name."""
+    if not ref:
+        return None
+    flow = store.config_get("mf_flows", ref)
+    if flow:
+        return flow
+    for cand in store.config_all("mf_flows"):
+        if cand.get("name") == ref:
+            return cand
+    return None
+
+
+# ------------------------------------------------------------ invocable actions
+# Code-registered actions callable from flows via {type: invocable, name, inputs}.
+# Handlers receive {"record", "inputs", "user", "store", "registry", "security"}
+# and return a dict of outputs merged into the flow's working record.
+INVOCABLE_ACTIONS: dict = {}
+
+
+def register_invocable_action(name: str, fn):
+    INVOCABLE_ACTIONS[name] = fn
+    return fn
+
+
+def list_invocable_actions() -> list:
+    return sorted(INVOCABLE_ACTIONS)
+
+
+def _invocable_convert_currency(ctx):
+    from . import currency as _cur
+    store, inputs = ctx["store"], ctx["inputs"]
+    try:
+        return {"converted_amount": _cur.convert(
+            store, inputs.get("amount"), inputs.get("from"),
+            inputs.get("to"), inputs.get("date"))}
+    except (ValueError, TypeError):
+        return {"converted_amount": None}
+
+
+register_invocable_action("Convert Currency", _invocable_convert_currency)
 
 
 # ------------------------------------------------------------ approvals
@@ -199,7 +586,8 @@ def find_approval_process(store, obj_name: str, record: dict):
         if not proc.get("active", True) or proc.get("object") != obj_name:
             continue
         try:
-            if eval_expr(proc.get("entry_conditions") or {}, record_context(record)):
+            conds = proc.get("entry_conditions")
+            if not conds or eval_expr(conds, record_context(record)):
                 return proc
         except Exception:
             continue
@@ -225,35 +613,75 @@ def submit_for_approval(store, security, obj_name: str, record: dict, user: dict
            "process_name": proc.get("name"), "status": "Pending",
            "current_step": 0, "steps": steps, "submitted_by": user["id"],
            "submitted_at": utcnow(), "history": []}
+    # Auto-skip steps whose skip_if condition is already true.
+    idx = 0
+    while idx < len(steps) and _step_skipped(store, steps[idx], record):
+        req["history"].append({"by": "system", "at": utcnow(), "step": idx,
+                               "step_name": steps[idx].get("name"),
+                               "decision": "Skipped"})
+        idx += 1
+    req["current_step"] = idx
+    if idx >= len(steps):
+        req["status"] = "Approved"  # every step skipped: auto-approved
     rid = store.config_put("mf_approval_requests", req)
     saved = store.config_get("mf_approval_requests", rid)
-    for uid in _approver_ids(store, security, saved):
+    if saved.get("status") == "Pending":
+        _notify_approvers(store, security, saved, obj_name, record, user)
+    return saved, None
+
+
+def _notify_approvers(store, security, req: dict, obj_name: str,
+                      record: dict, user: dict):
+    for uid in _approver_ids(store, security, req):
         if uid != user["id"]:
             store.notify(uid, "approval",
                          f"Approval requested: {obj_name}",
                          f"{user.get('name')} submitted a {obj_name} record "
-                         f"({saved.get('process_name')}) for approval.",
+                         f"({req.get('process_name')}) for approval.",
                          obj_name, record["id"])
-    return saved, None
 
 
 def _approver_ids(store, security, req: dict):
-    """User ids allowed to act on the current step."""
+    """User ids allowed to act on the current step.
+
+    Approver specs:
+      {"type": "user", "id": <user id>}
+      {"type": "role", "role": <role name>}        — role + subordinates
+      {"type": "queue", "id"|"name": ...}          — queue members
+      {"type": "field", "field": <field api name>} — user id from a lookup
+                                                     field on the record
+      "manager"                                     — record owner's manager
+    """
     step = (req.get("steps") or [])[req.get("current_step", 0)] or {}
     approver = step.get("approver")
-    owner_id = None
-    row = store._execute(
-        f"SELECT owner_id FROM {store._table(req['object'])} WHERE id=?", (req["record_id"],)
-    ).fetchone()
-    if row:
-        owner_id = row["owner_id"]
+    record = None
+    try:
+        row = store._execute(
+            f"SELECT * FROM {store._table(req['object'])} WHERE id=?", (req["record_id"],)
+        ).fetchone()
+        record = dict(row) if row else None
+    except Exception:
+        record = None
+    owner_id = record.get("owner_id") if record else None
     ids = set()
     if isinstance(approver, dict):
-        if approver.get("type") == "user":
-            ids.add(approver.get("id"))
-        elif approver.get("type") == "role":
-            subtree = security._role_subtree(approver.get("role"))
+        atype = approver.get("type")
+        if atype == "user":
+            if security.get_user(approver.get("id")):
+                ids.add(approver.get("id"))
+        elif atype == "role":
+            try:
+                subtree = security._role_subtree(approver.get("role"))
+            except Exception:
+                subtree = set()
             ids.update(u["id"] for u in security.list_users() if u.get("role") in subtree)
+        elif atype == "queue":
+            qref = approver.get("id") or approver.get("name")
+            ids.update(_queues.queue_member_ids(store, security, qref))
+        elif atype == "field" and record:
+            uid = record.get(approver.get("field"))
+            if uid and security.get_user(uid):
+                ids.add(uid)
     elif approver == "manager" and owner_id:
         owner = security.get_user(owner_id)
         if owner and owner.get("role"):
@@ -262,6 +690,17 @@ def _approver_ids(store, security, req: dict):
             if parent:
                 ids.update(u["id"] for u in security.list_users() if u.get("role") == parent)
     return ids
+
+
+def _step_skipped(store, step: dict, record: dict) -> bool:
+    """A step with a skip_if condition is skipped when it evaluates true."""
+    cond = step.get("skip_if")
+    if not cond:
+        return False
+    try:
+        return bool(eval_expr(cond, record_context(record)))
+    except Exception:
+        return False
 
 
 def pending_for_user(store, security, user: dict):
@@ -280,11 +719,125 @@ def decide_request(store, security, request_id: str, user: dict, approve: bool, 
         return None, "Request not found or not pending"
     if user["id"] not in _approver_ids(store, security, req) and not security.is_admin(user):
         return None, "You are not an approver for this request"
-    req["status"] = "Approved" if approve else "Rejected"
-    req["history"].append({"by": user["id"], "at": utcnow(),
-                           "decision": req["status"], "comment": comment})
+    steps = req.get("steps") or []
+    cur = req.get("current_step", 0)
+    step_name = (steps[cur] or {}).get("name") if cur < len(steps) else None
+    req["history"].append({"by": user["id"], "at": utcnow(), "step": cur,
+                           "step_name": step_name,
+                           "decision": "Approved" if approve else "Rejected",
+                           "comment": comment})
+    if not approve:
+        req["status"] = "Rejected"
+    else:
+        # Advance through any remaining steps (honoring skip_if); the request
+        # is Approved only after the final step approves.
+        nxt = cur + 1
+        record = None
+        try:
+            record = store.get(req["object"], req["record_id"])
+        except Exception:
+            record = None
+        while nxt < len(steps) and record is not None and _step_skipped(store, steps[nxt], record):
+            req["history"].append({"by": "system", "at": utcnow(), "step": nxt,
+                                   "step_name": steps[nxt].get("name"),
+                                   "decision": "Skipped"})
+            nxt += 1
+        if nxt >= len(steps):
+            req["status"] = "Approved"
+        else:
+            req["current_step"] = nxt
+            store.config_put("mf_approval_requests", req)
+            saved = store.config_get("mf_approval_requests", request_id)
+            try:
+                rec = record or {}
+                _notify_approvers(store, security, saved, req["object"], rec, user)
+            except Exception:
+                pass
+            return saved, None
     store.config_put("mf_approval_requests", req)
     return req, None
+
+
+# ------------------------------------------------------------ custom notifications
+NOTIFICATION_TYPE_TABLE = "mf_notification_types"
+
+
+def get_notification_type(store, ref: str):
+    """Fetch a notification type by id or by name."""
+    if not ref:
+        return None
+    nt = store.config_get(NOTIFICATION_TYPE_TABLE, ref)
+    if nt:
+        return nt
+    for cand in store.config_all(NOTIFICATION_TYPE_TABLE):
+        if cand.get("name") == ref:
+            return cand
+    return None
+
+
+def validate_notification_type(defn: dict) -> str | None:
+    if not (defn.get("name") or "").strip():
+        return "Notification type name is required"
+    return None
+
+
+def resolve_notification_recipients(store, security, recipients: dict,
+                                    record: dict | None, user: dict) -> set:
+    """Resolve a recipient spec to user ids.
+
+    recipients: {"users": [ids], "roles": [role names], "queues": [ids/names],
+                 "owner": bool, "submitter": bool}
+    """
+    recipients = recipients or {}
+    ids = set()
+    for uid in recipients.get("users") or []:
+        if security.get_user(uid):
+            ids.add(uid)
+    for role_name in recipients.get("roles") or []:
+        try:
+            subtree = security._role_subtree(role_name)
+        except Exception:
+            subtree = set()
+        ids.update(u["id"] for u in security.list_users()
+                   if u.get("role") in subtree)
+    for qref in recipients.get("queues") or []:
+        ids.update(_queues.queue_member_ids(store, security, qref))
+    if recipients.get("owner") and record:
+        owner_id = record.get("owner_id")
+        if owner_id and security.get_user(owner_id):
+            ids.add(owner_id)
+    if recipients.get("submitter") and user:
+        ids.add(user["id"])
+    return ids
+
+
+def send_custom_notification(store, security, spec: dict,
+                             record: dict | None, user: dict) -> dict:
+    """Send a custom notification to resolved recipients.
+
+    spec: {"notification_type": <id|name>, "title": <override?>,
+           "body": <override?>, "recipients": {...},
+           "object_name": <override?>, "record_id": <override?>}
+    Returns {"sent": n, "recipients": [ids]}.
+    """
+    nt = get_notification_type(store, spec.get("notification_type") or "")
+    if nt and not nt.get("active", True):
+        return {"sent": 0, "recipients": [], "skipped": "inactive type"}
+    ctx = record_context(record) if record else {}
+    title_tpl = spec.get("title") or (nt.get("title_template") if nt else "") or "Notification"
+    body_tpl = spec.get("body") or (nt.get("body_template") if nt else "") or ""
+    title = render_value(title_tpl, ctx, user)
+    body = render_value(body_tpl, ctx, user)
+    recipient_ids = resolve_notification_recipients(
+        store, security, spec.get("recipients") or {}, record, user)
+    ntype = f"custom:{nt.get('name')}" if nt else "custom"
+    sent = []
+    for uid in sorted(recipient_ids):
+        store.notify(uid, ntype, title, body,
+                     spec.get("object_name") or (record.get("_object") if record else None),
+                     spec.get("record_id") or (record.get("id") if record else None))
+        sent.append(uid)
+    return {"sent": len(sent), "recipients": sent}
 
 
 # ------------------------------------------------------------ roll-up summaries
@@ -343,6 +896,166 @@ class TriggerAbort(Exception):
     pass
 
 
+# ------------------------------------------------------------ unified save pipeline
+# The API save path (_do_create/_do_update in api/_shared.py) and the system
+# DML used by bulk ingest and trigger code (_trigger_dml_ops below) must run
+# the same save pipeline. The helpers here implement the steps the system
+# path used to skip: duplicate-rule blocking, assignment rules, AutoNumber
+# assignment, divisions, case milestones, escalation rules, auto-responses,
+# webhooks, approval auto-submit, change events, email alerts and roll-ups.
+# Heavy API-only modules are imported lazily to avoid import cycles.
+
+
+def _fls_payload(security, user: dict, obj: dict, rec: dict) -> dict:
+    """Record payload filtered to fields the user may read (for webhooks)."""
+    try:
+        readable = set(security.readable_fields(user, obj))
+    except Exception:
+        readable = set()
+    return {k: v for k, v in rec.items()
+            if (k in readable or k in ("id", "owner_id", "created_by"))
+            and not _crypto.is_encrypted(v)}
+
+
+def _assert_not_locked(store, security, obj_name: str, rid: str, user: dict):
+    if pending_request_for(store, obj_name, rid) \
+            and not security.is_admin(user):
+        raise TriggerAbort("Record is locked: an approval request is pending")
+
+
+def _assert_no_duplicate_block(store, obj_name: str, record: dict,
+                               event: str, exclude_id: str | None = None):
+    from . import duplicate_rules as _duprules
+    dup_action, dup_message = _duprules.evaluate_duplicate_rules(
+        store, obj_name, event, record, exclude_id=exclude_id)
+    if dup_action == "block":
+        raise TriggerAbort(dup_message)
+
+
+def apply_system_create_defaults(store, registry, security, obj_name: str,
+                                 clean: dict, user: dict):
+    """Pre-insert steps for system DML: duplicate blocking, assignment, AutoNumber."""
+    from . import datamodel as _datamodel
+    obj = registry.get_object(obj_name)
+    _assert_no_duplicate_block(store, obj_name, clean, "create")
+    clean["owner_id"] = (apply_assignment_rules(
+        store, registry, security, obj_name, clean, user) or user["id"])
+    clean["created_by"] = user["id"]
+    clean.setdefault("record_type", default_record_type(store, obj_name))
+    for f in obj.get("fields", []):
+        if f.get("type") == "AutoNumber" and f.get("active") is not False:
+            clean[f["name"]] = _datamodel.next_auto_number(store, obj_name, f)
+
+
+def _post_insert_record_admin(store, registry, security, obj_name: str,
+                              rid: str, user: dict) -> dict:
+    """Division stamping, case milestones and owner notification (pre-after-triggers)."""
+    try:
+        from . import divisions as _divisions
+        user_div = _divisions.user_division_id(store, security, user)
+        if user_div:
+            _divisions.set_record_division(store, obj_name, rid, user_div)
+    except Exception:
+        pass  # division stamping must never break the save pipeline
+    rec = store.get(obj_name, rid)
+    try:
+        start_case_milestones(store, obj_name, rec)
+    except Exception:
+        pass
+    if rec.get("owner_id") and rec["owner_id"] != user["id"]:
+        owner = security.get_user(rec["owner_id"])
+        if owner:
+            label = rec.get("Name") or rec.get("Subject") or rid
+            try:
+                store.notify(owner["id"], "assignment",
+                             f"{obj_name} assigned to you",
+                             f"{label} was assigned to you by {user.get('name')}.",
+                             obj_name, rid)
+            except Exception:
+                pass
+    return rec
+
+
+def run_create_automation(store, registry, security, obj_name: str,
+                          rec: dict, user: dict):
+    """Post-insert automation shared by the API and system DML paths.
+
+    Escalation, auto-responses, webhooks, approval auto-submit, change event,
+    email alerts and roll-ups. Every step is guarded so a downstream failure
+    never breaks the save.
+    """
+    obj = registry.get_object(obj_name)
+    try:
+        apply_escalation_rules(store, registry, security, obj_name, rec, None, user)
+    except Exception:
+        pass
+    try:
+        run_auto_responses(store, registry, security, obj_name, rec, user)
+    except Exception:
+        pass
+    try:
+        dispatch_webhooks(store, obj_name, "create",
+                          _fls_payload(security, user, obj, rec), user)
+    except Exception:
+        pass
+    try:
+        submit_for_approval(store, security, obj_name, rec, user)
+    except Exception:
+        pass
+    try:
+        store.emit_change(obj_name, rec["id"], "create", user,
+                          snapshot={k: v for k, v in rec.items()
+                                    if not _crypto.is_encrypted(v)})
+    except Exception:
+        pass
+    try:
+        from . import email_alerts as _emailalerts
+        _emailalerts.fire_email_alerts(store, obj_name, "Create", rec,
+                                       user=user, security=security)
+    except Exception:
+        pass
+    try:
+        from .api import _shared as _api_shared  # lazy: _shared imports automation
+        _api_shared.recompute_stored_rollups(user, obj_name, rec)
+    except Exception:
+        pass
+
+
+def run_update_post_automation(store, registry, security, obj_name: str,
+                               new_rec: dict, old_rec: dict, user: dict,
+                               changed_fields: list):
+    """Post-update automation shared by the API and system DML paths.
+
+    Runs after after_update triggers and flows: webhooks, change event,
+    email alerts and roll-ups. Every step is guarded.
+    """
+    obj = registry.get_object(obj_name)
+    try:
+        dispatch_webhooks(store, obj_name, "update",
+                          _fls_payload(security, user, obj, new_rec), user)
+    except Exception:
+        pass
+    try:
+        store.emit_change(obj_name, new_rec["id"], "update", user,
+                          changed_fields=changed_fields,
+                          snapshot={k: v for k, v in new_rec.items()
+                                    if not _crypto.is_encrypted(v)})
+    except Exception:
+        pass
+    try:
+        from . import email_alerts as _emailalerts
+        _emailalerts.fire_email_alerts(store, obj_name, "Update", new_rec,
+                                       user=user, security=security)
+    except Exception:
+        pass
+    try:
+        from .api import _shared as _api_shared  # lazy: _shared imports automation
+        _api_shared.recompute_stored_rollups(user, obj_name, new_rec,
+                                             old_rec=old_rec)
+    except Exception:
+        pass
+
+
 def _trigger_dml_ops(store, registry, security, user: dict, depth: int, errors: list):
     """System-mode create/update/query helpers exposed to trigger code."""
     def query(obj_name, **filters):
@@ -365,24 +1078,27 @@ def _trigger_dml_ops(store, registry, security, user: dict, depth: int, errors: 
         clean, verrs = registry.validate_record(obj, dict(fields))
         if verrs:
             raise TriggerAbort("; ".join(verrs))
-        vr = check_validation_rules(store, obj_name, clean)
-        if vr:
-            raise TriggerAbort("; ".join(vr))
-        clean["owner_id"] = user["id"]
-        clean["created_by"] = user["id"]
-        clean.setdefault("record_type", default_record_type(store, obj_name))
+        # Unified pipeline: duplicate blocking, assignment, AutoNumber —
+        # the same pre-insert steps the API _do_create path runs.
+        apply_system_create_defaults(store, registry, security, obj_name,
+                                     clean, user)
         errs = run_triggers(store, registry, security, obj_name,
                             "before_insert", clean, None, user, depth + 1)
         if errs:
             raise TriggerAbort("; ".join(errs))
+        vr = check_validation_rules(store, obj_name, clean)
+        if vr:
+            raise TriggerAbort("; ".join(vr))
         rid = store.insert(obj_name, clean)
-        rec = store.get(obj_name, rid)
+        rec = _post_insert_record_admin(store, registry, security,
+                                        obj_name, rid, user)
         errs = run_triggers(store, registry, security, obj_name,
                             "after_insert", rec, None, user, depth + 1)
         if errs:
             store.delete(obj_name, rid)
             raise TriggerAbort("; ".join(errs))
         run_flows(store, registry, security, obj_name, "create", rec, None, user, depth + 1)
+        run_create_automation(store, registry, security, obj_name, rec, user)
         return rec
 
     def update(obj_name, rid, fields):
@@ -393,25 +1109,42 @@ def _trigger_dml_ops(store, registry, security, user: dict, depth: int, errors: 
         if not security.can(user, "edit", obj_name) \
                 or not security.can_see_record(user, rec, obj_name):
             raise TriggerAbort(f"No edit access on {obj_name}")
+        _assert_not_locked(store, security, obj_name, rid, user)
         clean, verrs = registry.validate_record(obj, dict(fields), partial=True)
         if verrs:
             raise TriggerAbort("; ".join(verrs))
         merged = {**rec, **clean}
-        vr = check_validation_rules(store, obj_name, merged, rec)
-        if vr:
-            raise TriggerAbort("; ".join(vr))
         errs = run_triggers(store, registry, security, obj_name,
                             "before_update", merged, rec, user, depth + 1)
         if errs:
             raise TriggerAbort("; ".join(errs))
+        # Unified pipeline: duplicate blocking then validation rules — the
+        # same order the API _do_update path uses.
+        _assert_no_duplicate_block(store, obj_name, merged, "update",
+                                   exclude_id=rid)
+        vr = check_validation_rules(store, obj_name, merged, rec)
+        if vr:
+            raise TriggerAbort("; ".join(vr))
+        log_history(store, obj_name, rid, rec, merged, user)
         store.update(obj_name, rid, {k: merged[k] for k in clean})
         new_rec = store.get(obj_name, rid)
+        try:
+            complete_case_milestones(store, obj_name, new_rec, rec)
+        except Exception:
+            pass
+        try:
+            apply_escalation_rules(store, registry, security, obj_name,
+                                   new_rec, rec, user)
+        except Exception:
+            pass
         errs = run_triggers(store, registry, security, obj_name,
                             "after_update", new_rec, rec, user, depth + 1)
         if errs:
             store.update(obj_name, rid, {k: rec[k] for k in clean if k in rec})
             raise TriggerAbort("; ".join(errs))
         run_flows(store, registry, security, obj_name, "update", new_rec, rec, user, depth + 1)
+        run_update_post_automation(store, registry, security, obj_name,
+                                   new_rec, rec, user, list(clean.keys()))
         return new_rec
 
     return query, create, update
@@ -1039,12 +1772,17 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
                     or lead.get(acct_map.get("Name", "Company"))
                     or f"{lead.get('FirstName', '')} {lead.get('LastName', '')}".strip()
                     or "Converted Account")
+    # Transactional conversion: track every created record so a later failure
+    # compensates (deletes) the earlier ones instead of orphaning them.
+    created: list[tuple[str, str]] = []
+    account = contact = opportunity = None
     try:
         account_fields = _apply_lead_mappings(
             lead, {"Name": account_name}, acct_map, skip=("Name",))
         account = _convert_insert(store, registry, security, "Account",
                                   account_fields, lead.get("owner_id")
                                   or user["id"], user)
+        created.append(("Account", account["id"]))
         contact_fields = {"FirstName": lead.get("FirstName"),
                           "LastName": lead.get("LastName"),
                           "Email": lead.get("Email"), "Phone": lead.get("Phone"),
@@ -1059,6 +1797,7 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
                                   {k: v for k, v in contact_fields.items()
                                    if v not in (None, "")},
                                   account["owner_id"], user)
+        created.append(("Contact", contact["id"]))
         opportunity = None
         if options.get("create_opportunity", True):
             opp_obj = registry.get_object("Opportunity")
@@ -1074,7 +1813,15 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
             opp_fields.update(options.get("opportunity") or {})
             opportunity = _convert_insert(store, registry, security, "Opportunity",
                                           opp_fields, account["owner_id"], user)
+            created.append(("Opportunity", opportunity["id"]))
     except ValueError as e:
+        # Compensate: delete everything already created, in reverse order,
+        # so a failed conversion leaves no orphaned Account/Contact behind.
+        for obj_name, rid in reversed(created):
+            try:
+                store.delete(obj_name, rid)
+            except Exception:
+                pass
         return None, str(e)
     # mark the lead converted
     store.update("Lead", lead_id, {"Status": "Converted"})
@@ -1401,7 +2148,7 @@ def validate_forecast_type(store, registry, body, existing_id=None):
         f = fmap.get(fname or "")
         if not f or f.get("type") not in kinds:
             return f"{key} must be a { '/'.join(kinds)} field on {obj_name}"
-        if f.get("formula") or f.get("rollup"):
+        if f.get("formula") or f.get("rollup") or f.get("type") == "Formula":
             return f"{key} cannot be a computed field"
     cf = fmap.get(body.get("category_field") or "")
     if not cf or cf.get("type") not in ("Picklist", "Text"):
@@ -1590,6 +2337,92 @@ def advance_screen_flow(store, registry, security, flow: dict, run: dict,
         {"ok": True, "created": created}
 
 
+def _registry_shim(store):
+    """Minimal registry for scheduler context (no Flask app available)."""
+    class _Shim:
+        def get_object(self, name):
+            return store.meta_get("mf_objects", name)
+    return _Shim()
+
+
+def _resolve_sub_recipients(security, recipients):
+    """Recipient entries -> deduped email list.
+
+    Entries: {"type": "email"|"user"|"role", "value": ...}; legacy plain
+    strings are treated as raw email addresses.
+    """
+    emails = []
+    try:
+        users = {u.get("id"): u for u in security.list_users()}
+    except Exception:
+        users = {}
+    for r in recipients or []:
+        if isinstance(r, str):
+            if r.strip():
+                emails.append(r.strip())
+            continue
+        if not isinstance(r, dict):
+            continue
+        t, v = r.get("type") or "email", (r.get("value") or "").strip()
+        if not v:
+            continue
+        if t == "email":
+            emails.append(v)
+        elif t == "user":
+            u = users.get(v)
+            if u and u.get("email"):
+                emails.append(u["email"])
+        elif t == "role":
+            for u in users.values():
+                if u.get("role") == v and u.get("email") \
+                        and u.get("is_active") is not False:
+                    emails.append(u["email"])
+    seen, out = set(), []
+    for e in emails:
+        if e.lower() not in seen:
+            seen.add(e.lower())
+            out.append(e)
+    return out
+
+
+def _report_run_for_digest(store, security, user, rep):
+    """Run a report outside a request; returns the run_report_data dict."""
+    from .api.reports import run_report_data
+    return run_report_data(store, _registry_shim(store), security, user, rep,
+                           page=1, page_size=10000)
+
+
+def _dashboard_snapshot_html(store, security, user, dash):
+    """D9: server-rendered HTML snapshot of a dashboard for email."""
+    from .api.reports import run_report_data
+    registry = _registry_shim(store)
+    parts = [f"<h2>{(dash.get('name') or 'Dashboard')}</h2>"]
+    for w in (dash.get("widgets") or [])[:20]:
+        rep = store.config_get("mf_reports", w.get("report_id") or "")
+        if not rep:
+            continue
+        data = run_report_data(store, registry, security, user, rep,
+                               extra_filters=dash.get("filters") or [],
+                               page=1, page_size=50)
+        if data.get("error"):
+            continue
+        parts.append(f"<h3>{rep.get('name')} "
+                     f"({data.get('row_count', 0)} rows)</h3>")
+        cols = data.get("columns") or []
+        if cols and data.get("rows"):
+            cells = "".join(f"<th>{c}</th>" for c in cols)
+            body = "".join(
+                "<tr>" + "".join(f"<td>{(r.get(c) if r.get(c) is not None else '')}</td>"
+                                 for c in cols) + "</tr>"
+                for r in data["rows"][:25])
+            parts.append(f"<table border='1' cellpadding='4'><tr>{cells}</tr>"
+                         f"{body}</table>")
+        for g in (data.get("groups") or [])[:12]:
+            parts.append(f"<p>{g.get('key')}: {g.get('count')}</p>")
+    return ("<html><body style='font-family:sans-serif'>"
+            + "".join(parts) + "</body></html>")
+
+
 def send_report_digest(store, security, sub_id: str) -> dict:
     """Scheduled-job entry point: email a report/dashboard digest.
 
@@ -1597,60 +2430,107 @@ def send_report_digest(store, security, sub_id: str) -> dict:
     ``automation.send_report_digest(store, security, '<sub_id>')``.
     Delivery follows the platform demo convention: the email is logged
     (see email_log) and actually sent only when FORCELET_SMTP is set.
+
+    R13 upgrades: CSV/Excel/HTML attachments, monthly cadence (see
+    _sync_sub_job), "only when conditions met" (condition.min_rows), and
+    user/role recipient resolution. D5: dashboards honor their run_as
+    setting instead of always running as admin.
     """
-    import os
+    import base64
     sub = store.config_get("mf_report_subs", sub_id)
     if not sub or not sub.get("active", True):
         return {"ok": False, "detail": "subscription missing or inactive"}
     admin = security.get_user_by_username("admin")
-    lines = [f"Report digest: {sub.get('name')}", ""]
-    rep = store.config_get("mf_reports", sub.get("report_id") or "")
-    if rep:
-        lines += _digest_report_lines(store, security, admin, rep)
+    creator = None
+    try:
+        creator = security.get_user(sub.get("created_by") or "")
+    except Exception:
+        creator = None
+    # D5: dashboards run as their configured run_as user (viewer default).
     dash = store.config_get("mf_dashboards", sub.get("dashboard_id") or "")
+    run_user = admin or {}
+    if dash:
+        run_as = dash.get("run_as") or "viewer"
+        if run_as == "viewer":
+            run_user = creator or admin or {}
+        else:
+            try:
+                run_user = security.get_user(run_as) or (creator or admin or {})
+            except Exception:
+                run_user = creator or admin or {}
+    rep = store.config_get("mf_reports", sub.get("report_id") or "")
+    if rep and (rep.get("run_as_user")):
+        try:
+            run_user = security.get_user(rep["run_as_user"]) or run_user
+        except Exception:
+            pass
+    recipients = _resolve_sub_recipients(security, sub.get("recipients"))
+    if not recipients:
+        store.log_scheduled_run(sub.get("job_id") or sub_id, "ok",
+                                "digest skipped: no resolvable recipients")
+        return {"ok": False, "detail": "no resolvable recipients"}
+    lines = [f"Report digest: {sub.get('name')}", ""]
+    attachments = []
+    attach_kind = sub.get("attachment") or "none"
+    row_count = 0
+    if rep:
+        data = _report_run_for_digest(store, security, run_user, rep)
+        if data.get("error"):
+            return {"ok": False, "detail": data["error"]}
+        row_count = data.get("row_count", 0)
+        lines += [f"Report: {rep.get('name')} — {row_count} record(s)"]
+        for g in (data.get("groups") or [])[:15]:
+            agg = g.get("aggregate")
+            lines.append(f"  {g.get('key')}: {g.get('count')}"
+                         + (f" (Σ {agg})" if agg is not None else ""))
+        if attach_kind in ("csv", "xlsx"):
+            from .api.reports import _export_columns, _csv_bytes, _xlsx_bytes
+            cols = _export_columns(rep, data.get("rows") or [])
+            payload = _xlsx_bytes(cols, data.get("rows") or []) \
+                if attach_kind == "xlsx" else _csv_bytes(cols, data.get("rows") or [])
+            attachments.append({
+                "filename": f"{(rep.get('name') or 'report')}.{attach_kind}",
+                "content_type": "application/vnd.openxmlformats-officedocument."
+                                "spreadsheetml.sheet" if attach_kind == "xlsx"
+                                else "text/csv",
+                "data": base64.b64encode(payload).decode("ascii")})
+        elif attach_kind == "html":
+            html = _dashboard_snapshot_html(
+                store, security, run_user,
+                {"name": rep.get("name"), "widgets": [
+                    {"report_id": rep.get("id"), "type": "table"}]})
+            attachments.append({"filename": f"{rep.get('name') or 'report'}.html",
+                                "content_type": "text/html",
+                                "data": base64.b64encode(
+                                    html.encode("utf-8")).decode("ascii")})
     if dash:
         for w in dash.get("widgets") or []:
-            rep = store.config_get("mf_reports", w.get("report_id") or "")
-            if rep:
-                lines += [f"--- {rep.get('name')} ({w.get('type', 'bar')}) ---"]
-                lines += _digest_report_lines(store, security, admin, rep)
+            wrep = store.config_get("mf_reports", w.get("report_id") or "")
+            if not wrep:
+                continue
+            wdata = _report_run_for_digest(store, security, run_user, wrep)
+            n = wdata.get("row_count", 0)
+            row_count = max(row_count, n)
+            lines += [f"--- {wrep.get('name')} ({w.get('type', 'bar')}) ---",
+                      f"{n} record(s)"]
+        if attach_kind == "html":
+            html = _dashboard_snapshot_html(store, security, run_user, dash)
+            attachments.append({"filename": f"{dash.get('name') or 'dashboard'}.html",
+                                "content_type": "text/html",
+                                "data": base64.b64encode(
+                                    html.encode("utf-8")).decode("ascii")})
+    # R13: only-when-conditions-met.
+    min_rows = (sub.get("condition") or {}).get("min_rows")
+    if isinstance(min_rows, int) and min_rows > 0 and row_count < min_rows:
+        store.log_scheduled_run(sub.get("job_id") or sub_id, "ok",
+                                f"digest skipped: {row_count} rows < min_rows {min_rows}")
+        return {"ok": True, "detail": "skipped: condition not met"}
     body = "\n".join(lines)[:8000]
     subject = f"[Forcelet digest] {sub.get('name')}"
-    for rcpt in sub.get("recipients") or []:
+    for rcpt in recipients:
         store.log_email("Report", sub.get("report_id") or sub.get("dashboard_id") or "",
-                        rcpt, subject, body, "report-digest", admin or {})
+                        rcpt, subject, body, "report-digest", run_user or {},
+                        attachments=attachments)
     store.log_scheduled_run(sub.get("job_id") or sub_id, "ok",
-                            f"digest sent to {len(sub.get('recipients') or [])}")
-    return {"ok": True, "detail": f"sent to {len(sub.get('recipients') or [])}"}
-
-
-def _digest_report_lines(store, security, admin, rep: dict) -> list:
-    from .expressions import eval_expr as _eval, record_context as _rctx
-    obj_name = rep.get("object")
-    filt = rep.get("filters") or {}
-    rows = []
-    for r in store.query(obj_name, limit=10000):
-        try:
-            if filt and not _eval(filt, _rctx(r)):
-                continue
-        except Exception:
-            continue
-        rows.append(r)
-    lines = [f"Report: {rep.get('name')} — {len(rows)} record(s)"]
-    group_by = rep.get("group_by")
-    if group_by:
-        groups: dict = {}
-        for r in rows:
-            key = str(r.get(group_by) or "(blank)")
-            groups[key] = groups.get(key, 0) + 1
-        for key in sorted(groups)[:15]:
-            lines.append(f"  {key}: {groups[key]}")
-        if len(groups) > 15:
-            lines.append(f"  ... and {len(groups) - 15} more groups")
-    else:
-        for r in rows[:10]:
-            label = r.get("Name") or r.get("Subject") or r.get("Title") or r.get("id")
-            lines.append(f"  - {label}")
-        if len(rows) > 10:
-            lines.append(f"  ... and {len(rows) - 10} more")
-    return lines
+                            f"digest sent to {len(recipients)}")
+    return {"ok": True, "detail": f"sent to {len(recipients)}"}

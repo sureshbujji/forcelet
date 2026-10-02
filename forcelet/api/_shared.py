@@ -23,7 +23,7 @@ from .. import dynamic_forms as _dynforms
 from .. import duplicate_rules as _duprules
 from .. import email_alerts as _emailalerts
 from ..expressions import eval_expr, record_context
-from ..field_types import FIELD_TYPES, validate_value
+from ..field_types import FIELD_TYPES, mask_secret, validate_value
 from ..security import (hash_token, session_timeouts)
 
 
@@ -77,7 +77,7 @@ def _apply_rollup_rule(user, rule, child_rec, seen):
     pfields = {f["name"]: f for f in pdef.get("fields", [])}
     cfields = {f["name"]: f for f in cdef.get("fields", [])}
     pf = pfields.get(parent_field)
-    if not pf or pf.get("formula") or pf.get("rollup"):
+    if not pf or pf.get("formula") or pf.get("rollup") or pf.get("type") in ("Formula", "AutoNumber"):
         return  # never write into computed fields
     if func != "count" and not cfields.get(child_field):
         return
@@ -381,7 +381,7 @@ def serialize(user, obj_def, record):
     for f in obj_def.get("fields", []):
         if f["name"] not in readable:
             continue
-        if f.get("formula"):
+        if f.get("formula") or f.get("type") == "Formula":
             try:
                 data[f["name"]] = eval_expr(f["formula"], record_context(record))
             except Exception:
@@ -392,6 +392,12 @@ def serialize(user, obj_def, record):
                     store, security, user, f["rollup"], record["id"])
             except Exception:
                 data[f["name"]] = None
+        elif f.get("type") == "EncryptedText":
+            # Decrypted server-side, then masked for every consumer of the API
+            # (detail view, list views, CSV export): "••••••1234".
+            v = record.get(f["name"])
+            v = _crypto.decrypt(v) if _crypto.is_encrypted(v) else v
+            data[f["name"]] = mask_secret(v, f.get("mask_chars", 4))
         else:
             v = record.get(f["name"])
             data[f["name"]] = _crypto.decrypt(v) if f.get("encrypted") else v
@@ -413,6 +419,40 @@ def _visible_records(user, obj_name):
     obj = registry.get_object(obj_name)
     return [r for r in store.query(obj_name, owner_ids=None, limit=10000)
             if security.can_see_record(user, r, obj_name)], obj
+
+
+#: Snapshot keys that are record-system metadata, not field data; they are
+#: always safe to include in a scrubbed change event (mirrors serialize()).
+SNAPSHOT_SYSTEM_KEYS = frozenset(
+    {"id", "owner_id", "created_date", "last_modified_date", "record_type"})
+
+
+def filter_change_event(user, obj_name, record_id, snapshot, changed_fields):
+    """Apply record sharing + field-level security to a change event.
+
+    Used by the SSE streaming broker consumer and the CDC REST endpoint so a
+    subscriber only receives events for records they may see, with snapshots
+    masked to fields they may read.
+
+    Returns ``(scrubbed_snapshot, scrubbed_changed_fields)`` or ``None`` when
+    the user must not see the event at all. Never mutates its inputs.
+    """
+    store, registry, security = ctx()
+    if not security.can(user, "read", obj_name):
+        return None
+    obj_def = store.meta_get("mf_objects", obj_name)
+    if not obj_def:
+        return None
+    record = store.get(obj_name, record_id) if record_id else None
+    # For deletes the record is gone; evaluate sharing against the snapshot.
+    seen = record if record is not None else dict(snapshot or {})
+    if not security.can_see_record(user, seen, obj_name):
+        return None
+    readable = set(security.readable_fields(user, obj_def))
+    scrubbed = {k: v for k, v in (snapshot or {}).items()
+                if k in readable or k in SNAPSHOT_SYSTEM_KEYS}
+    fields = [f for f in (changed_fields or []) if f in readable]
+    return scrubbed, fields
 
 
 #: Task fields copied onto the next occurrence of a recurring task.
@@ -548,12 +588,23 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
         store, registry, security, obj_name, clean, user) or user["id"])
     clean["created_by"] = user["id"]
     clean["record_type"] = rt
+    # AutoNumber fields are system-assigned here (user input was already
+    # rejected by validate_record), before before_insert triggers run so
+    # triggers/flows see the assigned value. next_sequence is atomic under
+    # the store lock, so concurrent creates never hand out the same number
+    # (a later failure can leave a gap in the sequence — same as Salesforce).
+    _auto_fields = {f["name"] for f in obj.get("fields", [])
+                    if f.get("type") == "AutoNumber" and f.get("active") is not False}
+    for f in obj.get("fields", []):
+        if f["name"] in _auto_fields:
+            clean[f["name"]] = _datamodel.next_auto_number(store, obj_name, f)
     terr = automation.run_triggers(store, registry, security, obj_name,
                                   "before_insert", clean, None, user)
     if terr:
         return 422, {"error": "Trigger failed", "details": terr}
     clean2, errors = registry.validate_record(obj, {k: v for k, v in clean.items()
-                                                    if k in editable}, partial=True)
+                                                    if k in editable and k not in _auto_fields},
+                                              partial=True)
     if errors:
         return 422, {"error": "Validation failed", "details": errors}
     clean.update(clean2)

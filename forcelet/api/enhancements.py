@@ -373,7 +373,8 @@ def register(app: Flask):
         """(Re)create the scheduled job that fires this subscription."""
         if sub.get("job_id"):
             store.config_delete("mf_scheduled_jobs", sub["job_id"])
-        freq = {"daily": 1440, "weekly": 10080}.get(sub.get("frequency"), 1440)
+        freq = {"daily": 1440, "weekly": 10080, "monthly": 43200}.get(
+            sub.get("frequency"), 1440)
         job = {"name": f"Report digest: {sub.get('name')}",
                "interval_minutes": freq, "active": sub.get("active", True),
                "run_as": "admin",
@@ -381,6 +382,65 @@ def register(app: Flask):
         jid = store.config_put("mf_scheduled_jobs", job)
         sub["job_id"] = jid
         return sub
+
+    SUB_FREQUENCIES = ("daily", "weekly", "monthly")
+    SUB_ATTACHMENTS = ("none", "csv", "xlsx", "html")
+
+    def _norm_recipients(recipients):
+        """Accept plain email strings (legacy) or {type, value} entries.
+
+        Types: email (raw address), user (user id), role (role name —
+        resolved to member emails at send time).
+        """
+        out = []
+        for r in recipients or []:
+            if isinstance(r, str):
+                r = r.strip()
+                if r:
+                    out.append({"type": "email", "value": r})
+            elif isinstance(r, dict):
+                t = r.get("type") or "email"
+                v = (r.get("value") or r.get("id") or r.get("name") or "").strip()
+                if t in ("email", "user", "role") and v:
+                    out.append({"type": t, "value": v})
+        return out
+
+    def _validate_sub_body(body):
+        if body.get("frequency") and body["frequency"] not in SUB_FREQUENCIES:
+            return f"frequency must be one of {', '.join(SUB_FREQUENCIES)}"
+        if body.get("attachment") and body["attachment"] not in SUB_ATTACHMENTS:
+            return f"attachment must be one of {', '.join(SUB_ATTACHMENTS)}"
+        cond = body.get("condition")
+        if cond is not None:
+            if not isinstance(cond, dict):
+                return "condition must be an object like {\"min_rows\": 1}"
+            mr = cond.get("min_rows")
+            if mr is not None and (not isinstance(mr, int) or mr < 0):
+                return "condition.min_rows must be a non-negative integer"
+        return None
+
+    @app.get("/api/users/directory")
+    @require_auth
+    def user_directory():
+        """Lightweight user picklist for subscription recipient pickers."""
+        users = []
+        for u in security.list_users():
+            if u.get("is_active") is False:
+                continue
+            users.append({"id": u.get("id"), "username": u.get("username"),
+                          "name": u.get("name") or u.get("username"),
+                          "email": u.get("email") or ""})
+        return jsonify(sorted(users, key=lambda u: u["name"].lower()))
+
+    @app.get("/api/roles/directory")
+    @require_auth
+    def role_directory():
+        """Role picklist for subscription recipient pickers."""
+        try:
+            roles = security.list_roles()
+        except Exception:
+            roles = []
+        return jsonify(sorted([r.get("name") for r in roles if r.get("name")]))
 
     @app.post("/api/report-subscriptions")
     @require_auth
@@ -390,13 +450,18 @@ def register(app: Flask):
         dash = store.config_get("mf_dashboards", body.get("dashboard_id") or "")
         if not rep and not dash:
             return jsonify({"error": "report_id or dashboard_id is required"}), 422
-        recipients = [r for r in (body.get("recipients") or []) if r]
+        recipients = _norm_recipients(body.get("recipients"))
         if not recipients:
-            return jsonify({"error": "at least one recipient email is required"}), 422
+            return jsonify({"error": "at least one recipient is required"}), 422
+        err = _validate_sub_body(body)
+        if err:
+            return jsonify({"error": err}), 422
         sub = {"name": body.get("name") or (rep or dash).get("name"),
                "report_id": body.get("report_id"),
                "dashboard_id": body.get("dashboard_id"),
                "frequency": body.get("frequency") or "daily",
+               "attachment": body.get("attachment") or "none",
+               "condition": body.get("condition") or {},
                "recipients": recipients, "active": body.get("active", True),
                "created_by": request.mf_user["id"]}
         sid = store.config_put("mf_report_subs", sub)
@@ -418,6 +483,13 @@ def register(app: Flask):
         body = request.json or {}
         body.pop("id", None)
         body.pop("job_id", None)
+        if "recipients" in body:
+            body["recipients"] = _norm_recipients(body["recipients"])
+            if not body["recipients"]:
+                return jsonify({"error": "at least one recipient is required"}), 422
+        err = _validate_sub_body(body)
+        if err:
+            return jsonify({"error": err}), 422
         sub = {**sub, **body}
         sub = _sync_sub_job(sub)
         store.config_put("mf_report_subs", sub)

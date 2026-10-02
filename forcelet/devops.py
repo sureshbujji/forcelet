@@ -182,6 +182,9 @@ def _process_ingest_job(db_path: str, job_id: str):
             raise automation.TriggerAbort("Record not found")
         if not bsecurity.can(user, "delete", obj_name_):
             raise automation.TriggerAbort(f"No delete access on {obj_name_}")
+        blocker = _datamodel.check_delete_blockers(bstore, bregistry, obj_name_, rid)
+        if blocker:
+            raise automation.TriggerAbort(blocker)
         errs = automation.run_triggers(bstore, bregistry, bsecurity, obj_name_,
                                        "before_delete", rec, None, user, 1)
         if errs:
@@ -345,6 +348,74 @@ SANDBOX_KINDS = ("developer", "partial", "full")
 PARTIAL_SAMPLE_ROWS = 200
 
 
+def sanitize_sandbox_db(db_path: str) -> dict:
+    """Strip live credentials from a sandbox database copy.
+
+    A sandbox is a byte copy of the production database; without this step
+    it would hand out working production credentials (sessions, API keys,
+    password hashes, TOTP secrets, named-credential secrets). Runs after
+    every sandbox create/refresh, for every sandbox kind — developer and
+    partial sandboxes keep config/metadata tables too.
+
+    What it does:
+      * deletes all session, refresh-token, and API-key rows
+      * replaces every user's password hash with an unusable random value
+        and sets ``must_change_password`` so the existing forced-change
+        login flow applies
+      * clears TOTP secrets
+      * clears named-credential secret values (names/endpoints kept)
+      * leaves encrypted business-field data untouched (same key decrypts)
+
+    Returns a dict of counts for audit purposes.
+    """
+    import secrets as _secrets
+    counts = {"sessions": 0, "refresh_tokens": 0, "api_keys": 0,
+              "users": 0, "named_credentials": 0}
+    con = sqlite3.connect(db_path)
+    try:
+        tables = {r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        for table, key in (("mf_sessions", "sessions"),
+                           ("mf_refresh_tokens", "refresh_tokens"),
+                           ("mf_api_keys", "api_keys")):
+            if table in tables:
+                cur = con.execute(f'DELETE FROM "{table}"')
+                counts[key] = cur.rowcount if cur.rowcount >= 0 else 0
+        if "mf_users" in tables:
+            for uid, definition in con.execute(
+                    "SELECT id, definition FROM mf_users").fetchall():
+                try:
+                    u = json.loads(definition or "{}")
+                except Exception:
+                    continue
+                # "!" prefix can never verify (verify_password expects
+                # pbkdf2$iter$salt$dk); the random tail avoids collisions.
+                u["password_hash"] = "!" + _secrets.token_hex(32)
+                u.pop("totp_secret", None)
+                u["must_change_password"] = True
+                con.execute("UPDATE mf_users SET definition=? WHERE id=?",
+                            (json.dumps(u), uid))
+                counts["users"] += 1
+        if "mf_named_credentials" in tables:
+            for rid, definition in con.execute(
+                    "SELECT id, definition FROM mf_named_credentials").fetchall():
+                try:
+                    c = json.loads(definition or "{}")
+                except Exception:
+                    continue
+                if "secret_enc" in c or "secret" in c:
+                    c.pop("secret_enc", None)
+                    c.pop("secret", None)
+                    con.execute(
+                        "UPDATE mf_named_credentials SET definition=? WHERE id=?",
+                        (json.dumps(c), rid))
+                    counts["named_credentials"] += 1
+        con.commit()
+    finally:
+        con.close()
+    return counts
+
+
 def sandbox_root() -> str:
     root = os.environ.get("FORCELET_SANDBOX_DIR") or os.path.join(
         os.path.expanduser("~"), ".forcelet", "sandboxes")
@@ -364,7 +435,8 @@ def _data_tables(db_path: str) -> list[str]:
 
 
 def create_sandbox(store, user, name: str, kind: str = "developer",
-                   scratch: bool = False, expires_in_days: int | None = None) -> dict:
+                   scratch: bool = False, expires_in_days: int | None = None,
+                   sanitize: bool = True) -> dict:
     kind = (kind or "developer").lower()
     if kind not in SANDBOX_KINDS:
         raise ValueError(f"kind must be one of {SANDBOX_KINDS}")
@@ -400,6 +472,9 @@ def create_sandbox(store, user, name: str, kind: str = "developer",
             con.commit()
         finally:
             con.close()
+    if sanitize:
+        # Never ship live production credentials in a sandbox copy.
+        sanitize_sandbox_db(dest)
     expires_at = None
     if scratch:
         days = expires_in_days or 7
@@ -416,7 +491,7 @@ def create_sandbox(store, user, name: str, kind: str = "developer",
     return store.config_get(SANDBOX_TABLE, rid)
 
 
-def refresh_sandbox(store, sandbox_id: str) -> dict:
+def refresh_sandbox(store, sandbox_id: str, sanitize: bool = True) -> dict:
     sb = store.config_get(SANDBOX_TABLE, sandbox_id)
     if not sb:
         raise KeyError("sandbox not found")
@@ -447,6 +522,9 @@ def refresh_sandbox(store, sandbox_id: str) -> dict:
             con.commit()
         finally:
             con.close()
+    if sanitize:
+        # A refresh is a fresh production copy: sanitize credentials again.
+        sanitize_sandbox_db(dest)
     sb["status"] = "active"
     sb["refreshed_at"] = utcnow()
     store.config_put(SANDBOX_TABLE, sb)

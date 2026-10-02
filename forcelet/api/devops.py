@@ -11,7 +11,7 @@ from flask import Flask, jsonify, request, Response
 
 from .. import devops
 from ._shared import (
-    _audit, current_user, require_admin, require_auth,
+    _audit, current_user, filter_change_event, require_admin, require_auth,
 )
 
 
@@ -130,11 +130,64 @@ def register(app: Flask):
                                  f"attachment; filename=job-{jid}-failed.csv"})
 
     # ------------------------------------------------------------ streaming (SSE)
-    def _topic_allowed(user, topic: str) -> bool:
+    # Security: the broker payloads are shared across subscribers, so every
+    # event is filtered per subscriber connection — record-change events are
+    # dropped when the subscriber cannot see the record (sharing rules) and
+    # snapshots are masked to fields the subscriber may read (FLS).
+    # Scrubbed copies are built; broker payloads are never mutated in place.
+    def _scrub_platform_event(user, payload):
+        """Scrub records embedded in a platform-event payload.
+
+        Convention: a payload embedding a record carries "object_name" plus
+        either "record" (dict) or "record_id". The broker wraps published
+        platform events as {"event_name", "payload", "published_by"}, so the
+        embedded record is looked for both at the top level and inside the
+        nested "payload" envelope. Payloads without an embedded record remain
+        visible to any signed-in user, as before.
+        """
+        if not isinstance(payload, dict):
+            return payload
+        inner = payload.get("payload")
+        target = inner if isinstance(inner, dict) else payload
+        obj = target.get("object_name")
+        embedded = target.get("record")
+        rid = target.get("record_id")
+        if not obj or (not isinstance(embedded, dict) and not rid):
+            return payload
+        got = filter_change_event(
+            user, obj, rid if not isinstance(embedded, dict) else None,
+            embedded if isinstance(embedded, dict) else None, None)
+        if got is None:
+            return None
+        scrubbed, _fields = got
+        out = dict(payload)
+        if isinstance(embedded, dict):
+            inner_out = dict(target)
+            inner_out["record"] = scrubbed
+            if inner is target:
+                out["payload"] = inner_out
+            else:
+                out["record"] = scrubbed
+        return out
+
+    def _visible_event(user, e):
+        """Return a scrubbed payload copy the subscriber may see, or None."""
+        topic, payload = e["topic"], e["payload"]
         if topic.startswith("/data/") and topic.endswith("ChangeEvent"):
             obj = topic[len("/data/"):-len("ChangeEvent")]
-            return bool(security.can(user, "read", obj))
-        return True  # platform events are visible to any signed-in user
+            got = filter_change_event(
+                user, obj, payload.get("record_id"),
+                payload.get("snapshot"), payload.get("changed_fields"))
+            if got is None:
+                return None
+            scrubbed, fields = got
+            out = dict(payload)
+            out["snapshot"] = scrubbed
+            out["changed_fields"] = fields
+            return out
+        if topic.startswith("/event/"):
+            return _scrub_platform_event(user, payload)
+        return payload
 
     @app.get("/api/streaming")
     @require_auth
@@ -151,20 +204,22 @@ def register(app: Flask):
         def gen():
             last = since
             yield ": connected\nretry: 5000\n\n"
-            pending = [e for e in devops.broker.events_since(last, topics)
-                       if _topic_allowed(user, e["topic"])]
-            for e in pending:
+            for e in devops.broker.events_since(last, topics):
                 last = max(last, e["seq"])
+                payload = _visible_event(user, e)
+                if payload is None:
+                    continue
                 yield (f"id: {e['seq']}\nevent: {e['topic']}\n"
-                       f"data: {json.dumps(e['payload'])}\n\n")
+                       f"data: {json.dumps(payload)}\n\n")
             while True:
                 devops.broker.wait(25)
-                fresh = [e for e in devops.broker.events_since(last, topics)
-                         if _topic_allowed(user, e["topic"])]
-                for e in fresh:
+                for e in devops.broker.events_since(last, topics):
                     last = max(last, e["seq"])
+                    payload = _visible_event(user, e)
+                    if payload is None:
+                        continue
                     yield (f"id: {e['seq']}\nevent: {e['topic']}\n"
-                           f"data: {json.dumps(e['payload'])}\n\n")
+                           f"data: {json.dumps(payload)}\n\n")
 
         return Response(gen(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache",
@@ -199,7 +254,8 @@ def register(app: Flask):
                 store, request.mf_user, body.get("name") or "",
                 body.get("kind") or "developer",
                 scratch=bool(body.get("scratch")),
-                expires_in_days=body.get("expires_in_days"))
+                expires_in_days=body.get("expires_in_days"),
+                sanitize=bool(body.get("sanitize", True)))
         except (ValueError, FileExistsError) as e:
             return jsonify({"error": str(e)}), 422
         _audit("create", "sandbox", sb["name"], sb["kind"])
@@ -209,8 +265,10 @@ def register(app: Flask):
     @require_auth
     @require_admin
     def refresh_sandbox(sid):
+        body = request.get_json(silent=True) or {}
         try:
-            sb = devops.refresh_sandbox(store, sid)
+            sb = devops.refresh_sandbox(
+                store, sid, sanitize=bool(body.get("sanitize", True)))
         except KeyError:
             return jsonify({"error": "Not found"}), 404
         except ValueError as e:

@@ -40,6 +40,7 @@ def bootstrap(db_path: str):
             have_cols = set(store.existing_columns(obj["name"]))
             for fld in merged_fields:
                 if (not fld.get("formula") and not fld.get("rollup")
+                        and fld.get("type") != "Formula"
                         and fld["name"] not in have_cols):
                     store.add_column(obj["name"], fld)
 

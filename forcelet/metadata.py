@@ -70,6 +70,9 @@ class MetadataRegistry:
             raise ValueError(f"Unknown field type '{ftype}'. Valid: {sorted(FIELD_TYPES)}")
         if ftype == "Lookup" and not field.get("reference_to"):
             raise ValueError("Lookup fields require 'reference_to' (target object)")
+        # Salesforce-style alias for the default value
+        if "default_value" in field and "default" not in field:
+            field = {**field, "default": field["default_value"]}
         if ftype == "MasterDetail":
             from .datamodel import validate_master_detail
             validate_master_detail(self, obj_name, field)
@@ -92,7 +95,47 @@ class MetadataRegistry:
             "encrypted": bool(field.get("encrypted")),  # encrypted at rest (Text-ish types)
             "external_id": bool(field.get("external_id")),  # unique external identifier for upserts
             "reparentable": field.get("reparentable", True) if ftype == "MasterDetail" else None,
+            # AutoNumber config: prefix + zero-padded sequence, e.g. "A-", 1, 4 -> A-0001
+            "auto_prefix": field.get("auto_prefix") or "",
+            "auto_start": field.get("auto_start", 1),
+            "auto_width": field.get("auto_width", 4),
+            # Formula-type config: return type for the computed value
+            "return_type": field.get("return_type"),
+            # EncryptedText config: how many trailing chars stay visible when masked
+            "mask_chars": field.get("mask_chars", 4),
         }
+        if ftype == "EncryptedText":
+            # EncryptedText is always encrypted at rest via the instance key
+            # (forcelet.crypto); reads are decrypted server-side and masked.
+            full["encrypted"] = True
+            mc = full["mask_chars"]
+            if isinstance(mc, bool) or not isinstance(mc, int) or not 0 <= mc <= 16:
+                raise ValueError("mask_chars must be an integer between 0 and 16")
+        if ftype == "AutoNumber":
+            start, width, prefix = full["auto_start"], full["auto_width"], full["auto_prefix"]
+            if isinstance(start, bool) or not isinstance(start, int) or start < 0:
+                raise ValueError("auto_start must be a non-negative integer")
+            if isinstance(width, bool) or not isinstance(width, int) or not 1 <= width <= 10:
+                raise ValueError("auto_width must be an integer between 1 and 10")
+            if not isinstance(prefix, str) or len(prefix) > 32:
+                raise ValueError("auto_prefix must be a string of at most 32 characters")
+            if full["required"]:
+                raise ValueError("AutoNumber fields are system-assigned and cannot be required")
+            if full["default"] is not None:
+                raise ValueError("AutoNumber fields cannot have a default value")
+            if full["unique"]:
+                raise ValueError("AutoNumber values are inherently unique; do not mark the field unique")
+        if ftype == "Formula":
+            if full["return_type"] not in ("Text", "Number", "Currency", "Percent",
+                                           "Date", "DateTime", "Checkbox"):
+                raise ValueError("Formula fields need a return_type: Text, Number, Currency, "
+                                 "Percent, Date, DateTime, or Checkbox")
+            if not full["formula"]:
+                raise ValueError("Formula fields require a 'formula' definition")
+            if full["required"]:
+                raise ValueError("Formula fields are computed and cannot be required")
+            if full["default"] is not None:
+                raise ValueError("Formula fields cannot have a default value")
         if ftype == "MasterDetail":
             full["required"] = True  # a detail record must always have its master
         if full["external_id"]:
@@ -100,11 +143,11 @@ class MetadataRegistry:
                 raise ValueError("Only Text, Email, Phone, URL, and Number fields can be external IDs")
             if full["encrypted"]:
                 raise ValueError("Encrypted fields cannot be external IDs (ciphertext is randomized)")
-            if full["formula"] or full["rollup"]:
+            if full["formula"] or full["rollup"] or ftype in ("Formula", "AutoNumber"):
                 raise ValueError("Computed fields cannot be external IDs")
             full["unique"] = True  # external IDs are unique by definition
         if full["encrypted"]:
-            if ftype not in ("Text", "TextArea", "Email", "Phone", "URL"):
+            if ftype not in ("Text", "TextArea", "Email", "Phone", "URL", "EncryptedText"):
                 raise ValueError("Only text-like fields can be encrypted")
             if full["unique"]:
                 raise ValueError("Encrypted fields cannot be unique (ciphertext is randomized)")
@@ -132,7 +175,11 @@ class MetadataRegistry:
     #: ``type`` are intentionally absent — changing those would silently
     #: invalidate stored data, so they are refused instead.
     FIELD_EDITABLE = {"label", "help_text", "required", "default",
-                      "picklist_values", "length", "active", "description"}
+                      "picklist_values", "length", "active", "description",
+                      "auto_prefix", "auto_width", "mask_chars"}
+    # Note: auto_start and return_type are intentionally absent — changing the
+    # sequence start could produce duplicate numbers, and changing a formula's
+    # return type would silently invalidate its definition.
 
     def _managed_object(self, obj_name: str) -> dict:
         """Return the object def, or raise for unknown/standard objects.
@@ -164,8 +211,10 @@ class MetadataRegistry:
         if "label" in patch:
             if not str(patch["label"]).strip():
                 raise ValueError("Label cannot be blank")
-        if "required" in patch and (fdef.get("type") == "MasterDetail" or fdef.get("rollup")):
-            raise ValueError("The required flag is fixed for master-detail and roll-up fields")
+        if "required" in patch and (fdef.get("type") in ("MasterDetail", "AutoNumber", "Formula")
+                                    or fdef.get("rollup") or fdef.get("formula")):
+            raise ValueError("The required flag is fixed for master-detail, roll-up, "
+                             "formula, and auto-number fields")
         if "picklist_values" in patch:
             if fdef.get("type") not in ("Picklist", "MultiPicklist"):
                 raise ValueError("picklist_values only applies to picklist fields")
@@ -173,8 +222,8 @@ class MetadataRegistry:
             if not isinstance(vals, list) or not all(isinstance(x, str) for x in vals):
                 raise ValueError("picklist_values must be a list of strings")
         if "length" in patch:
-            if fdef.get("type") not in ("Text", "TextArea"):
-                raise ValueError("length only applies to Text/TextArea fields")
+            if fdef.get("type") not in ("Text", "TextArea", "EncryptedText", "RichTextArea"):
+                raise ValueError("length only applies to Text/TextArea/EncryptedText/RichTextArea fields")
             try:
                 ln = int(patch["length"])
             except (TypeError, ValueError):
@@ -182,6 +231,23 @@ class MetadataRegistry:
             if ln <= 0:
                 raise ValueError("length must be a positive integer")
             patch["length"] = ln
+        if "auto_prefix" in patch:
+            if fdef.get("type") != "AutoNumber":
+                raise ValueError("auto_prefix only applies to AutoNumber fields")
+            if not isinstance(patch["auto_prefix"], str) or len(patch["auto_prefix"]) > 32:
+                raise ValueError("auto_prefix must be a string of at most 32 characters")
+        if "auto_width" in patch:
+            if fdef.get("type") != "AutoNumber":
+                raise ValueError("auto_width only applies to AutoNumber fields")
+            w = patch["auto_width"]
+            if isinstance(w, bool) or not isinstance(w, int) or not 1 <= w <= 10:
+                raise ValueError("auto_width must be an integer between 1 and 10")
+        if "mask_chars" in patch:
+            if fdef.get("type") != "EncryptedText":
+                raise ValueError("mask_chars only applies to EncryptedText fields")
+            mc = patch["mask_chars"]
+            if isinstance(mc, bool) or not isinstance(mc, int) or not 0 <= mc <= 16:
+                raise ValueError("mask_chars must be an integer between 0 and 16")
         if "active" in patch:
             patch["active"] = bool(patch["active"])
         if "required" in patch:
@@ -206,7 +272,7 @@ class MetadataRegistry:
         if fname not in fmap:
             raise KeyError(f"Unknown field '{fname}' on {obj_name}")
         fdef = fmap[fname]
-        if not (fdef.get("formula") or fdef.get("rollup")):
+        if not (fdef.get("formula") or fdef.get("rollup") or fdef.get("type") == "Formula"):
             n = self.field_value_count(obj_name, fname)
             if n:
                 raise ValueError(
@@ -261,20 +327,31 @@ class MetadataRegistry:
             if key not in fmap:
                 errors.append(f"Unknown field '{key}' on {obj_def['name']}")
                 continue
-            if fmap[key].get("active") is False:
-                errors.append(f"{fmap[key]['label']} is deactivated and cannot be set")
+            fdef = fmap[key]
+            if fdef.get("active") is False:
+                errors.append(f"{fdef['label']} is deactivated and cannot be set")
                 continue
-            if fmap[key].get("formula") or fmap[key].get("rollup"):
-                errors.append(f"{fmap[key]['label']} is a computed field and cannot be set")
+            if fdef.get("formula") or fdef.get("rollup") \
+                    or fdef.get("type") in ("Formula", "AutoNumber"):
+                errors.append(f"{fdef['label']} is a computed field and cannot be set")
                 continue
-            ok, norm, err = validate_value(fmap[key], value)
+            if fdef.get("type") == "EncryptedText" and isinstance(value, str):
+                s = value.strip()
+                mask = int(fdef.get("mask_chars", 4) or 0)
+                head = s[:-mask] if mask and len(s) > mask else ""
+                if head and set(head) <= {"•", "*"}:
+                    # A masked placeholder re-submitted by the UI ("••••1234"):
+                    # the user did not type a new value, so keep the stored one.
+                    continue
+            ok, norm, err = validate_value(fdef, value)
             if not ok:
                 errors.append(err)
             else:
                 clean[key] = norm
         if not partial:
             for fname, fdef in fmap.items():
-                if fdef.get("formula") or fdef.get("rollup"):
+                if fdef.get("formula") or fdef.get("rollup") \
+                        or fdef.get("type") in ("Formula", "AutoNumber"):
                     continue
                 if fdef.get("active") is False:
                     continue  # deactivated fields are invisible to validation

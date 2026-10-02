@@ -161,11 +161,16 @@ def register(app: Flask):
                 if status == 200:
                     return "updated", {}
                 return "failed", {"details": [payload.get("error")]}
-            clean["owner_id"] = request.mf_user["id"]
-            clean["created_by"] = request.mf_user["id"]
-            clean.setdefault("record_type", automation.default_record_type(store, obj_name))
-            store.insert(obj_name, clean)
-            return "created", {}
+            # insert mode: run the full create pipeline (_do_create) so that
+            # validation, duplicate rules, assignment rules, AutoNumber
+            # assignment, triggers, flows, roll-ups, webhooks, approvals,
+            # emails and divisions all fire — just like an interactive create.
+            status, payload = _do_create(request.mf_user, obj_name, row,
+                                         allow_duplicates=(on_duplicate == "insert"))
+            if status == 201:
+                return "created", {}
+            details = payload.get("details") or [payload.get("error")]
+            return "failed", {"details": details}
 
         created, updated, skipped, failed = 0, 0, 0, 0
         errors, error_rows = [], []
@@ -302,11 +307,13 @@ def register(app: Flask):
                 if status == 200:
                     return "updated", []
                 return "failed", [payload.get("error")]
-            clean["owner_id"] = request.mf_user["id"]
-            clean["created_by"] = request.mf_user["id"]
-            clean.setdefault("record_type", automation.default_record_type(store, obj_name))
-            store.insert(obj_name, clean)
-            return "created", []
+            # insert mode: run the full create pipeline (_do_create), same as
+            # the initial import path above.
+            status, payload = _do_create(request.mf_user, obj_name, row,
+                                         allow_duplicates=(on_duplicate == "insert"))
+            if status == 201:
+                return "created", []
+            return "failed", payload.get("details") or [payload.get("error")]
 
         created, updated, skipped, failed = 0, 0, 0, 0
         still_failing = []

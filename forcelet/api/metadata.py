@@ -62,8 +62,11 @@ def register(app: Flask):
                 f2 = dict(f)
                 if f.get("type") in ("Picklist", "MultiPicklist"):
                     f2["picklist_values"] = automation.picklist_values_for(store, obj_name, rt, f)
-                f2["editable"] = (not f.get("formula") and not f.get("rollup")) and security.can(user, "edit", obj_name, f["name"])
-                f2["computed"] = bool(f.get("formula") or f.get("rollup"))
+                f2["editable"] = (not f.get("formula") and not f.get("rollup")
+                                and f.get("type") not in ("Formula", "AutoNumber")) \
+                    and security.can(user, "edit", obj_name, f["name"])
+                f2["computed"] = bool(f.get("formula") or f.get("rollup")
+                                      or f.get("type") in ("Formula", "AutoNumber"))
                 fields.append(f2)
         return jsonify({"name": obj["name"], "label": obj["label"], "plural": obj["plural"],
                         "is_custom": obj["is_custom"], "fields": fields,

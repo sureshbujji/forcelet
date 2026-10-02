@@ -189,6 +189,9 @@ def register(app: Flask):
             return jsonify({"error": "Record is locked: an approval request is pending"}), 423
         if obj_name == "Contract" and (rec.get("Status") or "Draft") != "Draft":
             return jsonify({"error": "Only Draft Contracts can be deleted"}), 422
+        blocker = datamodel.check_delete_blockers(store, registry, obj_name, rid)
+        if blocker:
+            return jsonify({"error": blocker}), 422
         try:
             datamodel.assert_mutable(obj)
         except ValueError as e:
@@ -201,7 +204,10 @@ def register(app: Flask):
         store.emit_change(obj_name, rid, "delete", user,
                           snapshot={k: v for k, v in rec.items()
                                     if not _crypto.is_encrypted(v)})
-        cascaded = datamodel.cascade_delete(store, registry, user, obj_name, rid)
+        try:
+            cascaded = datamodel.cascade_delete(store, registry, user, obj_name, rid)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 422
         store.recycle_put(obj_name, rec, user["id"])
         store.delete(obj_name, rid)
         recompute_stored_rollups(user, obj_name, rec)

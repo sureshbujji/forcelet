@@ -60,6 +60,13 @@ def register(app: Flask):
         "lead-field-mappings": "mf_lead_field_mappings",
         "web-to-forms": "mf_web_to_forms",
         "divisions": "mf_divisions",
+        "queues": "mf_queues",
+        "notification-types": "mf_notification_types",
+        "currencies": "mf_currencies",
+        "exchange-rates": "mf_exchange_rates",
+        "service-channels": "mf_service_channels",
+        "routing-configs": "mf_routing_configs",
+        "invocable-actions": "mf_invocable_actions",
     }
 
     def _delegated_target_ok(scopes, target_role):
@@ -128,7 +135,7 @@ def register(app: Flask):
             return jsonify({"error": (
                 f"parent_field '{rule['parent_field']}' is not on "
                 f"{rule['parent_object']}")}), 422
-        if pf.get("formula") or pf.get("rollup"):
+        if pf.get("formula") or pf.get("rollup") or pf.get("type") in ("Formula", "AutoNumber"):
             return jsonify({"error": (
                 "parent_field must not be a formula or roll-up field")}), 422
         if func != "count":
@@ -163,7 +170,7 @@ def register(app: Flask):
             return jsonify({"error": (
                 f"target_field '{m['target_field']}' is not on "
                 f"{m['target_object']}")}), 422
-        if tf.get("formula") or tf.get("rollup"):
+        if tf.get("formula") or tf.get("rollup") or tf.get("type") in ("Formula", "AutoNumber"):
             return jsonify({"error": (
                 "target_field must not be a formula or roll-up field")}), 422
         return None
@@ -185,7 +192,7 @@ def register(app: Flask):
             if not fd:
                 return jsonify({"error": (
                     f"field '{fn}' is not on {obj_name}")}), 422
-            if fd.get("formula") or fd.get("rollup"):
+            if fd.get("formula") or fd.get("rollup") or fd.get("type") in ("Formula", "AutoNumber"):
                 return jsonify({"error": (
                     f"field '{fn}' is computed and cannot be web-submitted")}), 422
         for fn in f.get("required") or []:
@@ -304,6 +311,11 @@ def register(app: Flask):
                     return jsonify({"error": f"Bad cron expression: {e}"}), 422
             elif int(body.get("interval_minutes") or 0) <= 0:
                 return jsonify({"error": "interval_minutes must be positive"}), 422
+        if kind == "flows":
+            act_errors = automation.validate_flow_actions(body.get("actions"))
+            if act_errors:
+                return jsonify({"error": "Invalid flow actions",
+                                "details": act_errors}), 422
         if kind == "flows" and body.get("trigger") == "scheduled":
             if "criteria" in body and "condition" not in body:
                 body["condition"] = body.pop("criteria")
@@ -351,6 +363,81 @@ def register(app: Flask):
             if dup:
                 return jsonify({"error": (
                     f"key '{body.get('key')}' already exists")}), 422
+        if kind == "queues":
+            from .. import queues as _queues
+            err = _queues.validate_queue(body)
+            if err:
+                return jsonify({"error": err}), 422
+            body.setdefault("description", "")
+            body.setdefault("members", [])
+            body.setdefault("active", True)
+        if kind == "notification-types":
+            if not (body.get("name") or "").strip():
+                return jsonify({"error": "Name is required"}), 422
+            body.setdefault("active", True)
+        if kind == "currencies":
+            code = (body.get("code") or "").strip().upper()
+            if not re.fullmatch(r"[A-Z]{3}", code):
+                return jsonify({"error": "Code must be 3 letters"}), 422
+            if [c for c in store.config_all(table)
+                    if (c.get("code") or "").upper() == code]:
+                return jsonify({"error": f"Currency {code} already exists"}), 422
+            body["code"] = code
+            if body.get("is_corporate"):
+                for c in store.config_all(table):
+                    if c.get("is_corporate"):
+                        c["is_corporate"] = False
+                        store.config_put(table, c)
+            body.setdefault("active", True)
+        if kind == "exchange-rates":
+            from .. import currency as _currency
+            _currency.migrate_legacy_rates(store)
+            # Accept the Setup UI's field names but store the canonical shape
+            # read by get_rate/convert: {currency_code, start_date, rate}.
+            for f in ("from_currency", "effective_date"):
+                if not body.get(f):
+                    return jsonify({"error": f"{f} is required"}), 422
+            try:
+                rate = float(body.get("rate"))
+            except (TypeError, ValueError):
+                return jsonify({"error": "rate must be a number"}), 422
+            if rate <= 0:
+                return jsonify({"error": "rate must be positive"}), 422
+            from_code = (body.get("from_currency") or "").strip().upper()
+            to_code = (body.get("to_currency") or "").strip().upper()
+            corp = (_currency.corporate_currency(store).get("code") or "").upper()
+            if to_code and to_code != corp:
+                return jsonify({"error": "Exchange rates must be quoted against "
+                                         f"the corporate currency ({corp})"}), 422
+            if from_code == corp:
+                return jsonify({"error": "The corporate currency rate is "
+                                         "always 1.0"}), 422
+            if not _currency.get_currency(store, from_code):
+                return jsonify({"error": f"Unknown currency {from_code}"}), 422
+            try:
+                day = _currency._parse_date(body.get("effective_date")).isoformat()
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 422
+            # One rate per currency per start date (same as set_rate).
+            for row in store.config_all(table):
+                if (row.get("currency_code") or "").upper() == from_code \
+                        and row.get("start_date") == day:
+                    store.config_delete(table, row["id"])
+            body = {"currency_code": from_code, "start_date": day, "rate": rate,
+                    "name": body.get("name") or f"{from_code} to {corp}",
+                    "active": True}
+        if kind == "service-channels":
+            if not (body.get("name") or "").strip():
+                return jsonify({"error": "Name is required"}), 422
+            body.setdefault("active", True)
+        if kind == "routing-configs":
+            if not (body.get("name") or "").strip():
+                return jsonify({"error": "Name is required"}), 422
+            body.setdefault("active", True)
+        if kind == "invocable-actions":
+            if not (body.get("name") or "").strip():
+                return jsonify({"error": "Name is required"}), 422
+            body.setdefault("active", True)
         rid = store.config_put(table, body)
         _audit("create", kind, body.get("name") or rid)
         return jsonify(store.config_get(table, rid)), 201
@@ -420,6 +507,32 @@ def register(app: Flask):
             err = _validate_web_to_form(merged)
             if err:
                 return err
+        if kind == "currencies" and merged.get("is_corporate"):
+            for c in store.config_all(table):
+                if c.get("id") != rid and c.get("is_corporate"):
+                    c["is_corporate"] = False
+                    store.config_put(table, c)
+        if kind == "exchange-rates":
+            from .. import currency as _currency
+            _currency.migrate_legacy_rates(store)
+            # Normalize any UI-shaped fields to the canonical shape on edit.
+            if "from_currency" in merged:
+                merged["currency_code"] = (
+                    merged.pop("from_currency") or "").strip().upper()
+            if "effective_date" in merged:
+                try:
+                    merged["start_date"] = _currency._parse_date(
+                        merged.pop("effective_date")).isoformat()
+                except ValueError as e:
+                    return jsonify({"error": str(e)}), 422
+            merged.pop("to_currency", None)  # implied: corporate currency
+            if "rate" in merged:
+                try:
+                    merged["rate"] = float(merged["rate"])
+                except (TypeError, ValueError):
+                    return jsonify({"error": "rate must be a number"}), 422
+                if merged["rate"] <= 0:
+                    return jsonify({"error": "rate must be positive"}), 422
         store.config_put(table, {**merged, "id": rid})
         _audit("update", kind, merged.get("name") or rid)
         return jsonify(store.config_get(table, rid))
@@ -482,7 +595,7 @@ def register(app: Flask):
         out = []
         for f in obj.get("fields", []):
             f2 = dict(f)
-            if not (f.get("formula") or f.get("rollup")):
+            if not (f.get("formula") or f.get("rollup") or f.get("type") == "Formula"):
                 f2["value_count"] = registry.field_value_count(obj_name, f["name"])
             out.append(f2)
         return jsonify(out)

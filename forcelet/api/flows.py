@@ -26,6 +26,12 @@ from ._shared import (
 def register(app: Flask):
     store, registry, security = app.mf_store, app.mf_registry, app.mf_security
     # ------------------------------------------------------------ screen flows
+    @app.get("/api/invocable-actions")
+    @require_auth
+    def list_invocable_actions_ep():
+        """Code-registered actions usable via {type: invocable, name, inputs}."""
+        return jsonify(automation.list_invocable_actions())
+
     def _screen_flow_or_404(fid):
         f = store.config_get("mf_flows", fid)
         if not f or f.get("flow_type") != "screen" \

@@ -5,3 +5,4 @@ __pycache__/
 .env
 .venv/
 .forcelet.key
+.pytest-tmp/

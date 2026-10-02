@@ -30,6 +30,25 @@ def relationship_fields(obj_def: dict) -> list:
             if f.get("type") in ("Lookup", "MasterDetail")]
 
 
+# ------------------------------------------------------- auto-number fields
+def next_auto_number(store, obj_name: str, field: dict) -> str:
+    """Assign the next auto-number for a field: prefix + zero-padded sequence.
+
+    The counter is per (object, field) and lives in the mf_sequences table;
+    the increment is atomic under the store lock, so concurrent creates never
+    hand out the same number (sequence gaps are possible if a later step of
+    the create fails — same trade-off Salesforce makes).
+    """
+    key = f"{obj_name}.{field['name']}"
+    start = field.get("auto_start")
+    start = 1 if not isinstance(start, int) or isinstance(start, bool) or start < 0 else start
+    seq = store.next_sequence(key, start=start)
+    width = field.get("auto_width")
+    width = 4 if not isinstance(width, int) or isinstance(width, bool) or not 1 <= width <= 10 else width
+    prefix = field.get("auto_prefix") or ""
+    return f"{prefix}{seq:0{width}d}"
+
+
 def validate_master_detail(registry, obj_name: str, field: dict):
     """Validate a MasterDetail field definition. Raises ValueError."""
     target = field.get("reference_to")
@@ -56,7 +75,7 @@ def validate_master_detail(registry, obj_name: str, field: dict):
     for flag in ("unique", "external_id", "encrypted"):
         if field.get(flag):
             raise ValueError(f"MasterDetail fields cannot be {flag}")
-    if field.get("formula") or field.get("rollup"):
+    if field.get("formula") or field.get("rollup") or field.get("type") == "Formula":
         raise ValueError("MasterDetail fields cannot be computed")
 
 
@@ -84,36 +103,113 @@ def validate_md_parents_exist(store, obj_def: dict, values: dict) -> str | None:
     return None
 
 
+# ------------------------------------------------------- lookup-based cascade registry
+# Detail-like children held via plain Lookup (not MasterDetail). Salesforce
+# semantics: deleting the parent deletes these children; they are recycled
+# like MasterDetail children. MasterDetail children are discovered
+# dynamically in cascade_delete; this registry covers the Lookup-based
+# standard children. PriceBook is special: an entry referenced by any line
+# item blocks the delete (see check_delete_blockers) instead of cascading.
+CASCADE_CHILDREN = {
+    "Opportunity": [
+        ("OpportunityLineItem", "OpportunityId"),
+        ("OpportunityContactRole", "OpportunityId"),
+        ("OpportunityTeamMember", "OpportunityId"),
+        ("OpportunitySplit", "OpportunityId"),
+    ],
+    # RevenueSchedule.OpportunityLineItemId is a required lookup: deleting an
+    # Opportunity cascades its line items, so schedules must cascade too or
+    # the fix would create new orphans.
+    "OpportunityLineItem": [
+        ("RevenueSchedule", "OpportunityLineItemId"),
+    ],
+    "Campaign": [
+        ("CampaignMember", "CampaignId"),
+        ("CampaignInfluence", "CampaignId"),
+    ],
+    "WorkOrder": [
+        ("ServiceAppointment", "WorkOrderId"),
+    ],
+    "PriceBook": [
+        ("PriceBookEntry", "PriceBookId"),
+    ],
+    "Quote": [
+        ("QuoteLineItem", "QuoteId"),
+    ],
+    # Contract: no line-item object exists; nothing to cascade.
+}
+
+
+def _price_book_entry_referenced(store, entry_id: str) -> bool:
+    """True when any opportunity or quote line item references this entry."""
+    for child_obj, field in (("OpportunityLineItem", "PriceBookEntryId"),
+                             ("QuoteLineItem", "PriceBookEntryId")):
+        try:
+            rows = store.query(child_obj, limit=100000)
+        except Exception:
+            continue
+        if any(r.get(field) == entry_id for r in rows):
+            return True
+    return False
+
+
+def check_delete_blockers(store, registry, obj_name: str, rid: str) -> str | None:
+    """Error message when deleting this record is blocked (Salesforce semantics).
+
+    A Price Book cannot be deleted while any of its entries is referenced by
+    an opportunity or quote line item; the admin must remove those references
+    first. Returns None when the delete may proceed.
+    """
+    if obj_name == "PriceBook" and registry.get_object("PriceBookEntry"):
+        for row in store.query("PriceBookEntry", limit=100000):
+            if row.get("PriceBookId") == rid \
+                    and _price_book_entry_referenced(store, row["id"]):
+                name = row.get("Name") or row["id"]
+                return (f"Cannot delete Price Book: entry '{name}' is referenced "
+                        "by opportunity or quote line items")
+    return None
+
+
 def cascade_delete(store, registry, user: dict, obj_name: str, rid: str,
                    depth: int = 0) -> list:
-    """Recursively delete master-detail children of a record.
+    """Recursively delete detail children of a record.
 
-    Each child is recycled, change-logged, and deleted. Returns a list of
-    (object, id) tuples that were cascade-deleted. Depth-guarded.
+    Covers MasterDetail children (discovered dynamically) plus the curated
+    CASCADE_CHILDREN registry of Lookup-based detail children. Each child is
+    recycled, change-logged, and deleted. Returns a list of (object, id)
+    tuples that were cascade-deleted. Depth-guarded. Raises ValueError when a
+    Salesforce-semantics blocker (see check_delete_blockers) is hit.
     """
     deleted = []
     if depth >= MAX_MD_DEPTH:
         return deleted
+    blocker = check_delete_blockers(store, registry, obj_name, rid)
+    if blocker:
+        raise ValueError(blocker)
+    pairs = []
     for child_def in registry.list_objects():
         for f in md_fields(child_def):
-            if f.get("reference_to") != obj_name:
-                continue
-            cobj = child_def["name"]
-            try:
-                rows = store.query(cobj, limit=100000)
-            except Exception:
-                continue
-            for row in rows:
-                if row.get(f["name"]) == rid:
-                    # recurse first so grandchildren go before children
-                    deleted.extend(cascade_delete(store, registry, user, cobj,
-                                                  row["id"], depth + 1))
-                    store.emit_change(cobj, row["id"], "delete", user,
-                                      changed_fields=list(row.keys()),
-                                      snapshot={k: v for k, v in row.items()})
-                    store.recycle_put(cobj, row, user["id"])
-                    store.delete(cobj, row["id"])
-                    deleted.append((cobj, row["id"]))
+            if f.get("reference_to") == obj_name:
+                pairs.append((child_def["name"], f["name"]))
+    for cobj, field in CASCADE_CHILDREN.get(obj_name, []):
+        if registry.get_object(cobj):
+            pairs.append((cobj, field))
+    for cobj, field in pairs:
+        try:
+            rows = store.query(cobj, limit=100000)
+        except Exception:
+            continue
+        for row in rows:
+            if row.get(field) == rid:
+                # recurse first so grandchildren go before children
+                deleted.extend(cascade_delete(store, registry, user, cobj,
+                                              row["id"], depth + 1))
+                store.emit_change(cobj, row["id"], "delete", user,
+                                  changed_fields=list(row.keys()),
+                                  snapshot={k: v for k, v in row.items()})
+                store.recycle_put(cobj, row, user["id"])
+                store.delete(cobj, row["id"])
+                deleted.append((cobj, row["id"]))
     return deleted
 
 
@@ -372,7 +468,8 @@ def run_archive_rule(store, registry, rule_id: str, user: dict) -> dict:
     # mirror source fields onto the archive object (once)
     tmap = registry.field_map(target)
     for f in obj_def.get("fields", []):
-        if f["name"] not in tmap and not f.get("formula") and not f.get("rollup"):
+        if f["name"] not in tmap and not f.get("formula") and not f.get("rollup") \
+                and f.get("type") != "Formula":
             spec = {k: f.get(k) for k in ("name", "label", "type", "length",
                                           "picklist_values", "reference_to")}
             spec = {k: v for k, v in spec.items() if v is not None}

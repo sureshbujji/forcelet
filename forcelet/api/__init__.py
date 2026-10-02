@@ -21,6 +21,7 @@ from . import (
     datamodel, email, enhancements, experience, field_service, files, flows, forecasts, impexp, jobs, kanban,
     metadata, notifications, oauth, packaging, platform, platform_core, records, reports, scoring,
     search, sla, activities, web_to, devops, dynamic_forms, sales_core, service_core, p2_admin,
+    currency, omni,
 )
 
 APP_VERSION = "0.7.0"
@@ -78,7 +79,8 @@ def create_app(db_path: str) -> Flask:
                 chatter, datamodel, email, enhancements, experience, field_service, files, flows, forecasts,
                 impexp, jobs, kanban, metadata, notifications, oauth, packaging,
                 platform, platform_core, records, reports, scoring, search, sla, activities,
-                web_to, devops, dynamic_forms, sales_core, service_core, p2_admin):
+                web_to, devops, dynamic_forms, sales_core, service_core, p2_admin,
+                currency, omni):
         mod.register(app)
 
     @app.get("/api/health")

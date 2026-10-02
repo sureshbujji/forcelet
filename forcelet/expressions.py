@@ -12,12 +12,17 @@ Expression JSON supports:
   {"contains": [a, b]}, {"isblank": x}, {"len": x}
   arithmetic: {"+": [a, b]}, {"-": ...}, {"*": ...}, {"/": ...}
   {"days_between": [dateA, dateB]}
+  relative-date predicates (report filters, also usable in rules/flows):
+  {"is_today": [{"field": "CloseDate"}]},
+  {"is_this_week"|"is_this_month"|"is_this_quarter"|"is_this_year": [{"field": "CloseDate"}]},
+  {"is_last_n_days": [{"field": "CloseDate"}, 30]}
 
 render_template() expands {{Trigger.Field}}, {{Trigger.Id}}, {{User.Id}} etc.
 """
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 from datetime import datetime, timezone
 
 
@@ -33,6 +38,53 @@ def _to_date(v):
 
 def _today():
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _today_date() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def relative_date_range(kind: str) -> tuple[date, date]:
+    """(start, end) inclusive date range for a relative-date literal kind.
+
+    Kinds: today, this_week (Mon-Sun), this_month, this_quarter, this_year.
+    """
+    today = _today_date()
+    if kind == "today":
+        return today, today
+    if kind == "this_week":
+        start = today - timedelta(days=today.weekday())
+        return start, start + timedelta(days=6)
+    if kind == "this_month":
+        start = today.replace(day=1)
+        nxt = (start + timedelta(days=32)).replace(day=1)
+        return start, nxt - timedelta(days=1)
+    if kind == "this_quarter":
+        qm = (today.month - 1) // 3 * 3 + 1
+        start = today.replace(month=qm, day=1)
+        nm, yr = qm + 3, today.year
+        if nm > 12:
+            nm, yr = nm - 12, yr + 1
+        return start, date(yr, nm, 1) - timedelta(days=1)
+    if kind == "this_year":
+        return today.replace(month=1, day=1), today.replace(month=12, day=31)
+    raise ValueError(f"Unknown relative date kind '{kind}'")
+
+
+def _in_relative_range(value, kind: str, n: int | None = None) -> bool:
+    d = _to_date(value)
+    if d is None:
+        return False
+    if kind == "last_n_days":
+        today = _today_date()
+        return today - timedelta(days=int(n or 0)) <= d <= today
+    start, end = relative_date_range(kind)
+    return start <= d <= end
+
+
+#: {"is_today": [...]} style predicate ops handled directly in eval_expr.
+REL_DATE_PREDICATES = ("is_today", "is_this_week", "is_this_month",
+                       "is_this_quarter", "is_this_year", "is_last_n_days")
 
 
 # Resolvers for $CustomMetadata / $CustomSetting in formulas and flows.
@@ -62,6 +114,16 @@ def eval_expr(expr, record: dict, old_record: dict | None = None, user: dict | N
             return _today()
         if expr.get("now"):
             return datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for _pred in REL_DATE_PREDICATES:
+            if _pred in expr:
+                _args = expr[_pred]
+                _fld = eval_expr(_args[0], record, old_record, user) \
+                    if isinstance(_args, list) else eval_expr(_args, record, old_record, user)
+                if _pred == "is_last_n_days":
+                    _n = eval_expr(_args[1], record, old_record, user) \
+                        if isinstance(_args, list) and len(_args) > 1 else 0
+                    return _in_relative_range(_fld, "last_n_days", _n)
+                return _in_relative_range(_fld, _pred[3:])
         if expr.get("user_id"):
             return (user or {}).get("id")
         if "custom_metadata" in expr:
@@ -117,6 +179,9 @@ def _apply_op(op, args, record, old_record, user):
     if op == "contains":
         a, b = v(args[0]), v(args[1])
         return a is not None and b is not None and str(b) in str(a)
+    if op == "starts_with":
+        a, b = v(args[0]), v(args[1])
+        return a is not None and b is not None and str(a).startswith(str(b))
     if op == "isblank":
         a = v(args)
         return a is None or (isinstance(a, str) and a.strip() == "")
@@ -139,6 +204,11 @@ def _apply_op(op, args, record, old_record, user):
     if op == "days_between":
         a, b = _to_date(v(args[0])), _to_date(v(args[1]))
         return abs((b - a).days) if a and b else None
+    if op in ("upper", "lower"):
+        a = v(args[0]) if isinstance(args, list) else v(args)
+        if a is None:
+            return None
+        return str(a).upper() if op == "upper" else str(a).lower()
     raise ValueError(f"Unknown operator '{op}'")
 
 

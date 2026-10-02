@@ -65,6 +65,7 @@ def run_once(store, registry, security) -> list:
         store.prune_portal_sessions()
         results = automation.run_due_scheduled_jobs(store, registry, security)
         results = results + automation.run_due_scheduled_flows(store, registry, security)
+        results = results + automation.process_due_flow_waits(store, registry, security)
         return results
     finally:
         # Refresh the heartbeat so a long job run does not look dead.

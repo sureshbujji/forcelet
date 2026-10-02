@@ -102,10 +102,19 @@ class Store:
                       "mf_person_accounts", "mf_archive_rules",
                       "mf_dynamic_forms", "mf_divisions", "mf_seed_templates",
                       "mf_import_runs", "mf_custom_labels", "mf_translations",
-                      "mf_rollup_rules",
-                      "mf_delegated_groups"):
+                      "mf_rollup_rules", "mf_folders",
+                      "mf_delegated_groups",
+                      "mf_queues", "mf_notification_types",
+                      "mf_currencies", "mf_exchange_rates",
+                      "mf_presence", "mf_service_channels",
+                      "mf_routing_configs", "mf_work_items",
+                      "mf_agent_capacity", "mf_invocable_actions",
+                      "mf_flow_waits", "mf_schema_migrations"):
             c.execute(f"""CREATE TABLE IF NOT EXISTS {table}
                           (id TEXT PRIMARY KEY, definition TEXT NOT NULL)""")
+        # Auto-number sequences: id = "<Object>.<field>", definition = {"next": n}
+        c.execute("""CREATE TABLE IF NOT EXISTS mf_sequences
+                     (id TEXT PRIMARY KEY, definition TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS mf_history
                      (id TEXT PRIMARY KEY, object_name TEXT, record_id TEXT,
                       field_name TEXT, old_value TEXT, new_value TEXT,
@@ -123,7 +132,7 @@ class Store:
         c.execute("""CREATE TABLE IF NOT EXISTS mf_email_log
                      (id TEXT PRIMARY KEY, object_name TEXT, record_id TEXT,
                       recipient TEXT, subject TEXT, body TEXT, template TEXT,
-                      sent_by TEXT, sent_at TEXT)""")
+                      sent_by TEXT, sent_at TEXT, attachments TEXT)""")
         c.execute("""CREATE TABLE IF NOT EXISTS mf_audit_trail
                      (id TEXT PRIMARY KEY, at TEXT, user_id TEXT, username TEXT,
                       action TEXT, entity_type TEXT, entity_name TEXT, details TEXT)""")
@@ -233,7 +242,7 @@ class Store:
             "last_modified_date TEXT",
         ]
         for f in obj_def.get("fields", []):
-            if f.get("formula") or f.get("rollup"):
+            if f.get("formula") or f.get("rollup") or f.get("type") == "Formula":
                 continue  # computed fields are never stored
             cols.append(f'"{f["name"]}" {FIELD_TYPES[f["type"]]["sql"]}')
         self._execute(f"CREATE TABLE IF NOT EXISTS {self._table(obj_def['name'])} ({', '.join(cols)})")
@@ -418,6 +427,30 @@ class Store:
         self._commit()
         return cur.rowcount > 0
 
+    def next_sequence(self, key: str, start: int = 1) -> int:
+        """Atomically increment a named sequence and return its next value.
+
+        Used by AutoNumber fields (key = "<Object>.<field>"). The read and the
+        write happen under the store lock so two concurrent callers can never
+        receive the same number. Note self._lock is a plain (non-reentrant)
+        Lock: this method talks to self.conn directly instead of going through
+        _execute(), which would deadlock trying to re-acquire it.
+        """
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT definition FROM mf_sequences WHERE id=?", (key,)).fetchone()
+            nxt = start
+            if row:
+                try:
+                    nxt = int(json.loads(row["definition"]).get("next", start))
+                except (ValueError, TypeError, AttributeError):
+                    nxt = start
+            self.conn.execute(
+                "INSERT OR REPLACE INTO mf_sequences (id, definition) VALUES (?, ?)",
+                (key, json.dumps({"next": nxt + 1})))
+            self.conn.commit()
+            return nxt
+
     # ------------------------------------------------- dedicated event tables
     def _row_put(self, table: str, row: dict) -> str:
         row = {"id": new_id(), **row}
@@ -460,12 +493,18 @@ class Store:
         return rows
 
     # email log
-    def log_email(self, object_name, record_id, recipient, subject, body, template, user):
+    def log_email(self, object_name, record_id, recipient, subject, body, template, user,
+                  attachments=None):
+        try:
+            self._execute("ALTER TABLE mf_email_log ADD COLUMN attachments TEXT")
+        except Exception:
+            pass  # column already exists on older databases
         return self._row_put("mf_email_log", {
             "object_name": object_name, "record_id": record_id,
             "recipient": recipient or "", "subject": subject or "",
             "body": body or "", "template": template or "",
-            "sent_by": user["id"], "sent_at": utcnow()})
+            "sent_by": user["id"], "sent_at": utcnow(),
+            "attachments": json.dumps(attachments or [])})
 
     def email_log(self, limit=100):
         return self._rows("mf_email_log", limit=limit)

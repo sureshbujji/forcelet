@@ -6,13 +6,16 @@ and returns (ok, normalized_value, error_message).
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 from datetime import datetime
+from html.parser import HTMLParser
 
 FIELD_TYPES = {
     "Text":          {"sql": "TEXT",    "desc": "Short text (configurable max length)"},
     "TextArea":      {"sql": "TEXT",    "desc": "Long text"},
+    "RichTextArea":  {"sql": "TEXT",    "desc": "Rich text (HTML), sanitized on save"},
     "Number":        {"sql": "REAL",    "desc": "Numeric value"},
     "Currency":      {"sql": "REAL",    "desc": "Currency amount"},
     "Percent":       {"sql": "REAL",    "desc": "Percentage"},
@@ -26,6 +29,9 @@ FIELD_TYPES = {
     "URL":           {"sql": "TEXT",    "desc": "Web link"},
     "Lookup":        {"sql": "TEXT",    "desc": "Relationship to another object's record"},
     "MasterDetail":  {"sql": "TEXT",    "desc": "Master-detail: required parent, cascade delete, inherits sharing"},
+    "AutoNumber":    {"sql": "TEXT",    "desc": "Auto-generated sequence (prefix + zero-padded number); read-only"},
+    "EncryptedText": {"sql": "TEXT",    "desc": "Text encrypted at rest; masked display (configurable visible chars)"},
+    "Formula":       {"sql": "TEXT",    "desc": "Computed formula field (choose a return type)"},
     "Geolocation":   {"sql": "TEXT",    "desc": "Latitude/longitude pair (stored 'lat;lng')"},
     "Address":       {"sql": "TEXT",    "desc": "Compound street/city/state/postal/country (stored as JSON)"},
     "Time":          {"sql": "TEXT",    "desc": "Time of day (HH:MM:SS)"},
@@ -33,6 +39,145 @@ FIELD_TYPES = {
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+# ------------------------------------------------------- rich-text sanitizer
+# Allowlist-based HTML sanitizer for RichTextArea values. Runs server-side on
+# every save, so stored HTML is safe to inject unescaped into the detail view.
+RICH_TEXT_TAGS = {
+    "p": (), "br": (), "b": (), "i": (), "u": (),
+    "strong": (), "em": (), "ul": (), "ol": (), "li": (),
+    "a": ("href",), "h1": (), "h2": (), "h3": (), "h4": (),
+    "blockquote": (), "code": (), "pre": (), "span": (), "div": (),
+}
+# Tags whose content is dropped entirely (not just the tag itself).
+_RICH_TEXT_DROP = {"script", "style", "iframe", "object", "embed",
+                   "applet", "form", "input", "button", "select",
+                   "textarea", "link", "meta", "base"}
+_VOID_TAGS = {"br"}
+_HREF_RE = re.compile(r"^(https?://|mailto:)", re.IGNORECASE)
+
+
+class _HTMLSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self._out = []
+        self._drop_depth = 0
+        # stack of [tag, out_index, has_content] for open non-void allowed tags,
+        # so elements that end up empty can have their start tag removed.
+        self._open_tags = []
+
+    def _mark_content(self):
+        for entry in self._open_tags:
+            entry[2] = True
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in _RICH_TEXT_DROP:
+            self._drop_depth += 1
+            return
+        if self._drop_depth:
+            return
+        allowed = RICH_TEXT_TAGS.get(tag)
+        if allowed is None:
+            return  # strip the tag, keep its content
+        kept = []
+        for name, value in attrs:
+            name = name.lower()
+            if name.startswith("on") or name in ("style",):
+                continue  # no event handlers, no inline styles
+            if name not in allowed:
+                continue
+            value = value or ""
+            if tag == "a" and name == "href":
+                value = value.strip()
+                if not _HREF_RE.match(value):
+                    continue  # no javascript:/data: URLs
+            kept.append(f' {name}="{html.escape(value, quote=True)}"')
+        if tag in _VOID_TAGS:
+            self._out.append(f"<{tag}>")
+            self._mark_content()  # e.g. <img>/<br> count as content
+        else:
+            self._open_tags.append([tag, len(self._out), False])
+            self._out.append(f"<{tag}{''.join(kept)}>")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in _RICH_TEXT_DROP:
+            self._drop_depth = max(0, self._drop_depth - 1)
+            return
+        if self._drop_depth:
+            return
+        if tag in RICH_TEXT_TAGS and tag not in _VOID_TAGS:
+            for i in range(len(self._open_tags) - 1, -1, -1):
+                if self._open_tags[i][0] == tag:
+                    _, idx, has_content = self._open_tags.pop(i)
+                    if has_content:
+                        self._out.append(f"</{tag}>")
+                    else:
+                        del self._out[idx]  # collapse empty element
+                    break
+            else:
+                self._out.append(f"</{tag}>")
+
+    def close(self):
+        super().close()
+        # drop unclosed tags that never received content (e.g. input "<p>")
+        for _tag, idx, has_content in reversed(self._open_tags):
+            if not has_content:
+                del self._out[idx]
+        self._open_tags.clear()
+
+    def handle_data(self, data):
+        if self._drop_depth:
+            return
+        if data:
+            self._mark_content()
+        self._out.append(html.escape(data))
+
+    def handle_entityref(self, name):
+        if not self._drop_depth:
+            self._mark_content()
+            self._out.append(f"&{name};")
+
+    def handle_charref(self, name):
+        if not self._drop_depth:
+            self._mark_content()
+            self._out.append(f"&#{name};")
+
+    def result(self) -> str:
+        return "".join(self._out)
+
+
+def sanitize_html(value) -> str:
+    """Strip disallowed tags/attributes from rich-text HTML (allowlist-based)."""
+    if not value:
+        return ""
+    parser = _HTMLSanitizer()
+    try:
+        parser.feed(str(value))
+        parser.close()
+    except Exception:
+        # On malformed input, fall back to plain-text escaping rather than
+        # risking unsanitized output.
+        return html.escape(str(value))
+    return parser.result()
+
+
+def mask_secret(value, show_last: int = 4) -> str:
+    """Mask a secret for display, e.g. '••••••1234' (SFDC-style masked field)."""
+    s = "" if value is None else str(value)
+    n = max(int(show_last or 0), 0)
+    if not s:
+        return ""
+    if n == 0:
+        return s  # masking disabled: show plaintext
+    if len(s) <= n:
+        return "•" * len(s)
+    return "•" * (len(s) - n) + s[-n:]
 
 
 def is_valid_api_name(name: str) -> bool:
@@ -101,6 +246,31 @@ def validate_value(field: dict, value):
         if bad:
             return False, None, f"{label} has invalid values {bad}; allowed: {allowed}"
         return True, ";".join(vals), None
+
+    if ftype == "AutoNumber":
+        # System-assigned on create; user input is always rejected (the
+        # validate_record computed-field check fires first with a clearer
+        # message — this is the backstop for direct validate_value callers).
+        return False, None, f"{label} is auto-generated and cannot be set"
+
+    if ftype == "Formula":
+        return False, None, f"{label} is a computed formula field and cannot be set"
+
+    if ftype == "EncryptedText":
+        v = str(value)
+        max_len = field.get("length")
+        if max_len and len(v) > max_len:
+            return False, None, f"{label} exceeds max length of {max_len}"
+        # Encryption at rest is applied by the metadata layer (the field is
+        # normalized with encrypted=True); this returns the plaintext for it.
+        return True, v, None
+
+    if ftype == "RichTextArea":
+        v = sanitize_html(value)
+        max_len = field.get("length")
+        if max_len and len(v) > max_len:
+            return False, None, f"{label} exceeds max length of {max_len}"
+        return True, v, None
 
     if ftype == "Email":
         if not EMAIL_RE.match(str(value)):

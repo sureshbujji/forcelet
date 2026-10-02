@@ -116,6 +116,14 @@ nav.overflow{-webkit-mask-image:linear-gradient(90deg,#000 94%,transparent);mask
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 32px}
 label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
 input,select,textarea{background:var(--input-bg);color:var(--text);width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;box-sizing:border-box}
+.rtbar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
+.rtbar button,.rtbar select{width:auto;padding:4px 9px;font-size:13px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer}
+.rtbar button:hover{background:var(--hover,#eef1f6)}
+.rtedit{background:var(--input-bg);color:var(--text);width:100%;min-height:110px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;box-sizing:border-box}
+.rtedit:focus{outline:2px solid var(--blue)}
+.rtview{line-height:1.5}
+.rtview p,.rtview h1,.rtview h2,.rtview h3,.rtview h4{margin:6px 0}
+.rtview ul,.rtview ol{margin:6px 0;padding-left:22px}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--blue);outline-offset:-1px;border-color:var(--blue)}
 .btn{background:var(--blue);color:#fff;border:0;border-radius:6px;padding:8px 16px;font-size:14px;cursor:pointer}
 .btn:hover{background:var(--blue-dark)}
@@ -251,6 +259,7 @@ details{margin-top:8px} summary{cursor:pointer;color:var(--blue);font-size:13px}
       <input id="gsearch" placeholder="Search all records…  (⌘K)" onkeydown="if(event.key==='Enter')showSearch()" style="width:200px;margin:0">
       <select id="gsearch_mode" title="Search mode" style="width:auto;margin:0;padding:4px"><option value="keyword">Keyword</option><option value="semantic">Semantic</option></select>
       <button class="iconbtn" onclick="openPalette()" title="Command palette (⌘K)">⌘K</button>
+      <div class="dd" id="presencedd"><button class="iconbtn" id="presencebtn" onclick="toggleDD(event,'presencedd')" title="Omni-Channel presence"><span id="presdot" style="color:#9ca3af">●</span> <span id="preslabel">Offline</span></button><span class="dd-menu"><div class="dd-head">Omni-Channel presence</div><button onclick="setPresence('Available')"><span style="color:#22c55e">●</span>&nbsp;Available</button><button onclick="setPresence('Busy')"><span style="color:#f59e0b">●</span>&nbsp;Busy</button><button onclick="setPresence('Offline')"><span style="color:#9ca3af">●</span>&nbsp;Offline</button></span></div>
       <button class="iconbtn" id="bell" onclick="toggleNotifDD(event)" title="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span id="bellcount" style="display:none"></span></button>
       <div id="notifdd" class="card"></div>
       <button class="iconbtn" onclick="showRecycleBin()" title="Recycle Bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
@@ -276,6 +285,7 @@ const APP_UTILS={
  chatter:["__chatter","showChatter()","Chatter"], approvals:["__approvals","showApprovals()","Approvals"],
  forecasts:["__forecasts","showForecasts()","Forecasts"], calendar:["__calendar","showCalendar()","Calendar"],
  dispatch:["__dispatch","showDispatch()","Dispatch"], flows:["__flows","showFlows()","Flows"],
+ omni:["__omni","showOmni()","Omni"],
  myschedule:["__myschedule","showMySchedule()","My Schedule"],
  inventory:["__inventory","showInventory()","Inventory"],
  bulk:["__bulk","showBulk()","Bulk Jobs","admin"], admin:["__admin","showAdmin()","Admin Setup","admin"],
@@ -283,6 +293,9 @@ const APP_UTILS={
 const H=()=>({"Authorization":"Bearer "+token,"Content-Type":"application/json"});
 const api=(m,p,b)=>fetch(p,{method:m,headers:H(),body:b?JSON.stringify(b):undefined}).then(async r=>({ok:r.ok,status:r.status,data:await r.json().catch(()=>({}))}));
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// Record display title: Contacts (like Salesforce) store FirstName + LastName
+// with no single Name field, so prefer the person name before the fallbacks.
+function recTitle(rec){ const pn=[rec.FirstName,rec.LastName].filter(Boolean).join(" "); return pn||rec.Name||rec.Subject||rec.Title||rec.Id; }
 
 /* ---- shared UI helpers (dropdowns, collapsible cards, dates, user names) ---- */
 function toggleDD(e,id){ e.stopPropagation(); const el=document.getElementById(id); if(!el) return;
@@ -332,7 +345,7 @@ async function renderPal(q){
   for(const [label,fn] of acts)if(label.toLowerCase().includes(q))items.push({kind:"act",label,kind2:"action",fn});
   for(const o of objects)if(o.name.toLowerCase().includes(q)||o.plural.toLowerCase().includes(q))items.push({kind:"obj",name:o.name,label:o.plural,kind2:"object"});
   if(q.length>=2){
-    try{const r=await api("GET","/api/search?q="+encodeURIComponent(q));for(const g of (r.data||[]))for(const rec of g.records.slice(0,4))items.push({kind:"rec",obj:g.object,id:rec.Id,label:String(rec.Name||rec.Subject||rec.Title||rec.Id).slice(0,60),kind2:g.label||g.object});}catch(e){}
+    try{const r=await api("GET","/api/search?q="+encodeURIComponent(q));for(const g of (r.data||[]))for(const rec of g.records.slice(0,4))items.push({kind:"rec",obj:g.object,id:rec.Id,label:String(recTitle(rec)).slice(0,60),kind2:g.label||g.object});}catch(e){}
   }
   palItems=items.slice(0,14);palSel=0;
   document.getElementById("palresults").innerHTML=palItems.map((it,i)=>`<div class="palitem${i===palSel?" sel":""}" data-i="${i}" onclick="palGo(palItems[${i}])">${esc(it.label)}<span class="k">${esc(it.kind2||"")}</span></div>`).join("")||`<div class="palitem">No matches</div>`;
@@ -446,6 +459,8 @@ async function enterApp(){
     await loadObjects();
     loadDivisions();
     refreshBell();
+    refreshPresence();
+    if(!_omniPoll) _omniPoll=setInterval(refreshPresence,60000);
     checkPostLoginFlows();
     await routeFromUrl(); // land a deep link (/r/<object>/<id>) after sign-in
   }finally{ navSilent=false; }
@@ -551,6 +566,7 @@ function renderLegacyTabs(pending){
   html+=`<button data-obj="__forecasts" onclick="showForecasts()">Forecasts</button>`;
   html+=`<button data-obj="__flows" onclick="showFlows()">Flows</button>`;
   html+=`<button data-obj="__dispatch" onclick="showDispatch()">Dispatch</button>`;
+  html+=`<button data-obj="__omni" onclick="showOmni()">Omni</button>`;
   html+=`<button data-obj="__myschedule" onclick="showMySchedule()">My Schedule</button>`;
   html+=`<button data-obj="__inventory" onclick="showInventory()">Inventory</button>`;
   html+=`<button data-obj="__calendar" onclick="showCalendar()">Calendar</button>`;
@@ -563,7 +579,8 @@ function renderLegacyTabs(pending){
 let navSilent=false; // true while routeFromUrl replays history (Back/Forward/deep link): don't rewrite the URL
 function setActive(name){ document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("active",b.dataset.obj===name));
   // tab/list navigation leaves any open record: drop the /r/<obj>/<id> URL so the address bar matches the view
-  if(!navSilent&&location.pathname!=="/") window.history.pushState({tab:name},"","/"); }
+  if(!navSilent&&location.pathname!=="/") window.history.pushState({tab:name},"","");
+  refreshPresence(); }
 
 // ------------------------------------------------------- custom applications
 function renderAppTabs(pending){
@@ -764,7 +781,7 @@ async function showKanban(){
   for(const col of k.columns){
     html+=`<div class="card" style="min-width:240px;flex:1;margin:0"><div class="section-title">${esc(col.value||"(blank)")} (${col.records.length})</div>`;
     for(const rec of col.records.slice(0,20)){
-      const nm=rec.Name||rec.Subject||rec.Id;
+      const nm=recTitle(rec);
       html+=`<div style="border:1px solid #eee;border-radius:6px;padding:8px;margin-bottom:8px"><div><a href="#" onclick="showDetail('${rec.Id}');return false"><b>${esc(nm)}</b></a></div><select onchange="kanbanMove('${rec.Id}',this.value)" style="margin-top:6px"><option value="">Move to…</option>${k.columns.map(c=>c.value?`<option value="${esc(c.value)}">${esc(c.value)}</option>`:"").join("")}</select></div>`;
     }
     if(col.records.length>20) html+=`<p class="muted">+${col.records.length-20} more</p>`;
@@ -778,8 +795,8 @@ async function kanbanMove(id,value){
   const u=await api("PATCH",`/api/sobjects/${curObj}/${id}`,{[curKanbanField]:value});
   u.ok?showKanban():toast("Move failed: "+(u.data.error||u.status),"error");
 }
-function fmtVal(f,v){ if(v==null||v==="")return"—"; if(f.type==="Checkbox")return v?"✓":"—"; if(f.type==="Date"&&String(v).length>10)return String(v).slice(0,10); if(f.type==="Time")return String(v).slice(0,8); if(f.type==="Geolocation"){const p=String(v).split(";");return p.length===2?`${p[0]}, ${p[1]}`:String(v);} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.join(", "):"—";}catch(e){return String(v);}} if(typeof v==="number")return Math.round(v*100)/100; return v; }
-function fmtValHtml(f,v){ if(v==null||v==="")return"—"; if(f.type==="Geolocation"){const p=String(v).split(";"); if(p.length===2) return `${esc(p[0])}, ${esc(p[1])} <a href="https://www.google.com/maps?q=${encodeURIComponent(p[0]+","+p[1])}" target="_blank" rel="noopener" title="Open in map">Map</a>`; return esc(String(v));} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.map(esc).join("<br>"):"—";}catch(e){return esc(String(v));}} return esc(fmtVal(f,v)); }
+function fmtVal(f,v){ if(v==null||v==="")return"—"; if(f.type==="RichTextArea"){ const t=String(v).replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim(); return t?t.slice(0,120):"—"; } if(f.type==="Checkbox")return v?"✓":"—"; if(f.type==="Date"&&String(v).length>10)return String(v).slice(0,10); if(f.type==="Time")return String(v).slice(0,8); if(f.type==="Geolocation"){const p=String(v).split(";");return p.length===2?`${p[0]}, ${p[1]}`:String(v);} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.join(", "):"—";}catch(e){return String(v);}} if(typeof v==="number")return Math.round(v*100)/100; return v; }
+function fmtValHtml(f,v){ if(v==null||v==="")return"—"; if(f.type==="RichTextArea") return `<div class="rtview">${String(v)}</div>`; if(f.type==="Geolocation"){const p=String(v).split(";"); if(p.length===2) return `${esc(p[0])}, ${esc(p[1])} <a href="https://www.google.com/maps?q=${encodeURIComponent(p[0]+","+p[1])}" target="_blank" rel="noopener" title="Open in map">Map</a>`; return esc(String(v));} if(f.type==="Address"){try{const a=typeof v==="string"?JSON.parse(v):v;const parts=[a.street,a.city,a.state,a.postal_code,a.country].filter(Boolean);return parts.length?parts.map(esc).join("<br>"):"—";}catch(e){return esc(String(v));}} return esc(fmtVal(f,v)); }
 
 async function showSearch(){
   const q=document.getElementById("gsearch").value.trim();
@@ -794,7 +811,7 @@ async function showSearch(){
   for(const g of groups){
     html+=`<div class="card"><div class="section-title">${esc(g.label)} (${g.records.length})</div><table>`;
     for(const rec of g.records){
-      const nm=rec.Name||rec.Subject||rec.Id;
+      const nm=recTitle(rec);
       html+=`<tr><td>${esc(String(nm)).slice(0,80)}</td><td><button class="btn secondary small" onclick="jumpTo('${g.object}','${rec.Id}')">Open</button></td></tr>`;
     }
     html+=`</table></div>`;
@@ -833,7 +850,7 @@ async function showDetail(id){
       try{ const opts=await lookupOptions(f.reference_to); const hit=opts.find(o=>String(o.id)===String(rec[f.name])); if(hit) refNames[f.name]=hit; }catch(e){}
     }
   }
-  const recTitle=rec.Name||rec.Subject||rec.Id;
+  const detailTitle=recTitle(rec);
   let html=`<div class="dhead"><div class="btnrow"><button class="btn secondary" onclick="showObject('${curObj}')">${"\u2190"} Back</button><span style="flex:1"></span>`;
   html+=`<button class="btn secondary" onclick="submitApproval('${rec.Id}')">Submit for Approval</button>`;
   if(curObj==="Lead"&&rec.Status!=="Converted") html+=`<button class="btn" onclick="convertLead('${rec.Id}')">Convert</button>`;
@@ -847,7 +864,7 @@ async function showDetail(id){
   if(curObj==="Quote") html+=`<button class="btn secondary" onclick="dlQuotePdf('${rec.Id}')">Download PDF</button>`;
   if(curObj==="Quote") html+=`<button class="btn secondary" onclick="syncQuote('${rec.Id}')">Sync with Opportunity</button><button class="btn secondary" onclick="unsyncQuote('${rec.Id}')">Stop Sync</button>`;
   html+=`</div>`;
-  html+=`<div class="btnrow" style="align-items:center;margin:2px 0 10px"><h2 style="margin:0">${esc(String(recTitle)).slice(0,80)}</h2>${curObj==="Account"&&rec.IsPersonAccount?' <span class="pill">Person Account</span>':""}${isBigObj?' <span class="pill">Big Object · read-only</span>':""}</div>`;
+  html+=`<div class="btnrow" style="align-items:center;margin:2px 0 10px"><h2 style="margin:0">${esc(String(detailTitle)).slice(0,80)}</h2>${curObj==="Account"&&rec.IsPersonAccount?' <span class="pill">Person Account</span>':""}${isBigObj?' <span class="pill">Big Object · read-only</span>':""}</div>`;
   const tabs=[["details","Details"],["related","Related"],["activity","Activity"],["chatter","Chatter"],["files","Files"],["history","History"]];
   html+=`<div class="dtabs">${tabs.map((t,i)=>`<button data-t="${t[0]}" class="${i===0?"active":""}" onclick="detailTab('${t[0]}')">${t[1]}</button>`).join("")}</div></div></div>`;
   // details panel: primary sections in the main column, secondary cards in a right rail
@@ -857,7 +874,7 @@ async function showDetail(id){
     let secHtml="", secEmpty=true;
     for(const col of sec.columns){ secHtml+=`<div>${col.map(fn=>{const f=fmap[fn]; if(!f||dfHidden.has(fn))return""; let fv;
       if(refNames[fn]) fv=`<a href="#" onclick="jumpTo('${f.reference_to}','${rec[fn]}');return false">${esc(refNames[fn].label)}</a>`;
-      else if(f.type==="Geolocation"||f.type==="Address") fv=fmtValHtml(f,rec[fn]);
+      else if(f.type==="Geolocation"||f.type==="Address"||f.type==="RichTextArea") fv=fmtValHtml(f,rec[fn]);
       else fv=esc(fmtVal(f,rec[fn]));
       const empty=fv==="\u2014";
       if(!empty) secEmpty=false;
@@ -1328,10 +1345,6 @@ async function territoryCard(rec){
   return `<div class="card${ts.length?"":" collapsible collapsed"}"><div class="section-title"${ts.length?"":` onclick="toggleCollapse(this)"`}>Territories (${ts.length})</div>`+
     (ts.length?`<table><tr><th>Name</th></tr>${ts.map(t=>`<tr><td>${esc(t.name)}</td></tr>`).join("")}</table>`:`<p class="muted">No territories assigned yet. Run assignment rules from Setup → Data Model → Territory Assignment.</p>`)+`</div>`;
 }
-  const ts=(r&&r.data)||[];
-  return `<div class="card${ts.length?"":" collapsible collapsed"}"><div class="section-title"${ts.length?"":` onclick="toggleCollapse(this)"`}>Territories (${ts.length})</div>`+
-    (ts.length?`<table><tr><th>Name</th></tr>${ts.map(t=>`<tr><td>${esc(t.name)}</td></tr>`).join("")}</table>`:`<p class="muted">No territories assigned yet. Run assignment rules from Setup → Data Model → Territory Assignment.</p>`)+`</div>`;
-}
 
 async function lookupOptions(refObj){
   if(lookups[refObj]) return lookups[refObj];
@@ -1438,6 +1451,10 @@ async function wireDynamicPicklists(rec){
   camp.addEventListener("change",load);
   await load();
 }
+function rtCmd(cmd){ document.execCommand(cmd,false,null); }
+function rtLink(){ const u=prompt("Link URL (https://…)"); if(u) document.execCommand("createLink",false,u); }
+function rtBlock(sel){ if(sel.value) document.execCommand("formatBlock",false,sel.value); sel.value="p"; }
+function rtClearFmt(){ document.execCommand("removeFormat",false,null); }
 async function showForm(id){
   if(id&&/__b$/.test(curObj)){ document.getElementById("main").innerHTML=`<div class="err">Big object records are append-only and cannot be edited.</div>`; return; }
   let rec={};
@@ -1459,6 +1476,8 @@ async function showForm(id){
     else if(f.type==="Geolocation"){ const p=String(val||"").split(";"); fh+=`<div class="grid2" style="gap:6px"><div><input id="f_${f.name}_lat" placeholder="Latitude" value="${esc(p[0]||"")}" style="margin:0"></div><div><input id="f_${f.name}_lng" placeholder="Longitude" value="${esc(p[1]||"")}" style="margin:0"></div></div>`; }
     else if(f.type==="Address"){ let a={}; try{ a=typeof val==="string"&&val?JSON.parse(val):(val||{}); }catch(e){} fh+=["street","city","state","postal_code","country"].map(k=>`<input id="f_${f.name}_${k}" placeholder="${k.replace("_"," ")}" value="${esc(a[k]||"")}" style="margin-bottom:6px">`).join(""); }
     else if(f.type==="Time"){ fh+=`<input id="f_${f.name}" type="time" value="${esc(String(val).slice(0,5))}">`; }
+    else if(f.type==="EncryptedText"){ fh+=`<input type="password" id="f_${f.name}" placeholder="${val?esc(val):"Enter new value"}" autocomplete="new-password" title="Encrypted at rest. Leave blank to keep the current value.">`; }
+    else if(f.type==="RichTextArea"){ fh+=`<div class="rtbar" role="toolbar" aria-label="Formatting"><button type="button" onclick="rtCmd('bold')" title="Bold"><b>B</b></button><button type="button" onclick="rtCmd('italic')" title="Italic"><i>I</i></button><button type="button" onclick="rtCmd('underline')" title="Underline"><u>U</u></button><button type="button" onclick="rtCmd('insertUnorderedList')" title="Bulleted list">&bull; List</button><button type="button" onclick="rtCmd('insertOrderedList')" title="Numbered list">1. List</button><button type="button" onclick="rtLink()" title="Insert link">Link</button><select onchange="rtBlock(this)" title="Paragraph style" style="max-width:130px"><option value="p">Paragraph</option><option value="h1">Heading 1</option><option value="h2">Heading 2</option><option value="h3">Heading 3</option><option value="blockquote">Quote</option><option value="pre">Code</option></select><button type="button" onclick="rtClearFmt()" title="Clear formatting">Clear</button></div><div class="rtedit" id="f_${f.name}_rt" contenteditable="true">${val||""}</div>`; }
     else fh+=`<input id="f_${f.name}" type="${f.type==="Date"?"date":f.type==="Email"?"email":f.type==="URL"?"url":"text"}" value="${esc(val)}">`;
     html+=`<div class="ff" id="ff_${f.name}">${fh}</div>`;
   }
@@ -1474,6 +1493,7 @@ async function saveForm(id){
   for(const f of curDesc.fields){
     if(dfHidden.has(f.name)) continue;
     if(f.type==="Geolocation"){ const la=document.getElementById("f_"+f.name+"_lat"), ln=document.getElementById("f_"+f.name+"_lng"); if(la&&ln&&(la.value.trim()||ln.value.trim())) body[f.name]=`${la.value.trim()};${ln.value.trim()}`; continue; }
+    if(f.type==="RichTextArea"){ const d=document.getElementById("f_"+f.name+"_rt"); if(d){ const hv=d.innerHTML.replace(/^(<br\s*\/?>|\s)*$/,""); if(hv) body[f.name]=hv; } continue; }
     if(f.type==="Address"){ const parts={}; let any=false; for(const k of ["street","city","state","postal_code","country"]){ const e=document.getElementById(`f_${f.name}_${k}`); if(e&&e.value.trim()){ parts[k]=e.value.trim(); any=true; } } if(any) body[f.name]=JSON.stringify(parts); continue; }
     const el=document.getElementById("f_"+f.name); if(!el) continue;
     if(f.type==="Checkbox") body[f.name]=el.checked;
@@ -1560,53 +1580,238 @@ function dfCancel(){
 function dfInit(){ if(document.getElementById("df_obj")) dfOnObj(); }
 
 // ------------------------------------------------------------ reports
+let REP_EDIT=null, REP_FOLDERS=[], REP_ORIG=null;
+const RP={aggs:[],sorts:[],cross:[],formulas:[],hl:[]};
+const RP_AGGFUNCS=["sum","avg","min","max","count","count_distinct"];
 async function showReports(){
   setActive("__reports");
   document.getElementById("main").innerHTML=skel(3);
   const r=await api("GET","/api/reports");
   const reps=r.data||[];
-  let html=`<div class="btnrow"><h2 style="margin:0">Reports</h2></div>`;
-  for(const rep of reps){
-    html+=`<div class="card"><div class="btnrow"><b>${esc(rep.name)}</b><span class="muted">${esc(rep.object)}${rep.group_by?" · grouped by "+esc(rep.group_by):""}</span><span style="flex:1"></span><button class="btn small" onclick="runReport('${rep.id}')">Run</button> <button class="btn secondary small" onclick="subModal('report','${rep.id}','${esc(rep.name)}')">Subscribe</button></div><div id="rep_${rep.id}"></div></div>`;
+  const fr=await api("GET","/api/folders?kind=report");
+  REP_FOLDERS=fr.data||[];
+  const isAdmin=me.profile==="System Administrator";
+  const fmap={}; REP_FOLDERS.forEach(f=>fmap[f.id]=f);
+  const groups={unfiled:[]};
+  for(const rep of reps){ const fid=rep.folder_id&&fmap[rep.folder_id]?rep.folder_id:"unfiled"; (groups[fid]=groups[fid]||[]).push(rep); }
+  let html=`<div class="btnrow"><h2 style="margin:0">Reports</h2><span style="flex:1"></span>`
+    +(isAdmin?`<button class="btn secondary small" onclick="repManageFolders()">Folders</button> `:"")
+    +`</div>`;
+  const order=["unfiled",...REP_FOLDERS.map(f=>f.id)];
+  for(const fid of order){
+    const list=groups[fid]; if(!list||!list.length) continue;
+    const flabel=fid==="unfiled"?"Unfiled":esc(fmap[fid].name)+(fmap[fid].visibility==="shared"?" (shared)":"");
+    html+=`<div class="section-title" style="margin-top:14px">${flabel}</div>`;
+    for(const rep of list){
+      const gb=Array.isArray(rep.group_by)?rep.group_by.filter(Boolean).join(" › "):(rep.group_by||"");
+      html+=`<div class="card"><div class="btnrow"><b>${esc(rep.name)}</b><span class="muted">${esc(rep.object)}${gb?" · by "+esc(gb):""}</span><span style="flex:1"></span>`
+        +`<button class="btn small" onclick="runReport('${rep.id}',1)">Run</button> `
+        +`<button class="btn secondary small" onclick="subModal('report','${rep.id}','${esc(rep.name)}')">Subscribe</button> `
+        +(isAdmin?`<button class="btn secondary small" onclick="editReport('${rep.id}')">Edit</button> <button class="btn secondary small" onclick="cloneReport('${rep.id}')">Clone</button> <button class="btn danger small" onclick="delReport('${rep.id}','${esc(rep.name)}')">Delete</button>`:"")
+        +`</div><div id="rep_${rep.id}"></div></div>`;
+    }
   }
-  if(me.profile==="System Administrator"){
-    html+=`<div class="card"><div class="section-title">Create report</div><div id="rerr"></div>
-    <div class="grid2"><div><label>Name</label><input id="nr_name"><label>Object</label><select id="nr_obj">${objects.map(o=>`<option>${o.name}</option>`).join("")}</select><label>Columns (comma-separated field names)</label><input id="nr_cols" placeholder="Name, Amount, Stage"></div>
-    <div><label>Group by field (optional)</label><input id="nr_group" placeholder="Stage"><label>Aggregate (e.g. sum:Amount)</label><input id="nr_agg" placeholder="sum:Amount"><label>Filter JSON (optional)</label><input id="nr_filter" placeholder='{"==":[{"field":"Stage"},"Hot"]}'></div></div>
-    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createReport()">Create report</button></div></div>`;
-  }
+  if(isAdmin) html+=`<div class="card" id="rep_builder_card"><div class="section-title">${REP_EDIT?"Edit report":"Create report"}</div><div id="rep_builder"></div></div>`;
   document.getElementById("main").innerHTML=html;
+  if(isAdmin) repRenderBuilder(REP_EDIT?reps.find(x=>x.id===REP_EDIT):null);
 }
-async function runReport(id){
+function repManageFolders(){
+  const rows=REP_FOLDERS.map(f=>`<div class="btnrow" style="padding:4px 0"><b>${esc(f.name)}</b><span class="muted">${esc(f.visibility)}</span><span style="flex:1"></span><button class="btn danger small" onclick="repDelFolder('${f.id}')">Delete</button></div>`).join("");
+  openLightbox(`<div class="section-title">Report folders</div>${rows||'<p class="muted">No folders yet.</p>'}`
+    +`<div class="grid2" style="margin-top:8px"><div><label>Name</label><input id="fld_name"></div><div><label>Visibility</label><select id="fld_vis"><option value="private">Private</option><option value="shared">Shared (admins)</option></select></div></div>`
+    +`<div class="btnrow" style="margin-top:8px"><button class="btn small" onclick="repAddFolder()">Add folder</button> <button class="btn secondary small" onclick="closeLightbox()">Close</button></div><div id="flderr"></div>`);
+}
+async function repAddFolder(){
+  const r=await api("POST","/api/folders",{name:document.getElementById("fld_name").value,kind:"report",visibility:document.getElementById("fld_vis").value});
+  if(r.ok){ closeLightbox(); showReports(); } else document.getElementById("flderr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+async function repDelFolder(fid){
+  if(!confirm("Delete this folder? It must be empty.")) return;
+  const r=await api("DELETE","/api/folders/"+fid);
+  r.ok?(closeLightbox(),showReports()):toast(r.data.error||"Failed","error");
+}
+async function repRenderBuilder(rep){
+  const host=document.getElementById("rep_builder"); if(!host) return;
+  REP_ORIG=rep?JSON.parse(JSON.stringify(rep)):null;
+  RP.aggs=((rep&&(rep.aggregates||(rep.aggregate?[rep.aggregate]:[])))||[]).map(a=>({func:a.func,field:a.field}));
+  RP.sorts=(rep&&rep.sort)||[];
+  RP.cross=(rep&&rep.cross_filters)||[];
+  RP.formulas=(rep&&rep.summary_formulas)||[];
+  RP.hl=(rep&&rep.highlight)||[];
+  const objs=objects.map(o=>`<option ${rep&&rep.object===o.name?"selected":""}>${o.name}</option>`).join("");
+  const bucket=rep&&rep.bucket||{};
+  const bucketLines=(bucket.buckets||[]).map(b=>`${b.name}: ${b.from??""}-${b.to??""}`).join("\n");
+  const folders=[`<option value="">Unfiled</option>`,...REP_FOLDERS.map(f=>`<option value="${f.id}" ${rep&&rep.folder_id===f.id?"selected":""}>${esc(f.name)}</option>`)].join("");
+  const chartType=(rep&&rep.chart&&rep.chart.type)||"";
+  host.innerHTML=`
+  <div id="rerr"></div>
+  <div class="grid2">
+   <div><label>Name</label><input id="nr_name" value="${esc(rep?rep.name:"")}">
+    <label>Object</label><select id="nr_obj" onchange="repObjChanged()">${objs}</select>
+    <label>Columns (comma-separated; <code>Account.Name</code> traverses lookups)</label><input id="nr_cols" value="${esc((rep&&rep.columns||[]).join(", "))}" placeholder="Name, Amount, Stage, Account.Name">
+    <label>Group by (up to 3 levels)</label><div class="btnrow"><select id="nr_g1" style="max-width:180px"></select><select id="nr_g2" style="max-width:180px"></select><select id="nr_g3" style="max-width:180px"></select></div>
+    <label>Group sort</label><select id="nr_gsort">${["count_desc","count_asc","label_asc"].map(v=>`<option value="${v}" ${rep&&rep.group_sort===v?"selected":""}>${v.replace("_"," ")}</option>`).join("")}</select>
+    <label>Chart (summary reports)</label><select id="nr_chart"><option value="">None</option>${["bar","line","donut"].map(v=>`<option ${chartType===v?"selected":""}>${v}</option>`).join("")}</select>
+   </div>
+   <div><label>Folder</label><select id="nr_folder">${folders}</select>
+    <label>Sort rows</label><div id="rp_sorts"></div><button class="btn secondary small" onclick="RP.sorts.push({field:'',dir:'asc'});repRenderSorts()">+ Sort</button>
+    <label style="margin-top:8px">Run as</label><select id="nr_runas"><option value="">Viewer (default)</option></select>
+    <label>Bucket field (optional)</label><input id="nr_bucket_field" value="${esc(bucket.field||"")}" placeholder="Amount">
+    <label>Buckets — one per line: <code>Name: from-to</code> (blank end = open)</label><textarea id="nr_buckets" rows="3" placeholder="Small: 0-10000&#10;Mid: 10001-50000&#10;Large: 50001-">${esc(bucketLines)}</textarea>
+   </div>
+  </div>
+  <div class="section-title" style="margin-top:10px">Aggregates</div><div id="rp_aggs"></div><button class="btn secondary small" onclick="RP.aggs.push({func:'sum',field:''});repRenderAggs()">+ Aggregate</button>
+  <div class="section-title" style="margin-top:10px">Filters</div><div class="cb-host" id="cb_rp"></div><input type="hidden" id="nr_filter">
+  <div class="section-title" style="margin-top:10px">Cross filters (WITH / WITHOUT related)</div><div id="rp_cross"></div><button class="btn secondary small" onclick="RP.cross.push({mode:'with',object:'',via:''});repRenderCross()">+ Cross filter</button>
+  <div class="section-title" style="margin-top:10px">Summary formulas (over group aggregates — use {"agg":"alias"})</div><div id="rp_formulas"></div><button class="btn secondary small" onclick="RP.formulas.push({name:'',label:'',formula:''});repRenderFormulas()">+ Formula</button>
+  <div class="section-title" style="margin-top:10px">Conditional highlighting</div><div id="rp_hl"></div><button class="btn secondary small" onclick="RP.hl.push({field:'',op:'>',value:'',color:'#fef3c7'});repRenderHl()">+ Rule</button>
+  <div class="btnrow" style="margin-top:14px"><button class="btn" onclick="saveReport()">${REP_EDIT?"Save changes":"Create report"}</button>${REP_EDIT?` <button class="btn secondary" onclick="REP_EDIT=null;showReports()">Cancel</button>`:""}</div>`;
+  cbInit("cb_rp","nr_obj","nr_filter");
+  repRenderAggs(); repRenderSorts(); repRenderCross(); repRenderFormulas(); repRenderHl();
+  await repObjChanged(rep);
+  const ru=document.getElementById("nr_runas");
+  const ud=await api("GET","/api/users/directory");
+  (ud.data||[]).forEach(u=>{ const o=document.createElement("option"); o.value=u.id; o.textContent=u.name+" ("+u.username+")"; if(rep&&rep.run_as_user===u.id)o.selected=true; ru.appendChild(o); });
+}
+async function repObjChanged(rep){
+  const obj=document.getElementById("nr_obj").value;
+  const r=await api("GET","/api/describe/"+encodeURIComponent(obj));
+  const fields=((r.data||{}).fields||[]).filter(f=>!f.computed);
+  const opts=`<option value="">—</option>`+fields.map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join("")+`<option value="_bucket">Bucket (see bucketing)</option>`;
+  const gb=rep&&rep.group_by?(Array.isArray(rep.group_by)?rep.group_by:[rep.group_by]):[];
+  ["nr_g1","nr_g2","nr_g3"].forEach((id,i)=>{ const el=document.getElementById(id); el.innerHTML=opts; if(gb[i]) el.value=gb[i]; });
+}
+function repRenderAggs(){
+  document.getElementById("rp_aggs").innerHTML=RP.aggs.map((a,i)=>`<div class="btnrow"><select onchange="RP.aggs[${i}].func=this.value" style="max-width:150px">${RP_AGGFUNCS.map(f=>`<option ${a.func===f?"selected":""}>${f}</option>`).join("")}</select><input value="${esc(a.field||"")}" placeholder="field (blank for count)" oninput="RP.aggs[${i}].field=this.value" style="max-width:200px"><button class="btn danger small" onclick="RP.aggs.splice(${i},1);repRenderAggs()">✕</button></div>`).join("")||'<p class="muted">None — plain row counts only.</p>';
+}
+function repRenderSorts(){
+  document.getElementById("rp_sorts").innerHTML=RP.sorts.map((s2,i)=>`<div class="btnrow"><input value="${esc(s2.field||"")}" placeholder="field" oninput="RP.sorts[${i}].field=this.value" style="max-width:200px"><select onchange="RP.sorts[${i}].dir=this.value" style="max-width:120px"><option value="asc" ${s2.dir!=="desc"?"selected":""}>asc</option><option value="desc" ${s2.dir==="desc"?"selected":""}>desc</option></select><button class="btn danger small" onclick="RP.sorts.splice(${i},1);repRenderSorts()">✕</button></div>`).join("");
+}
+function repRenderCross(){
+  document.getElementById("rp_cross").innerHTML=RP.cross.map((c,i)=>`<div class="btnrow"><select onchange="RP.cross[${i}].mode=this.value" style="max-width:140px"><option value="with" ${c.mode!=="without"?"selected":""}>WITH</option><option value="without" ${c.mode==="without"?"selected":""}>WITHOUT</option></select><select onchange="RP.cross[${i}].object=this.value" style="max-width:200px"><option value="">— child object —</option>${objects.map(o=>`<option ${c.object===o.name?"selected":""}>${o.name}</option>`).join("")}</select><input value="${esc(c.via||"")}" placeholder="lookup field (e.g. AccountId)" oninput="RP.cross[${i}].via=this.value" style="max-width:220px"><button class="btn danger small" onclick="RP.cross.splice(${i},1);repRenderCross()">✕</button></div>`).join("");
+}
+function repRenderFormulas(){
+  document.getElementById("rp_formulas").innerHTML=RP.formulas.map((f,i)=>`<div class="btnrow"><input value="${esc(f.name||"")}" placeholder="name" oninput="RP.formulas[${i}].name=this.value" style="max-width:130px"><input value="${esc(f.label||"")}" placeholder="label" oninput="RP.formulas[${i}].label=this.value" style="max-width:150px"><input value="${esc(typeof f.formula==="string"?f.formula:JSON.stringify(f.formula||""))}" placeholder='{"*":[{"agg":"sum_Amount"},100]}' oninput="RP.formulas[${i}].formula=this.value" style="flex:1"><button class="btn danger small" onclick="RP.formulas.splice(${i},1);repRenderFormulas()">✕</button></div>`).join("");
+}
+function repRenderHl(){
+  document.getElementById("rp_hl").innerHTML=RP.hl.map((h,i)=>`<div class="btnrow"><input value="${esc(h.field||"")}" placeholder="field" oninput="RP.hl[${i}].field=this.value" style="max-width:150px"><select onchange="RP.hl[${i}].op=this.value" style="max-width:110px">${["==","!=",">","<",">=", "<="].map(o=>`<option ${h.op===o?"selected":""}>${o}</option>`).join("")}</select><input value="${esc(h.value||"")}" placeholder="value" oninput="RP.hl[${i}].value=this.value" style="max-width:130px"><input type="color" value="${esc(h.color||"#fef3c7")}" onchange="RP.hl[${i}].color=this.value" title="highlight color"><button class="btn danger small" onclick="RP.hl.splice(${i},1);repRenderHl()">✕</button></div>`).join("");
+}
+function repParseBuckets(){
+  const field=document.getElementById("nr_bucket_field").value.trim();
+  const lines=document.getElementById("nr_buckets").value.split("\n").map(s2=>s2.trim()).filter(Boolean);
+  if(!field||!lines.length) return null;
+  const buckets=[];
+  for(const ln of lines){
+    const m=ln.match(/^([^:]+):\s*(-?[\d.]*)\s*-\s*(-?[\d.]*)\s*$/);
+    if(!m) throw new Error(`Bad bucket line: ${ln}`);
+    buckets.push({name:m[1].trim(), from:m[2]===""?null:parseFloat(m[2]), to:m[3]===""?null:parseFloat(m[3])});
+  }
+  return {field, buckets};
+}
+function repCollect(){
+  const builtFilter=cbBuildExpr("cb_rp");
+  const body={name:document.getElementById("nr_name").value.trim(), object:document.getElementById("nr_obj").value,
+    columns:document.getElementById("nr_cols").value.split(",").map(s2=>s2.trim()).filter(Boolean),
+    filters:Object.keys(builtFilter).length?builtFilter:((REP_ORIG&&REP_ORIG.filters)||{}), active:true,
+    sort:RP.sorts.filter(s2=>s2.field).map(s2=>({field:s2.field,dir:s2.dir||"asc"})),
+    group_by:["nr_g1","nr_g2","nr_g3"].map(id=>document.getElementById(id).value).filter(Boolean),
+    group_sort:document.getElementById("nr_gsort").value,
+    aggregates:RP.aggs.filter(a=>a.func).map(a=>({func:a.func,field:(a.field||"").trim()})),
+    cross_filters:RP.cross.filter(c=>c.object&&c.via).map(c=>({mode:c.mode,object:c.object,via:c.via})),
+    summary_formulas:[], highlight:RP.hl.filter(h=>h.field),
+    chart:{}, folder_id:document.getElementById("nr_folder").value||null,
+    run_as_user:document.getElementById("nr_runas").value||null};
+  for(const f of RP.formulas){ if(!f.name) continue; let parsed; try{ parsed=typeof f.formula==="string"?JSON.parse(f.formula):f.formula; }catch(e){ throw new Error(`Bad formula JSON for ${f.name}`); } body.summary_formulas.push({name:f.name,label:f.label||f.name,formula:parsed}); }
+  const ct=document.getElementById("nr_chart").value; if(ct) body.chart={type:ct};
+  const bk=repParseBuckets(); if(bk) body.bucket=bk;
+  if(!body.name) throw new Error("Name is required.");
+  return body;
+}
+async function saveReport(){
+  let body; try{ body=repCollect(); }catch(e){ document.getElementById("rerr").innerHTML=`<div class="err">${esc(e.message)}</div>`; return; }
+  const r=REP_EDIT?await api("PUT","/api/admin/reports/"+REP_EDIT,body):await api("POST","/api/admin/reports",body);
+  if(r.ok){ REP_EDIT=null; showReports(); toast("Report saved.","ok"); }
+  else document.getElementById("rerr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`;
+}
+function editReport(id){ REP_EDIT=id; showReports(); window.scrollTo(0,document.body.scrollHeight); }
+async function cloneReport(id){
+  const name=prompt("Name for the copy:"); if(name===null) return;
+  const r=await api("POST",`/api/admin/reports/${id}/clone`,{name:name||undefined});
+  r.ok?showReports():toast("Clone failed: "+(r.data.error||r.status),"error");
+}
+async function delReport(id,name){
+  if(!confirm(`Delete report "${name}"?`)) return;
+  const r=await api("DELETE","/api/admin/reports/"+id);
+  r.ok?showReports():toast("Delete failed: "+(r.data.error||r.status),"error");
+}
+function repHlStyle(rep,field,val){
+  for(const h of (rep&&rep.highlight)||[]){
+    if(h.field!==field||val==null||val==="") continue;
+    const op=h.op||"==", tv=h.value; let hit=false;
+    const n=parseFloat(val), tn=parseFloat(tv);
+    const num=!isNaN(n)&&!isNaN(tn);
+    if(op==="==") hit=String(val)===String(tv);
+    else if(op==="!=") hit=String(val)!==String(tv);
+    else if(num){ if(op===">")hit=n>tn; else if(op==="<")hit=n<tn; else if(op===">=")hit=n>=tn; else if(op==="<=")hit=n<=tn; }
+    else { if(op===">")hit=String(val)>String(tv); else if(op==="<")hit=String(val)<String(tv); }
+    if(hit) return `background:${h.color||"#fef3c7"};`;
+  }
+  return "";
+}
+function repTreeHtml(nodes,rep,repId,level,groupField){
+  let html="";
+  for(const n of nodes){
+    const aggs=Object.entries(n.aggregates||{}).filter(([k])=>k!=="count").map(([k,v])=>`${esc(k)}: ${v==null?"—":esc(Math.round(v*100)/100)}`).join(" · ");
+    const fms=(n.formulas||[]).filter(f=>f.value!=null).map(f=>`${esc(f.label)}: ${esc(Math.round(f.value*100)/100)}`).join(" · ");
+    html+=`<div class="bar-row" style="margin-left:${level*18}px"><span><b>${esc(String(n.key))}</b> (${n.count})${aggs?" · "+aggs:""}${fms?" · "+fms:""}</span></div>`;
+    if(n.children) html+=repTreeHtml(n.children,rep,repId,level+1,groupField);
+  }
+  return html;
+}
+async function runReport(id,page,opts){
+  opts=opts||{};
   const el=document.getElementById("rep_"+id);
   el.innerHTML=`<p class="muted">Running…</p>`;
-  const r=await api("GET",`/api/reports/${id}/run`);
+  let qs=`page=${page||1}&page_size=200`;
+  if(opts.drill) qs+=`&drill_field=${encodeURIComponent(opts.drill.field)}&drill_value=${encodeURIComponent(opts.drill.value)}`;
+  const r=await api("GET",`/api/reports/${id}/run?${qs}`);
   if(!r.ok){ el.innerHTML=`<div class="err">Failed.</div>`; return; }
-  const d=r.data; let html=`<p class="muted">${d.row_count} row(s)</p>`;
-  if(d.groups&&d.groups.length){
-    const max=Math.max(...d.groups.map(g=>g.count));
-    html+=d.groups.map(g=>`<div class="bar-row"><span>${esc(g.key)}</span><div class="bar" style="width:${Math.round(g.count/max*100)}%"></div><span>${g.count}${g.aggregate!=null?" · Σ "+Math.round(g.aggregate*100)/100:""}</span></div>`).join("");
+  const d=r.data;
+  const rep=(await api("GET","/api/reports")).data.find(x=>x.id===id)||{};
+  const drillNote=opts.drill?` <span class="pill">filtered: ${esc(opts.drill.field)} = ${esc(opts.drill.value)}</span> <button class="btn secondary small" onclick="runReport('${id}',1)">Clear</button>`:"";
+  let html=`<div class="btnrow"><span class="muted">${d.row_count} row(s)</span>${drillNote}<span style="flex:1"></span>`
+    +`<button class="btn secondary small" onclick="window.open('/api/reports/${id}/export?format=csv&token='+token,'_blank')">CSV</button> `
+    +`<button class="btn secondary small" onclick="window.open('/api/reports/${id}/export?format=xlsx&token='+token,'_blank')">Excel</button></div>`;
+  const groups=d.groups||[];
+  const gbLevel=(Array.isArray(rep.group_by)?rep.group_by:[rep.group_by]).filter(Boolean)[0];
+  if(d.chart&&d.chart.type&&groups.length){
+    const ct=d.chart.type;
+    html+=ct==="donut"?svgDonut(groups,id,gbLevel):ct==="line"?svgLine(groups):svgBars(groups,id,gbLevel);
+  } else if(d.group_tree&&(d.group_tree.length>1||(d.group_tree[0]&&d.group_tree[0].children))){
+    html+=repTreeHtml(d.group_tree,rep,id,0,gbLevel);
+  } else if(groups.length){
+    const max=Math.max(...groups.map(g=>g.count));
+    html+=groups.map(g=>`<div class="bar-row"><span>${esc(String(g.key))}</span><div class="bar" style="width:${Math.round(g.count/max*100)}%"></div><span>${g.count}${g.aggregate!=null?" · Σ "+Math.round(g.aggregate*100)/100:""}</span></div>`).join("");
+  }
+  if(d.grand_total&&(Object.keys(d.grand_total.aggregates||{}).length>1||(d.grand_total.formulas||[]).length)){
+    const ga=Object.entries(d.grand_total.aggregates).filter(([k])=>k!=="count").map(([k,v])=>`${esc(k)}: ${v==null?"—":esc(Math.round(v*100)/100)}`).join(" · ");
+    const gf=(d.grand_total.formulas||[]).filter(f=>f.value!=null).map(f=>`${esc(f.label)}: ${esc(Math.round(f.value*100)/100)}`).join(" · ");
+    html+=`<div class="bar-row" style="border-top:2px solid var(--line)"><span><b>Total</b> (${d.grand_total.count})${ga?" · "+ga:""}${gf?" · "+gf:""}</span></div>`;
   }
   const cols=d.columns.length?d.columns:Object.keys(d.rows[0]||{}).slice(0,8);
-  if(d.rows.length) html+=`<table style="margin-top:10px"><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>${d.rows.slice(0,25).map(row=>`<tr>${cols.map(c=>`<td>${esc(row[c]??"—")}</td>`).join("")}</tr>`).join("")}</table>`;
+  if(d.rows.length) html+=`<div style="overflow-x:auto"><table style="margin-top:10px"><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>${d.rows.map(row=>`<tr>${cols.map(c=>`<td style="${repHlStyle(rep,c,row[c])}">${esc(row[c]??"—")}</td>`).join("")}</tr>`).join("")}</table></div>`;
+  if(d.pages>1){
+    html+=`<div class="btnrow" style="margin-top:8px"><button class="btn secondary small" ${d.page<=1?"disabled":""} onclick="runReport('${id}',${d.page-1})">‹ Prev</button><span class="muted">Page ${d.page} of ${d.pages}</span><button class="btn secondary small" ${d.page>=d.pages?"disabled":""} onclick="runReport('${id}',${d.page+1})">Next ›</button></div>`;
+  }
   el.innerHTML=html;
 }
-async function createReport(){
-  const agg=document.getElementById("nr_agg").value.trim();
-  let filters={}; try{ const f=document.getElementById("nr_filter").value.trim(); if(f) filters=JSON.parse(f); }catch(e){ document.getElementById("rerr").innerHTML=`<div class="err">Filter is not valid JSON.</div>`; return; }
-  const body={name:document.getElementById("nr_name").value, object:document.getElementById("nr_obj").value,
-    columns:document.getElementById("nr_cols").value.split(",").map(s=>s.trim()).filter(Boolean),
-    filters, active:true};
-  const g=document.getElementById("nr_group").value.trim(); if(g) body.group_by=g;
-  if(agg){ const [func,field]=agg.split(":"); body.aggregate={func:func.trim(),field:(field||"").trim()}; }
-  const r=await api("POST","/api/admin/reports",body);
-  r.ok?showReports():document.getElementById("rerr").innerHTML=`<div class="err">${esc(r.data.error||"Failed")}</div>`;
-}
+
+
 
 
 // ------------------------------------------------------- dashboards
 let dashType={};
-function svgBars(groups){
+function svgBars(groups,repId,groupField){
   const max=Math.max(1,...groups.map(g=>g.count));
   const W=340,H=180,pad=30,n=Math.min(groups.length,12);
   const bw=Math.min(44,(W-pad*2)/n-10);
@@ -1614,13 +1819,14 @@ function svgBars(groups){
   groups.slice(0,12).forEach((g,i)=>{
     const h=Math.max(4,(H-64)*g.count/max);
     const x=pad+i*((W-pad*2)/n), y=H-32-h;
-    s+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" rx="3" fill="#0176d3"><title>${esc(g.key)}: ${g.count}</title></rect>`;
+    const dk=repId&&groupField?` onclick="drillReport('${repId}','${esc(groupField)}',this.dataset.k)" data-k="${esc(String(g.key))}" style="cursor:pointer"`:"";
+    s+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw}" height="${h.toFixed(1)}" rx="3" fill="#0176d3"${dk}><title>${esc(g.key)}: ${g.count}</title></rect>`;
     s+=`<text x="${(x+bw/2).toFixed(1)}" y="${H-16}" font-size="10" text-anchor="middle" fill="currentColor" opacity=".65">${esc(String(g.key)).slice(0,12)}</text>`;
     s+=`<text x="${(x+bw/2).toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="10" text-anchor="middle" fill="currentColor" opacity=".65">${g.count}</text>`;
   });
   return s+"</svg>";
 }
-function svgDonut(groups){
+function svgDonut(groups,repId,groupField){
   const tot=groups.reduce((a,g)=>a+g.count,0)||1;
   const cols=["#0176d3","#2e9e4f","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#ec4899","#84cc16"];
   let s=`<svg viewBox="0 0 200 200" style="width:190px;height:auto;display:block;margin:0 auto" role="img">`;
@@ -1629,12 +1835,60 @@ function svgDonut(groups){
     const frac=g.count/tot,a2=ang+frac*360,big=frac>0.5?1:0;
     const x1=CX+R*Math.cos(ang*Math.PI/180),y1=CY+R*Math.sin(ang*Math.PI/180);
     const x2=CX+R*Math.cos(a2*Math.PI/180),y2=CY+R*Math.sin(a2*Math.PI/180);
-    s+=`<path d="M${CX},${CY} L${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${big} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z" fill="${cols[i%cols.length]}" opacity=".92"><title>${esc(g.key)}: ${g.count}</title></path>`;
+    const dk=repId&&groupField?` onclick="drillReport('${repId}','${esc(groupField)}',this.dataset.k)" data-k="${esc(String(g.key))}" style="cursor:pointer"`:"";
+    s+=`<path d="M${CX},${CY} L${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${big} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z" fill="${cols[i%cols.length]}" opacity=".92"${dk}><title>${esc(g.key)}: ${g.count}</title></path>`;
     ang=a2;
   });
   s+=`<circle cx="${CX}" cy="${CY}" r="44" fill="var(--surface)"/><text x="${CX}" y="${CY+7}" text-anchor="middle" font-size="17" font-weight="700" fill="currentColor">${tot}</text></svg>`;
   s+=`<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:6px">`+groups.slice(0,8).map((g,i)=>`<span class="muted" style="font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${cols[i%cols.length]}"></span> ${esc(String(g.key)).slice(0,14)} (${g.count})</span>`).join("")+`</div>`;
   return s;
+}
+function svgLine(groups){
+  const W=340,H=180,pad=34,n=Math.min(groups.length,12);
+  const max=Math.max(1,...groups.slice(0,12).map(g=>g.count));
+  const px=i=>pad+i*((W-pad*2)/Math.max(1,n-1)), py=v=>H-32-(H-64)*v/max;
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">`;
+  const pts=groups.slice(0,12).map((g,i)=>`${px(i).toFixed(1)},${py(g.count).toFixed(1)}`).join(" ");
+  s+=`<polyline points="${pts}" fill="none" stroke="#0176d3" stroke-width="2.5"/>`;
+  groups.slice(0,12).forEach((g,i)=>{
+    s+=`<circle cx="${px(i).toFixed(1)}" cy="${py(g.count).toFixed(1)}" r="4" fill="#0176d3"><title>${esc(g.key)}: ${g.count}</title></circle>`;
+    s+=`<text x="${px(i).toFixed(1)}" y="${H-14}" font-size="10" text-anchor="middle" fill="currentColor" opacity=".65">${esc(String(g.key)).slice(0,10)}</text>`;
+  });
+  return s+"</svg>";
+}
+function svgGauge(value,max){
+  const v=Math.max(0,Math.min(1,(value||0)/Math.max(1,max||100)));
+  const W=220,H=130,CX=110,CY=108,R=84,a0=Math.PI,a1=Math.PI*(1-v);
+  const x0=CX+R*Math.cos(a0),y0=CY+R*Math.sin(a0),x1=CX+R*Math.cos(a1),y1=CY+R*Math.sin(a1);
+  const col=v>=0.75?"#2e9e4f":v>=0.4?"#f59e0b":"#ef4444";
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:220px;height:auto;display:block;margin:0 auto" role="img">`
+   +`<path d="M${x0.toFixed(1)},${y0.toFixed(1)} A${R},${R} 0 0 1 ${CX+R},${CY}" fill="none" stroke="var(--line)" stroke-width="16" stroke-linecap="round"/>`
+   +`<path d="M${x0.toFixed(1)},${y0.toFixed(1)} A${R},${R} 0 0 1 ${x1.toFixed(1)},${y1.toFixed(1)}" fill="none" stroke="${col}" stroke-width="16" stroke-linecap="round"/>`
+   +`<text x="${CX}" y="${CY-6}" text-anchor="middle" font-size="22" font-weight="700" fill="currentColor">${Math.round(v*100)}%</text></svg>`;
+}
+function svgFunnel(groups){
+  const W=340,H=200,cols=["#0176d3","#2e9e4f","#f59e0b","#ef4444","#8b5cf6"];
+  const gs=groups.slice(0,6), max=Math.max(1,...gs.map(g=>g.count));
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">`;
+  gs.forEach((g,i)=>{
+    const w=Math.max(30,(W-40)*g.count/max), x=(W-w)/2, y=8+i*((H-16)/gs.length), h=(H-16)/gs.length-6;
+    s+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="4" fill="${cols[i%cols.length]}" opacity=".9"><title>${esc(g.key)}: ${g.count}</title></rect>`;
+    s+=`<text x="${W/2}" y="${(y+h/2+4).toFixed(1)}" font-size="11" text-anchor="middle" fill="#fff">${esc(String(g.key)).slice(0,16)} (${g.count})</text>`;
+  });
+  return s+"</svg>";
+}
+function svgScatter(rows,xf,yf){
+  const W=340,H=200,pad=36;
+  const pts=rows.map(r=>[r[xf],r[yf]]).filter(p=>typeof p[0]==="number"&&typeof p[1]==="number").slice(0,200);
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">`;
+  if(!pts.length) return s+`<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="currentColor" opacity=".5">No numeric data</text></svg>`;
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+  const x0=Math.min(...xs),x1=Math.max(...xs)||1,y0=Math.min(...ys),y1=Math.max(...ys)||1;
+  const px=v=>pad+(W-pad*2)*(v-x0)/Math.max(1e-9,x1-x0), py=v=>H-pad-(H-pad*2)*(v-y0)/Math.max(1e-9,y1-y0);
+  s+=`<line x1="${pad}" y1="${H-pad}" x2="${W-8}" y2="${H-pad}" stroke="var(--line)"/><line x1="${pad}" y1="8" x2="${pad}" y2="${H-pad}" stroke="var(--line)"/>`;
+  pts.forEach(p=>{ s+=`<circle cx="${px(p[0]).toFixed(1)}" cy="${py(p[1]).toFixed(1)}" r="3.5" fill="#0176d3" opacity=".7"><title>${p[0]}, ${p[1]}</title></circle>`; });
+  s+=`<text x="${W/2}" y="${H-8}" font-size="10" text-anchor="middle" fill="currentColor" opacity=".6">${esc(xf||"")}</text>`;
+  return s+"</svg>";
 }
 async function showDashboards(){
   setActive("__dashboards");
@@ -1806,7 +2060,21 @@ async function showAdmin(section, highlight){
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="createObject()">Create object</button></div><div id="ao_list"></div></div>
   <div class="card"><div class="section-title">Add field to object</div><div id="aferr"></div>
     <label>Object</label><select id="af_obj">${objs}</select><label>Field API name</label><input id="af_name"><label>Label</label><input id="af_label">
-    <label>Type</label><select id="af_type">${ftList.map(t=>`<option value="${t.name}">${t.name} — ${esc(t.description)}</option>`).join("")}</select>
+    <label>Type</label><select id="af_type" onchange="afTypeChanged()">${ftList.map(t=>`<option value="${t.name}">${t.name} — ${esc(t.description)}</option>`).join("")}</select>
+    <div id="af_cfg_auto" style="display:none">
+      <label>Auto-number prefix</label><input id="af_prefix" placeholder="A-" maxlength="32" oninput="afAutoPreview()">
+      <div class="grid2"><div><label>Starting number</label><input id="af_start" type="number" value="1" min="0" oninput="afAutoPreview()"></div>
+      <div><label>Number width (digits)</label><input id="af_width" type="number" value="4" min="1" max="10" oninput="afAutoPreview()"></div></div>
+      <p class="muted">Preview: <code id="af_auto_preview">A-0001</code> — assigned automatically on create, read-only afterwards.</p>
+    </div>
+    <div id="af_cfg_enc" style="display:none">
+      <label>Visible characters when masked (0-16)</label><input id="af_mask" type="number" value="4" min="0" max="16">
+      <p class="muted">Encrypted at rest with the instance key. Lists, detail views and CSV exports show the masked form.</p>
+    </div>
+    <div id="af_cfg_formula" style="display:none">
+      <label>Return type</label><select id="af_return"><option>Text</option><option>Number</option><option>Currency</option><option>Percent</option><option>Date</option><option>DateTime</option><option>Checkbox</option></select>
+      <p class="muted">Enter the formula expression JSON in the formula box below (required for formula fields).</p>
+    </div>
     <label>Picklist values (comma-separated, for picklists)</label><input id="af_pick">
     <label>Lookup target object (for Lookup and MasterDetail types)</label><input id="af_ref" placeholder="Account">
     <label><input type="checkbox" id="af_reparent" style="width:auto" checked> Reparentable (master-detail only — allow changing the parent)</label>
@@ -1929,6 +2197,41 @@ async function showAdmin(section, highlight){
     <div class="grid2"><div><label>Name</label><input id="esc_name"><label>Object</label><select id="esc_obj">${objs}</select><label>Runs on</label><select id="esc_on"><option value="save">save</option><option value="sla_breach">sla_breach</option></select></div>
     <div><label>Criteria JSON</label><textarea id="esc_crit" rows="2" placeholder='{"contains":[{"field":"Subject"},"urgent"]}'></textarea><div class="cb-host" id="cb_esc"></div><label>Action JSON</label><textarea id="esc_act" rows="2" placeholder='{"type":"set_fields","fields":{"Priority":"Critical"}}'></textarea></div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="esc_submit" onclick="submitSetupForm('escalation-rules')">Create rule</button><button class="btn secondary" id="esc_cancel" style="display:none" onclick="cancelSetupEdit('escalation-rules')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('escalation-rules')">Refresh list</button></div><div id="esc_list"></div></div>
+  <div class="card"><div class="section-title">Queue</div><div id="qerr"></div>
+    <p class="muted">Named groups of users that share work — used by approval steps, notification routing and Omni-Channel. Members is a comma-separated list of user ids.</p>
+    <div class="grid2"><div><label>Name</label><input id="q_name"><label>Description</label><input id="q_desc"></div>
+    <div><label>Members (user ids, comma-separated)</label><input id="q_members" placeholder="u_admin1, u_leo1"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="q_submit" onclick="submitSetupForm('queues')">Create queue</button><button class="btn secondary" id="q_cancel" style="display:none" onclick="cancelSetupEdit('queues')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('queues')">Refresh list</button></div><div id="q_list"></div></div>
+  <div class="card"><div class="section-title">Notification type</div><div id="nterr"></div>
+    <p class="muted">Custom in-app notification templates. Recipients JSON: array of {"type":"user|role|queue|owner|submitter","id":"..."}. Body supports {{merge}} fields from the triggering record.</p>
+    <div class="grid2"><div><label>Name</label><input id="nt_name"><label>Label</label><input id="nt_label"><label>Subject</label><input id="nt_subj"></div>
+    <div><label>Body</label><textarea id="nt_body" rows="3"></textarea><label>Recipients JSON</label><textarea id="nt_recip" rows="3" placeholder='[{"type":"queue","id":"<queue id>"}]'></textarea></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="nt_submit" onclick="submitSetupForm('notification-types')">Create type</button><button class="btn secondary" id="nt_cancel" style="display:none" onclick="cancelSetupEdit('notification-types')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('notification-types')">Refresh list</button></div><div id="nt_list"></div></div>
+  <div class="card"><div class="section-title">Service channel</div><div id="scerr"></div>
+    <p class="muted">Omni-Channel intake channels — each channel carries work items for one object (e.g. Case, Lead).</p>
+    <div class="grid2"><div><label>Name</label><input id="sc_name"></div>
+    <div><label>Object</label><select id="sc_obj">${objs}</select></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="sc_submit" onclick="submitSetupForm('service-channels')">Create channel</button><button class="btn secondary" id="sc_cancel" style="display:none" onclick="cancelSetupEdit('service-channels')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('service-channels')">Refresh list</button></div><div id="sc_list"></div></div>
+  <div class="card"><div class="section-title">Routing configuration</div><div id="rcerr"></div>
+    <p class="muted">Omni-Channel routing: which queue serves a service channel. Work is offered to the least-loaded available member with spare capacity.</p>
+    <div class="grid2"><div><label>Name</label><input id="rc_name"><label>Channel id</label><input id="rc_chan" placeholder="<service channel id>"></div>
+    <div><label>Queue id</label><input id="rc_queue" placeholder="<queue id>"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="rc_submit" onclick="submitSetupForm('routing-configs')">Create configuration</button><button class="btn secondary" id="rc_cancel" style="display:none" onclick="cancelSetupEdit('routing-configs')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('routing-configs')">Refresh list</button></div><div id="rc_list"></div></div>
+  <div class="card"><div class="section-title">Invocable action</div><div id="iaerr"></div>
+    <p class="muted">Named actions callable from flows via the invocable action type. Inputs JSON: array of {"name":"...","type":"text|number|...","required":true}. Code-backed actions are registered in Python.</p>
+    <div class="grid2"><div><label>Name</label><input id="ia_name"><label>Label</label><input id="ia_label"></div>
+    <div><label>Description</label><input id="ia_desc"><label>Inputs JSON</label><textarea id="ia_inputs" rows="3" placeholder='[{"name":"amount","type":"number","required":true}]'></textarea></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="ia_submit" onclick="submitSetupForm('invocable-actions')">Create action</button><button class="btn secondary" id="ia_cancel" style="display:none" onclick="cancelSetupEdit('invocable-actions')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('invocable-actions')">Refresh list</button></div><div id="ia_list"></div></div>
+  <div class="card"><div class="section-title">Currency</div><div id="curerr"></div>
+    <p class="muted">Org currencies for multi-currency. Exactly one currency is the corporate currency that conversions route through.</p>
+    <div class="grid2"><div><label>Code (3 letters)</label><input id="cur_code" placeholder="USD" maxlength="3"><label>Name</label><input id="cur_name" placeholder="US Dollar"></div>
+    <div><label>Symbol</label><input id="cur_sym" placeholder="$"><label>Corporate currency</label><input id="cur_corp" type="checkbox"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="cur_submit" onclick="submitSetupForm('currencies')">Create currency</button><button class="btn secondary" id="cur_cancel" style="display:none" onclick="cancelSetupEdit('currencies')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('currencies')">Refresh list</button></div><div id="cur_list"></div></div>
+  <div class="card"><div class="section-title">Exchange rate</div><div id="ererr"></div>
+    <p class="muted">Dated conversion rates. Conversions use the latest rate effective on or before the requested date.</p>
+    <div class="grid2"><div><label>Label</label><input id="er_name" placeholder="EUR to USD Jan"><label>From currency</label><input id="er_from" placeholder="EUR" maxlength="3"><label>To currency</label><input id="er_to" placeholder="USD" maxlength="3"></div>
+    <div><label>Rate</label><input id="er_rate" placeholder="1.08"><label>Effective date</label><input id="er_date" type="date"></div></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="er_submit" onclick="submitSetupForm('exchange-rates')">Create rate</button><button class="btn secondary" id="er_cancel" style="display:none" onclick="cancelSetupEdit('exchange-rates')">Cancel</button><button class="btn secondary" onclick="refreshSetupList('exchange-rates')">Refresh list</button></div><div id="er_list"></div></div>
   <div class="card"><div class="section-title">Named credential (HTTP callouts)</div><div id="ncerr"></div>
     <p class="muted">Stored secrets are encrypted at rest and never returned by the API. Use in record-triggered flows via the <code>http_callout</code> action, or test one below.</p>
     <div class="grid2"><div><label>Name</label><input id="nc_name"><label>Base URL</label><input id="nc_url" placeholder="https://api.example.com"><label>Auth type</label><select id="nc_auth"><option value="none">None</option><option value="basic">Basic</option><option value="bearer">Bearer token</option><option value="api_key">API key header</option></select></div>
@@ -2188,7 +2491,7 @@ const CARD_SECTION={
  "Create custom object":"datamodel","Add field to object":"datamodel","Object fields":"datamodel","Record type":"datamodel","Page layouts":"datamodel","Sales path":"datamodel",
  "Relationships":"datamodel","Person Accounts":"datamodel","Territories":"datamodel","Big Objects & Archival":"datamodel",
  "App Manager":"apps",
- "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Dynamic Forms":"automation","Approval process":"automation","Assignment rule":"automation","Case SLA policy":"automation","Escalation rule":"automation","Auto-response rule":"automation",
+ "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Dynamic Forms":"automation","Approval process":"automation","Assignment rule":"automation","Case SLA policy":"automation","Escalation rule":"automation","Auto-response rule":"automation","Queue":"automation","Notification type":"automation","Service channel":"automation","Routing configuration":"automation","Invocable action":"automation","Currency":"company","Exchange rate":"company",
  "Users":"security","Create role":"security","Permission set":"security","Profiles":"security","Security policies":"security","Sharing rule (criteria-based)":"security","Duplicate matching rule":"security","Divisions":"security","Delegated administration":"security","API keys":"security",
  "Webhook":"integrations","Named credential (HTTP callouts)":"integrations","Email template":"integrations","CSV import":"integrations","Metadata package":"integrations","Change sets":"integrations",
  "Company settings":"company","Community portal":"company","Chatter settings":"company","Translation workbench":"company","Login branding & flows":"company",
@@ -2221,6 +2524,13 @@ const SETUP_TILES=[
  {section:"automation",card:"SLA policy",desc:"Milestones & breach tracking",kind:"sla-policies"},
  {section:"automation",card:"Escalation rule",desc:"Save & breach escalations",kind:"escalation-rules"},
  {section:"automation",card:"Auto-response rule",desc:"Instant email replies",kind:"auto-response-rules"},
+ {section:"automation",card:"Queue",desc:"Shared groups for approvals, notifications & Omni-Channel",kind:"queues"},
+ {section:"automation",card:"Notification type",desc:"Custom in-app notification templates",kind:"notification-types"},
+ {section:"automation",card:"Service channel",desc:"Omni-Channel intake channels",kind:"service-channels"},
+ {section:"automation",card:"Routing configuration",desc:"Omni-Channel queue routing",kind:"routing-configs"},
+ {section:"automation",card:"Invocable action",desc:"Named actions callable from flows",kind:"invocable-actions"},
+ {section:"company",card:"Currency",desc:"Org currencies & corporate currency",kind:"currencies"},
+ {section:"company",card:"Exchange rate",desc:"Dated currency conversion rates",kind:"exchange-rates"},
  {section:"security",card:"Users",desc:"Create, edit, deactivate & unlock users",url:"/api/admin/users"},
  {section:"security",card:"Profiles",desc:"Object & field permissions",url:"/api/admin/profiles"},
  {section:"security",card:"Security policies",desc:"Password, lockout, session & 2FA"},
@@ -2402,6 +2712,20 @@ const SETUP_KINDS={
  "permission-sets":{cardTitle:"Permission set",cardSection:"security",listEl:"ps_list",cols:[["Name","name"],["Label","label"]],noActive:true,extra:"psEdit",actions:{del:true}},
  "divisions":{cardTitle:"Division",cardSection:"security",listEl:"dv_list",errEl:"dverr",submit:"dv_submit",cancel:"dv_cancel",cols:[["Name","name"],["Description","description"]],noActive:true,
    fields:[["name","dv_name"],["description","dv_desc"],["active",null,"const",true]]},
+ "queues":{cardTitle:"Queue",cardSection:"automation",listEl:"q_list",errEl:"qerr",submit:"q_submit",cancel:"q_cancel",cols:[["Name","name"],["Description","description"],["Members","members"]],
+   fields:[["name","q_name"],["description","q_desc"],["members","q_members","csv"],["active",null,"const",true]]},
+ "notification-types":{cardTitle:"Notification type",cardSection:"automation",listEl:"nt_list",errEl:"nterr",submit:"nt_submit",cancel:"nt_cancel",cols:[["Name","name"],["Label","label"]],
+   fields:[["name","nt_name"],["label","nt_label"],["subject","nt_subj"],["body","nt_body"],["recipients","nt_recip","json",[]],["active",null,"const",true]]},
+ "currencies":{cardTitle:"Currency",cardSection:"company",listEl:"cur_list",errEl:"curerr",submit:"cur_submit",cancel:"cur_cancel",cols:[["Code","code"],["Name","name"],["Corporate","is_corporate"]],
+   fields:[["code","cur_code"],["name","cur_name"],["symbol","cur_sym"],["is_corporate","cur_corp","check"],["active",null,"const",true]]},
+ "exchange-rates":{cardTitle:"Exchange rate",cardSection:"company",listEl:"er_list",errEl:"ererr",submit:"er_submit",cancel:"er_cancel",cols:[["Currency","currency_code"],["Rate","rate"],["Start date","start_date"]],
+   fields:[["name","er_name"],["from_currency","er_from"],["to_currency","er_to"],["rate","er_rate"],["effective_date","er_date"],["active",null,"const",true]]},
+ "service-channels":{cardTitle:"Service channel",cardSection:"automation",listEl:"sc_list",errEl:"scerr",submit:"sc_submit",cancel:"sc_cancel",cols:[["Name","name"],["Object","object"]],
+   fields:[["name","sc_name"],["object","sc_obj"],["active",null,"const",true]]},
+ "routing-configs":{cardTitle:"Routing configuration",cardSection:"automation",listEl:"rc_list",errEl:"rcerr",submit:"rc_submit",cancel:"rc_cancel",cols:[["Name","name"],["Channel","channel_id"],["Queue","queue_id"]],
+   fields:[["name","rc_name"],["channel_id","rc_chan"],["queue_id","rc_queue"],["active",null,"const",true]]},
+ "invocable-actions":{cardTitle:"Invocable action",cardSection:"automation",listEl:"ia_list",errEl:"iaerr",submit:"ia_submit",cancel:"ia_cancel",cols:[["Name","name"],["Label","label"]],
+   fields:[["name","ia_name"],["label","ia_label"],["description","ia_desc"],["inputs","ia_inputs","json",[]],["active",null,"const",true]]},
 };
 const SETUP_CACHE={};
 let SETUP_EDIT={kind:null,rid:null};
@@ -2424,6 +2748,12 @@ function collectSetupForm(kind){
 }
 function fillSetupForm(kind,row){
   const cfg=SETUP_KINDS[kind];
+  if(kind==="exchange-rates"){
+    // Stored rows use the canonical {currency_code, start_date} shape;
+    // map back to the form's field names for editing.
+    row={...row, from_currency:row.currency_code||row.from_currency,
+         effective_date:row.start_date||row.effective_date};
+  }
   for(const [key,id,how] of cfg.fields){
     if(how==="const") continue;
     const el=document.getElementById(id); if(!el) continue;
@@ -2551,7 +2881,7 @@ async function userPsUnassign(uid,psid){
   r.ok?(userPsView(uid),toast("Unassigned.","ok")):toast("Failed: "+(r.data&&r.data.error||r.status),"error");
 }
 /* ============ guided condition builder (point-and-click, no raw JSON) ============ */
-const CB_OPS=[["==","equals"],["!=","not equals"],[">","greater than"],["<","less than"],[">=","> or equal"],["<=","< or equal"],["contains","contains"],["starts_with","starts with"],["isblank","is blank"],["notblank","is not blank"]];
+const CB_OPS=[["==","equals"],["!=","not equals"],[">","greater than"],["<","less than"],[">=","> or equal"],["<=","< or equal"],["contains","contains"],["starts_with","starts with"],["isblank","is blank"],["notblank","is not blank"],["is_today","is today"],["is_this_week","is this week"],["is_this_month","is this month"],["is_this_quarter","is this quarter"],["is_this_year","is this year"],["is_last_n_days","is in last N days"]];
 const CB_STATE={};
 const COND_BUILDERS=[
  {id:"cb_vr",section:"automation",objSel:"vr_obj",target:"vr_cond"},
@@ -2597,19 +2927,25 @@ function cbAddRow(bid){
   box.appendChild(div);
 }
 function cbVal(s){ s=(s||"").trim(); if(s==="") return ""; if(/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s); if(s==="true") return true; if(s==="false") return false; return s; }
-function cbInsert(bid){
-  const st=CB_STATE[bid]; if(!st) return;
-  const logic=document.getElementById(bid+"_logic").value;
+function cbBuildExpr(bid){
+  const st=CB_STATE[bid]; if(!st) return {};
+  const logic=(document.getElementById(bid+"_logic")||{}).value||"and";
   const conds=[];
   document.querySelectorAll(`#${bid} .cb-row`).forEach(row=>{
     const f=row.querySelector(".cb-field").value, op=row.querySelector(".cb-op").value, raw=row.querySelector(".cb-val").value;
     if(!f) return;
     if(op==="isblank") conds.push({isblank:{field:f}});
     else if(op==="notblank") conds.push({not:{isblank:{field:f}}});
+    else if(op==="is_last_n_days") conds.push({[op]:[{field:f},cbVal(raw)||30]});
+    else if(op.startsWith("is_")) conds.push({[op]:[{field:f}]});
     else conds.push({[op]:[{field:f},cbVal(raw)]});
   });
-  if(!conds.length){ toast("Add at least one condition first.","error"); return; }
-  const expr=conds.length===1?conds[0]:{[logic]:conds};
+  return conds.length===1?conds[0]:conds.length?{[logic]:conds}:{};
+}
+function cbInsert(bid){
+  const st=CB_STATE[bid]; if(!st) return;
+  const expr=cbBuildExpr(bid);
+  if(!Object.keys(expr).length){ toast("Add at least one condition first.","error"); return; }
   document.getElementById(st.target).value=JSON.stringify(expr);
   toast("Condition inserted — review, then save.","ok");
 }
@@ -2956,9 +3292,33 @@ async function createObject(){
   document.getElementById("oerr").innerHTML=r.ok?`<div class="ok">Created.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
   if(r.ok) loadObjects();
 }
+function afTypeChanged(){
+  const t=v("af_type");
+  document.getElementById("af_cfg_auto").style.display=t==="AutoNumber"?"":"none";
+  document.getElementById("af_cfg_enc").style.display=t==="EncryptedText"?"":"none";
+  document.getElementById("af_cfg_formula").style.display=t==="Formula"?"":"none";
+  if(t==="AutoNumber") afAutoPreview();
+}
+function afAutoPreview(){
+  const p=v("af_prefix"), w=Math.min(10,Math.max(1,parseInt(v("af_width"))||4));
+  const st=parseInt(v("af_start")); const n=isNaN(st)?1:Math.max(0,st);
+  document.getElementById("af_auto_preview").textContent=`${p}${String(n).padStart(w,"0")}`;
+}
 async function addField(){
   const body={name:v("af_name"),label:v("af_label"),type:v("af_type"),required:document.getElementById("af_req").checked};
   const pk=v("af_pick"); if(pk) body.picklist_values=pk.split(",").map(s=>s.trim()).filter(Boolean);
+  const ftype=v("af_type");
+  if(ftype==="AutoNumber"){
+    body.auto_prefix=v("af_prefix");
+    const st=parseInt(v("af_start")); if(!isNaN(st)) body.auto_start=st;
+    const w=parseInt(v("af_width")); if(!isNaN(w)) body.auto_width=w;
+  }
+  if(ftype==="EncryptedText"){
+    const mc=parseInt(v("af_mask")); if(!isNaN(mc)) body.mask_chars=mc;
+  }
+  if(ftype==="Formula"){
+    body.return_type=v("af_return");
+  }
   if(v("af_ref")) body.reference_to=v("af_ref");
   if(v("af_type")==="MasterDetail"){
     body.reparentable=document.getElementById("af_reparent").checked;
@@ -4881,25 +5241,42 @@ async function splitSelect(id){
   const rec=r.data, fmap={}; curDesc.fields.forEach(f=>fmap[f.name]=f);
   const secs=(curLayout&&curLayout.sections)||[];
   const fields=secs.length?secs.flatMap(s=>(s.columns||[]).flat()):curDesc.fields.slice(0,8).map(f=>f.name);
-  box.innerHTML=`<div class="card" style="margin:0"><div class="btnrow"><b>${esc(rec.Name||rec.Subject||rec.Title||id)}</b><span style="flex:1"></span>`
+  box.innerHTML=`<div class="card" style="margin:0"><div class="btnrow"><b>${esc(recTitle(rec)||id)}</b><span style="flex:1"></span>`
     +`<button class="btn secondary small" onclick="showDetail('${id}')">Open full</button>`
     +(curDesc.permissions.edit?` <button class="btn small" onclick="showForm('${id}')">Edit</button>`:"")
     +`</div><table>${fields.map(fn=>{ const f=fmap[fn]; if(!f) return ""; return `<tr><td class="muted" style="width:42%">${esc(f.label||fn)}</td><td>${esc(fmtVal(f,rec[fn]))}</td></tr>`; }).join("")}</table></div>`;
 }
 
 /* ============ dashboard builder ============ */
-let dashBoards=[], curDash=null, dashBuild=false, dashWidgets=[];
+let dashBoards=[], curDash=null, dashBuild=false, dashWidgets=[], DASH_FOLDERS=[], DASH_FILTERS=[];
+const DASH_TYPES=["bar","line","donut","stat","table","gauge","funnel","scatter"];
+function drillReport(repId,field,key){
+  const go=()=>runReport(repId,1,{drill:{field,value:key}});
+  const el=document.getElementById("rep_"+repId);
+  if(el){ el.scrollIntoView({behavior:"smooth",block:"nearest"}); go(); }
+  else showReports().then(go);
+}
 async function renderDashboards(){
   const reps=(await api("GET","/api/reports")).data||[];
+  const fr=await api("GET","/api/folders?kind=dashboard");
+  DASH_FOLDERS=fr.data||[];
   const isAdmin=me.profile==="System Administrator";
-  let html=`<div class="btnrow"><h2 style="margin:0">Dashboards</h2>`
-    +`<select id="dash_sel" onchange="curDash=dashBoards.find(d=>d.id===this.value);dashBuild=false;renderDashboards()" style="max-width:220px">${dashBoards.map(d=>`<option value="${d.id}" ${curDash&&curDash.id===d.id?"selected":""}>${esc(d.name)}</option>`).join("")}</select>`
+  const fmap={}; DASH_FOLDERS.forEach(f=>fmap[f.id]=f);
+  const groups={unfiled:[]};
+  for(const d of dashBoards){ const fid=d.folder_id&&fmap[d.folder_id]?d.folder_id:"unfiled"; (groups[fid]=groups[fid]||[]).push(d); }
+  let sel=`<select id="dash_sel" onchange="curDash=dashBoards.find(d=>d.id===this.value);dashBuild=false;renderDashboards()" style="max-width:220px">`;
+  for(const fid of ["unfiled",...DASH_FOLDERS.map(f=>f.id)]){
+    const list=groups[fid]; if(!list||!list.length) continue;
+    sel+=`<optgroup label="${fid==="unfiled"?"Unfiled":esc(fmap[fid].name)}">`+list.map(d=>`<option value="${d.id}" ${curDash&&curDash.id===d.id?"selected":""}>${esc(d.name)}</option>`).join("")+`</optgroup>`;
+  }
+  sel+=`</select>`;
+  let html=`<div class="btnrow"><h2 style="margin:0">Dashboards</h2>`+sel
     +`<span style="flex:1"></span><button class="btn secondary small" onclick="showReports()">Manage reports</button> `
     +(curDash?`<button class="btn secondary small" onclick="subModal('dashboard',curDash.id,curDash.name)">Subscribe</button> `:"");
   if(isAdmin){
     html+=dashBuild
       ?`<button class="btn secondary small" onclick="dashNew()">+ New</button> <button class="btn danger small" onclick="dashDel()">Delete</button> <button class="btn secondary small" onclick="dashBuild=false;renderDashboards()">Done</button>`
-      :`<button class="btn secondary small" onclick="dashBuild=true;dashWidgets=JSON.parse(JSON.stringify((curDash&&curDash.widgets)||[]));renderDashboards()">⚙ Customize</button>`;
+      :`<button class="btn secondary small" onclick="dashBuild=true;dashWidgets=JSON.parse(JSON.stringify((curDash&&curDash.widgets)||[]));DASH_FILTERS=JSON.parse(JSON.stringify((curDash&&curDash.filters)||[]));renderDashboards()">⚙ Customize</button>`;
   }
   html+=`</div>`;
   if(!curDash){
@@ -4911,22 +5288,38 @@ async function renderDashboards(){
   }
   document.getElementById("main").innerHTML=html;
   if(curDash&&!dashBuild) dashRenderView();
-  if(curDash&&dashBuild){ dashBindDnD(); dashRenderPreview(); }
+  if(curDash&&dashBuild){ await dashBuildInit(); dashBindDnD(); dashRenderPreview(); }
 }
-function dashChart(dd,type){
-  if(!(dd.groups||[]).length) return `<div class="stat"><div class="n">${dd.row_count}</div><div class="l">records</div></div>`;
-  if(type==="donut") return svgDonut(dd.groups);
-  if(type==="stat") return `<div class="stat"><div class="n">${dd.row_count}</div><div class="l">records</div></div>`;
-  return svgBars(dd.groups);
+function dashChart(d,w){
+  const gs=d.groups||[];
+  if(w.type==="donut"&&gs.length) return svgDonut(gs,d.report_id,d.group_field);
+  if(w.type==="line"&&gs.length) return svgLine(gs);
+  if(w.type==="stat") return `<div class="stat"><div class="n">${d.row_count}</div><div class="l">records</div></div>`;
+  if(w.type==="table"){
+    const rows=(d.rows||[]).slice(0,10), cols=d.columns.length?d.columns:Object.keys(rows[0]||{}).slice(0,6);
+    if(!rows.length) return `<p class="muted">No rows.</p>`;
+    return `<div style="overflow-x:auto"><table><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>${rows.map(r=>`<tr>${cols.map(c=>`<td>${esc(r[c]??"—")}</td>`).join("")}</tr>`).join("")}</table></div>`;
+  }
+  if(w.type==="gauge"){
+    const aggVals=Object.values(d.grand_total?d.grand_total.aggregates:{}).filter(v=>typeof v==="number");
+    const val=aggVals.length?aggVals[0]:d.row_count, mx=parseFloat(w.gauge_max)||val*1.25||100;
+    return svgGauge(val,mx);
+  }
+  if(w.type==="funnel"&&gs.length) return svgFunnel(gs);
+  if(w.type==="scatter") return svgScatter(d.rows||[],w.scatter_x||"",w.scatter_y||"");
+  if(gs.length) return svgBars(gs,d.report_id,d.group_field);
+  return `<div class="stat"><div class="n">${d.row_count}</div><div class="l">records</div></div>`;
 }
 async function dashRenderView(){
   const box=document.getElementById("dashview"); if(!box||!curDash) return;
-  const reps=(await api("GET","/api/reports")).data||[];
+  const r=await api("POST",`/api/dashboards/${curDash.id}/run`,{});
+  if(!r.ok){ box.innerHTML=`<div class="err">Dashboard failed to load.</div>`; return; }
+  const dd=r.data;
   let html="";
-  for(const w of (curDash.widgets||[])){
-    const rep=reps.find(x=>x.id===w.report_id); if(!rep) continue;
-    const d=await api("GET",`/api/reports/${rep.id}/run`); if(!d.ok) continue;
-    html+=`<div class="card"${w.w===2?` style="grid-column:span 2"`:""}><b>${esc(rep.name)}</b><p class="muted">${d.data.row_count} row(s) · ${esc(rep.object)}${rep.group_by?" · by "+esc(rep.group_by):""}</p>${dashChart(d.data,w.type)}</div>`;
+  for(const w of (dd.widgets||[])){
+    if(w.error||!w.report) continue;
+    const d=w.data;
+    html+=`<div class="card"${w.widget.w===2?` style="grid-column:span 2"`:""}><b>${esc(w.report.name)}</b><p class="muted">${d.row_count} row(s) · ${esc(w.report.object)}</p>${dashChart({...d,report_id:w.report.id,group_field:w.report.group_field},w.widget)}</div>`;
   }
   box.innerHTML=html||`<div class="card"><p class="muted">No widgets yet — admins can add some via Customize.</p></div>`;
 }
@@ -4935,50 +5328,65 @@ function dashBuildHtml(reps){
   dashWidgets.forEach((w,i)=>{
     html+=`<div class="dashw" draggable="true" data-wi="${i}"><div class="btnrow"><span style="cursor:grab" title="Drag to reorder">⠿</span><b>Widget ${i+1}</b><span style="flex:1"></span><button class="btn danger small" onclick="dashWidgets.splice(${i},1);renderDashboards()">Remove</button></div>`
       +`<label>Report</label><select onchange="dashWidgets[${i}].report_id=this.value;dashRenderPreview()"><option value="">— choose —</option>${reps.map(r=>`<option value="${r.id}" ${w.report_id===r.id?"selected":""}>${esc(r.name)}</option>`).join("")}</select>`
-      +`<div class="grid2"><div><label>Chart</label><select onchange="dashWidgets[${i}].type=this.value;dashRenderPreview()">${["bar","donut","stat"].map(t=>`<option ${w.type===t?"selected":""}>${t}</option>`).join("")}</select></div>`
-      +`<div><label>Width</label><select onchange="dashWidgets[${i}].w=parseInt(this.value);dashRenderPreview()">${[1,2].map(n=>`<option value="${n}" ${w.w===n?"selected":""}>${n===2?"Wide":"Normal"}</option>`).join("")}</select></div></div></div>`;
+      +`<div class="grid2"><div><label>Chart</label><select onchange="dashWidgets[${i}].type=this.value;dashRenderPreview()">${DASH_TYPES.map(t=>`<option ${w.type===t?"selected":""}>${t}</option>`).join("")}</select></div>`
+      +`<div><label>Width</label><select onchange="dashWidgets[${i}].w=parseInt(this.value);dashRenderPreview()">${[1,2].map(n=>`<option value="${n}" ${w.w===n?"selected":""}>${n===2?"Wide":"Normal"}</option>`).join("")}</select></div></div>`
+      +`<label>Group by override (optional — replaces report grouping)</label><input value="${esc(w.group_by||"")}" placeholder="e.g. Stage" oninput="dashWidgets[${i}].group_by=this.value">`
+      +`<label>Aggregate override (optional — func:field, e.g. sum:Amount)</label><input value="${esc(w.aggregate||"")}" placeholder="sum:Amount" oninput="dashWidgets[${i}].aggregate=this.value">`
+      +`<div class="grid2"><div><label>Gauge max (gauge only)</label><input type="number" value="${esc(w.gauge_max||"")}" oninput="dashWidgets[${i}].gauge_max=this.value"></div>`
+      +`<div><label>Scatter X, Y fields</label><div class="btnrow"><input value="${esc(w.scatter_x||"")}" placeholder="X field" oninput="dashWidgets[${i}].scatter_x=this.value" style="max-width:110px"><input value="${esc(w.scatter_y||"")}" placeholder="Y field" oninput="dashWidgets[${i}].scatter_y=this.value" style="max-width:110px"></div></div></div></div>`;
   });
-  html+=`</div><div class="btnrow" style="margin-top:12px"><button class="btn secondary" onclick="dashWidgets.push({report_id:'',type:'bar',w:1});renderDashboards()">+ Add widget</button><span style="flex:1"></span><label style="margin:0">Name</label> <input id="dash_name" value="${esc(curDash.name)}" style="max-width:200px"> <button class="btn" onclick="dashSave()">Save dashboard</button></div>`;
+  html+=`</div>`;
+  html+=`<div class="card" style="margin-top:12px"><b>Dashboard settings</b><div class="grid2" style="margin-top:6px">`
+    +`<div><label>Name</label><input id="dash_name" value="${esc(curDash.name)}"><label>Folder</label><select id="dash_folder"><option value="">Unfiled</option>${DASH_FOLDERS.map(f=>`<option value="${f.id}" ${curDash.folder_id===f.id?"selected":""}>${esc(f.name)}</option>`).join("")}</select></div>`
+    +`<div><label>Run as</label><select id="dash_runas"><option value="viewer" ${!curDash.run_as||curDash.run_as==="viewer"?"selected":""}>Viewer (each user sees own data)</option></select><label>Filters (apply to every widget, max 3)</label><div id="dash_filters"></div><button class="btn secondary small" onclick="DASH_FILTERS.push({field:'',op:'==',value:''});dashRenderFilters()">+ Filter</button></div>`
+    +`</div><div class="btnrow" style="margin-top:10px"><button class="btn secondary" onclick="dashWidgets.push({report_id:'',type:'bar',w:1});renderDashboards()">+ Add widget</button><span style="flex:1"></span><button class="btn" onclick="dashSave()">Save dashboard</button></div></div>`;
   html+=`<div class="card" style="margin-top:12px"><b>Live preview</b><div id="dashprev" class="dashgrid" style="margin-top:8px"><p class="muted">Loading…</p></div></div>`;
   return html;
 }
-function dashBindDnD(){
-  const list=document.getElementById("dashblist"); if(!list) return;
-  let src=null;
-  list.querySelectorAll(".dashw").forEach(el=>{
-    el.addEventListener("dragstart",()=>{ src=parseInt(el.dataset.wi,10); el.classList.add("dragging"); });
-    el.addEventListener("dragend",()=>el.classList.remove("dragging"));
-    el.addEventListener("dragover",e=>e.preventDefault());
-    el.addEventListener("drop",e=>{
-      e.preventDefault();
-      const dst=parseInt(el.dataset.wi,10);
-      if(src==null||src===dst) return;
-      const m=dashWidgets.splice(src,1)[0]; dashWidgets.splice(dst,0,m); renderDashboards();
-    });
-  });
+async function dashBuildInit(){
+  const ru=document.getElementById("dash_runas");
+  const ud=await api("GET","/api/users/directory");
+  (ud.data||[]).forEach(u=>{ const o=document.createElement("option"); o.value=u.id; o.textContent=u.name+" ("+u.username+")"; if(curDash.run_as===u.id)o.selected=true; ru.appendChild(o); });
+  dashRenderFilters();
+}
+function dashRenderFilters(){
+  const box=document.getElementById("dash_filters"); if(!box) return;
+  box.innerHTML=DASH_FILTERS.slice(0,3).map((f,i)=>`<div class="btnrow"><input value="${esc(f.field||"")}" placeholder="field" oninput="DASH_FILTERS[${i}].field=this.value" style="max-width:150px"><select onchange="DASH_FILTERS[${i}].op=this.value" style="max-width:110px">${["==","!=",">","<",">=","<=","contains"].map(o=>`<option ${f.op===o?"selected":""}>${o}</option>`).join("")}</select><input value="${esc(f.value||"")}" placeholder="value" oninput="DASH_FILTERS[${i}].value=this.value" style="max-width:130px"><button class="btn danger small" onclick="DASH_FILTERS.splice(${i},1);dashRenderFilters()">✕</button></div>`).join("");
 }
 async function dashRenderPreview(){
-  const box=document.getElementById("dashprev"); if(!box) return;
-  const reps=(await api("GET","/api/reports")).data||[];
+  const box=document.getElementById("dashprev"); if(!box||!curDash) return;
+  const filters=DASH_FILTERS.filter(f=>f.field).map(f=>({[f.op]:[{field:f.field},f.value]}));
+  const r=await api("POST",`/api/dashboards/${curDash.id}/run`,{widgets:dashWidgets.filter(w=>w.report_id),filters});
+  if(!r.ok){ box.innerHTML=`<p class="err">Preview failed.</p>`; return; }
   let html="";
-  for(const w of dashWidgets){
-    if(!w.report_id) continue;
-    const rep=reps.find(x=>x.id===w.report_id); if(!rep) continue;
-    const d=await api("GET",`/api/reports/${rep.id}/run`); if(!d.ok) continue;
-    html+=`<div class="card"${w.w===2?` style="grid-column:span 2"`:""}><b>${esc(rep.name)}</b>${dashChart(d.data,w.type)}</div>`;
+  for(const w of (r.data.widgets||[])){
+    if(w.error||!w.report) continue;
+    const d=w.data;
+    html+=`<div class="card"${w.widget.w===2?` style="grid-column:span 2"`:""}><b>${esc(w.report.name)}</b>${dashChart({...d,report_id:w.report.id,group_field:w.report.group_field},w.widget)}</div>`;
   }
   box.innerHTML=html||`<p class="muted">Add a widget to preview it.</p>`;
 }
 async function dashSave(){
   const name=(document.getElementById("dash_name")||{}).value||curDash.name;
-  const widgets=dashWidgets.filter(w=>w.report_id);
-  const r=await api("PUT","/api/dashboards/"+curDash.id,{name,widgets});
+  const widgets=dashWidgets.filter(w=>w.report_id).map(w=>{
+    const o={report_id:w.report_id,type:w.type||"bar",w:w.w||1};
+    if((w.group_by||"").trim()) o.group_by=w.group_by.trim();
+    if((w.aggregate||"").trim()) o.aggregate=w.aggregate.trim();
+    if(w.gauge_max) o.gauge_max=w.gauge_max;
+    if(w.scatter_x) o.scatter_x=w.scatter_x; if(w.scatter_y) o.scatter_y=w.scatter_y;
+    return o;
+  });
+  const filters=DASH_FILTERS.filter(f=>f.field).map(f=>({[f.op]:[{field:f.field},f.value]}));
+  const body={name,widgets,filters,
+    folder_id:document.getElementById("dash_folder").value||null,
+    run_as:document.getElementById("dash_runas").value||"viewer"};
+  const r=await api("PUT","/api/dashboards/"+curDash.id,body);
   if(r.ok){ curDash=r.data; dashBoards=dashBoards.map(d=>d.id===curDash.id?curDash:d); dashBuild=false; renderDashboards(); toast("Dashboard saved.","ok"); }
   else toast("Save failed: "+((r.data||{}).error||r.status),"error");
 }
 async function dashNew(){
   const r=await api("POST","/api/dashboards",{name:"New dashboard",widgets:[]});
-  if(r.ok){ dashBoards.push(r.data); curDash=r.data; dashWidgets=[]; renderDashboards(); }
+  if(r.ok){ dashBoards.push(r.data); curDash=r.data; dashWidgets=[]; DASH_FILTERS=[]; dashBuild=true; renderDashboards(); }
   else toast("Create failed: "+((r.data||{}).error||r.status),"error");
 }
 async function dashDel(){
@@ -4986,6 +5394,7 @@ async function dashDel(){
   const r=await api("DELETE","/api/dashboards/"+curDash.id);
   if(r.ok){ dashBoards=dashBoards.filter(d=>d.id!==curDash.id); curDash=dashBoards[0]||null; dashBuild=false; renderDashboards(); }
 }
+
 
 /* ============ file preview lightbox ============ */
 let lbUrl=null;
@@ -5031,6 +5440,131 @@ async function calSources(){
   return CAL_SOURCES; // offline fallback keeps the classic three sources
 }
 function calShift(dir){ const [y,m]=calCursor.split("-").map(Number); const d=new Date(y,m-1+dir,1); calCursor=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; showCalendar(); }
+/* ---- Omni-Channel agent console: presence, my work, queues, supervisor wall ---- */
+const OMNI_STATUS_COLORS={Available:"#22c55e",Busy:"#f59e0b",Offline:"#9ca3af"};
+let omniPresence=null, _omniPoll=null;
+async function refreshPresence(){
+  if(!token) return;
+  try{
+    const r=await api("GET","/api/omni/presence");
+    if(r.ok&&r.data){
+      omniPresence=r.data.status||"Offline";
+      const dot=document.getElementById("presdot"), lbl=document.getElementById("preslabel");
+      if(dot) dot.style.color=OMNI_STATUS_COLORS[omniPresence]||"#9ca3af";
+      if(lbl) lbl.textContent=omniPresence;
+    }
+  }catch(e){}
+}
+async function setPresence(status){
+  const r=await api("PUT","/api/omni/presence",{status});
+  const dd=document.getElementById("presencedd"); if(dd) dd.classList.remove("open");
+  if(r.ok) toast("Presence: "+status,"ok");
+  else toast("Presence update failed: "+((r.data||{}).error||r.status),"error");
+  await refreshPresence();
+  const tab=document.querySelector('#tabs button[data-obj="__omni"]');
+  if(tab&&tab.classList.contains("active")) showOmni();
+}
+async function omniWorkAction(wid,action){
+  const r=await api("POST","/api/omni/work/"+encodeURIComponent(wid)+"/"+action);
+  if(r.ok) toast(action==="decline"?"Work declined — returned to the queue.":action==="complete"?"Work completed.":"Work accepted.","ok");
+  else toast("Failed: "+((r.data||{}).error||r.status),"error");
+  showOmni();
+}
+async function omniRouteAll(){
+  const r=await api("POST","/api/omni/work/route-all");
+  if(r.ok) toast("Routed "+(r.data.routed||0)+", unrouted "+(r.data.unrouted||0)+".","ok");
+  else toast("Route all failed: "+((r.data||{}).error||r.status),"error");
+  showOmni();
+}
+function omniStatusPill(status){
+  const c=OMNI_STATUS_COLORS[status]||"#9ca3af";
+  return `<span class="stat-pill" style="background:${c}22;color:${c}">${esc(status||"—")}</span>`;
+}
+async function showOmni(){
+  setActive("__omni");
+  const main=document.getElementById("main"); main.innerHTML=skel(3);
+  const [presR,capR,mineR,qR]=await Promise.all([
+    api("GET","/api/omni/presence"),
+    api("GET","/api/omni/capacity"),
+    api("GET","/api/omni/work/mine"),
+    api("GET","/api/queues"),
+  ]);
+  const pres=(presR.ok&&presR.data)||{status:"Offline"};
+  const cap=(capR.ok&&capR.data)||{max_capacity:5,current_load:0};
+  const mine=(mineR.ok&&mineR.data)||[];
+  const queues=(qR.ok&&qR.data)||[];
+  const isAdmin=me&&me.profile==="System Administrator";
+  const myQueues=queues.filter(q=>((q.members)||[]).includes(me.id));
+  const wallQueues=isAdmin?queues:myQueues;
+  const snaps={};
+  await Promise.all(wallQueues.map(async q=>{
+    const r=await api("GET","/api/omni/queues/"+encodeURIComponent(q.id)+"/work");
+    snaps[q.id]=(r.ok&&r.data)||{queued:[],assigned:[]};
+  }));
+  const agentNames={};
+  await Promise.all(wallQueues.flatMap(q=>((snaps[q.id]||{}).assigned||[])).map(async w=>{
+    if(w.assigned_to&&!(w.assigned_to in agentNames)) agentNames[w.assigned_to]=await userName(w.assigned_to);
+  }));
+  let html=`<div class="btnrow" style="align-items:center"><h2 style="margin:0">Omni-Channel</h2><span style="flex:1"></span>`
+    +(isAdmin?`<button class="btn secondary small" onclick="omniRouteAll()">Route all queued work</button>`:"")
+    +`</div>`;
+  html+=`<div class="card"><div class="section-title">My presence</div><div class="btnrow" style="align-items:center;flex-wrap:wrap">`
+    +omniStatusPill(pres.status)
+    +["Available","Busy","Offline"].map(s=>`<button class="btn${s===pres.status?"":" secondary"} small" onclick="setPresence('${s}')">${s}</button>`).join("")
+    +`<span class="muted">Capacity in use: ${cap.current_load||0} / ${cap.max_capacity}</span></div>`
+    +(pres.updated_at?`<p class="muted" style="margin:8px 0 0">Last updated ${fmtDateTime(pres.updated_at)}</p>`:"")+`</div>`;
+  html+=`<div class="card"><div class="section-title">My work <span class="muted">· ${mine.length} assigned</span></div>`;
+  if(!mine.length) html+=`<p class="muted">No work assigned to you. Set your presence to Available to receive routed work.</p>`;
+  else{
+    html+=`<table><thead><tr><th>Object</th><th>Record</th><th>Channel</th><th>Priority</th><th>Assigned</th><th></th></tr></thead><tbody>`;
+    for(const w of mine){
+      html+=`<tr><td>${esc(w.object_name||"—")}</td>`
+        +(w.record_id&&w.object_name?`<td><a href="#" onclick="jumpTo('${esc(w.object_name)}','${esc(w.record_id)}');return false">${esc(w.record_id)}</a></td>`:`<td>—</td>`)
+        +`<td>${esc(w.channel_name||"—")}</td><td>${w.priority??0}</td><td>${fmtDateTime(w.assigned_at)}</td>`
+        +`<td style="white-space:nowrap"><button class="btn secondary small" onclick="omniWorkAction('${w.id}','accept')">Accept</button> `
+        +`<button class="btn secondary small" onclick="omniWorkAction('${w.id}','decline')">Decline</button> `
+        +`<button class="btn small" onclick="omniWorkAction('${w.id}','complete')">Complete</button></td></tr>`;
+    }
+    html+=`</tbody></table>`;
+  }
+  html+=`</div>`;
+  for(const q of wallQueues){
+    const snap=snaps[q.id]||{queued:[],assigned:[]};
+    html+=`<div class="card"><div class="section-title">${esc(q.name)} <span class="muted">· ${snap.queued.length} queued · ${snap.assigned.length} assigned</span></div>`;
+    if(!snap.queued.length&&!snap.assigned.length){ html+=`<p class="muted">No work items in this queue.</p>`; }
+    if(snap.queued.length){
+      html+=`<div class="muted" style="margin:4px 0">Queued — waiting for an available agent</div><table><thead><tr><th>Object</th><th>Record</th><th>Channel</th><th>Priority</th><th>Created</th></tr></thead><tbody>`;
+      for(const w of snap.queued){
+        html+=`<tr><td>${esc(w.object_name||"—")}</td>`
+          +(w.record_id&&w.object_name?`<td><a href="#" onclick="jumpTo('${esc(w.object_name)}','${esc(w.record_id)}');return false">${esc(w.record_id)}</a></td>`:`<td>—</td>`)
+          +`<td>${esc(w.channel_name||"—")}</td><td>${w.priority??0}</td><td>${fmtDateTime(w.created_at)}</td></tr>`;
+      }
+      html+=`</tbody></table>`;
+    }
+    if(snap.assigned.length){
+      html+=`<div class="muted" style="margin:8px 0 4px">Assigned</div><table><thead><tr><th>Object</th><th>Record</th><th>Agent</th><th>Priority</th><th>Assigned</th></tr></thead><tbody>`;
+      for(const w of snap.assigned){
+        html+=`<tr><td>${esc(w.object_name||"—")}</td>`
+          +(w.record_id&&w.object_name?`<td><a href="#" onclick="jumpTo('${esc(w.object_name)}','${esc(w.record_id)}');return false">${esc(w.record_id)}</a></td>`:`<td>—</td>`)
+          +`<td>${esc(agentNames[w.assigned_to]||w.assigned_to||"—")}</td><td>${w.priority??0}</td><td>${fmtDateTime(w.assigned_at)}</td></tr>`;
+      }
+      html+=`</tbody></table>`;
+    }
+    html+=`</div>`;
+  }
+  if(isAdmin){
+    const pR=await api("GET","/api/omni/presence/all");
+    const rows=(pR.ok&&pR.data)||[];
+    const names={};
+    await Promise.all(rows.map(async r=>{ names[r.user_id]=await userName(r.user_id); }));
+    html+=`<div class="card"><div class="section-title">Supervisor wall — agent presence <span class="muted">· ${rows.length}</span></div>`;
+    html+=`<table><thead><tr><th>Agent</th><th>Status</th><th>Updated</th></tr></thead><tbody>`;
+    html+=rows.length?rows.map(r=>`<tr><td>${esc(names[r.user_id]||r.user_id)}</td><td>${omniStatusPill(r.status)}</td><td>${fmtDateTime(r.updated_at)}</td></tr>`).join("")
+      :`<tr><td colspan="3" class="muted">No presence records yet — agents appear here once they set a status.</td></tr>`;
+    html+=`</tbody></table></div>`;
+  }
+  main.innerHTML=html;
+}
 async function showCalendar(){
   setActive("__calendar");
   if(!calCursor){ const d=new Date(); calCursor=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
@@ -5197,19 +5731,50 @@ async function bulkRefresh(quiet){
 }
 
 /* ============ report subscriptions ============ */
+let SUB_RCPTS=[];
 function subModal(kind,id,name){
+  SUB_RCPTS=[];
   openLightbox(`<div class="section-title">Subscribe — ${esc(name)}</div>
   <p class="muted">A ${kind} digest is emailed on schedule. Delivery is logged under Admin Setup → Email Log${window.FORCELET_SMTP?"":" (demo mode: logged, not sent)"}.</p>
-  <label>Frequency</label><select id="sub_freq"><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
-  <label>Recipient emails (comma-separated)</label><input id="sub_rcpt" placeholder="you@company.com">
+  <div class="grid2"><div><label>Frequency</label><select id="sub_freq"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
+  <div><label>Attachment</label><select id="sub_attach"><option value="none">None (summary in body)</option><option value="csv">CSV export</option><option value="xlsx">Excel export</option>${kind==="dashboard"?'<option value="html">HTML snapshot</option>':""}</select></div></div>
+  <label>Only send when… (min rows, 0 = always)</label><input id="sub_minrows" type="number" min="0" value="0" style="max-width:140px">
+  <label>Recipients</label><div id="sub_rcpts"></div>
+  <div class="btnrow"><select id="sub_rtype" style="max-width:130px"><option value="email">Email</option><option value="user">User</option><option value="role">Role</option></select><input id="sub_rval" placeholder="address / pick below" style="flex:1"><button class="btn secondary small" onclick="subAddRcpt()">Add</button></div>
+  <div class="btnrow" style="margin-top:4px"><button class="btn secondary small" onclick="subPickUser()">Pick user…</button><button class="btn secondary small" onclick="subPickRole()">Pick role…</button></div>
   <div class="btnrow" style="margin-top:10px"><button class="btn" onclick="subSave('${kind}','${id}')">Subscribe</button>
   <button class="btn secondary" onclick="closeLightbox()">Cancel</button></div><div id="suberr"></div>`);
+  subRenderRcpts();
+}
+function subRenderRcpts(){
+  const box=document.getElementById("sub_rcpts"); if(!box) return;
+  box.innerHTML=SUB_RCPTS.map((r,i)=>`<span class="pill">${esc(r.type)}: ${esc(r.value)} <a href="#" onclick="SUB_RCPTS.splice(${i},1);subRenderRcpts();return false" title="remove">✕</a></span> `).join("")||'<p class="muted">No recipients yet.</p>';
+}
+function subAddRcpt(){
+  const t=document.getElementById("sub_rtype").value, v=document.getElementById("sub_rval").value.trim();
+  if(!v){ toast("Enter a value first.","error"); return; }
+  SUB_RCPTS.push({type:t,value:v});
+  document.getElementById("sub_rval").value="";
+  subRenderRcpts();
+}
+async function subPickUser(){
+  const r=await api("GET","/api/users/directory");
+  if(!r.ok){ toast("Could not load users.","error"); return; }
+  const v=prompt("Pick a user (username):\n"+(r.data||[]).slice(0,30).map(u=>u.username+" — "+u.name).join("\n"));
+  if(v){ const u=(r.data||[]).find(x=>x.username===v.trim()||x.id===v.trim()); if(u){ SUB_RCPTS.push({type:"user",value:u.id}); subRenderRcpts(); } }
+}
+async function subPickRole(){
+  const r=await api("GET","/api/roles/directory");
+  if(!r.ok){ toast("Could not load roles.","error"); return; }
+  const v=prompt("Pick a role (name):\n"+(r.data||[]).map(x=>x.name).join("\n"));
+  if(v){ SUB_RCPTS.push({type:"role",value:v.trim()}); subRenderRcpts(); }
 }
 async function subSave(kind,id){
   const freq=document.getElementById("sub_freq").value;
-  const rcpt=document.getElementById("sub_rcpt").value.split(",").map(s=>s.trim()).filter(Boolean);
-  if(!rcpt.length){ document.getElementById("suberr").innerHTML=`<div class="err">Add at least one recipient.</div>`; return; }
-  const body={frequency:freq,recipients:rcpt};
+  if(!SUB_RCPTS.length){ document.getElementById("suberr").innerHTML=`<div class="err">Add at least one recipient.</div>`; return; }
+  const minRows=parseInt(document.getElementById("sub_minrows").value||"0",10)||0;
+  const body={frequency:freq,attachment:document.getElementById("sub_attach").value,
+    condition:minRows>0?{min_rows:minRows}:{},recipients:SUB_RCPTS};
   body[kind==="report"?"report_id":"dashboard_id"]=id;
   const r=await api("POST","/api/report-subscriptions",body);
   if(r.ok){ closeLightbox(); toast(`Subscribed — ${freq} digest enabled.`,"ok"); }
