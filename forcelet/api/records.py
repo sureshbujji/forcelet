@@ -22,6 +22,7 @@ from ._shared import (
     _audit, _do_create, _do_update, _visible_records,
     current_user, recompute_stored_rollups, require_admin, require_auth, serialize, ctx,
 )
+from . import relquery
 
 
 def register(app: Flask):
@@ -30,6 +31,16 @@ def register(app: Flask):
     def _can_see_view(user, view):
         return bool(view.get("shared")) or view.get("owner") == user["id"] \
             or security.is_admin(user)
+
+    def _record_view(user, obj_name, obj, record):
+        """Serialize one record, honoring ?select= / ?children= when present."""
+        data = serialize(user, obj, record)
+        select_param = request.args.get("select")
+        children_param = request.args.get("children")
+        if select_param or children_param:
+            data = relquery.apply_record_view(
+                user, obj_name, record, data, select_param, children_param)
+        return data
 
     @app.get("/api/sobjects/<obj_name>")
     @require_auth
@@ -86,10 +97,10 @@ def register(app: Flask):
             limit = max(1, min(500, int(request.args.get("limit", 50))))
             offset = max(0, int(request.args.get("offset", 0)))
             page = rows[offset:offset + limit]
-            return jsonify({"rows": [serialize(user, obj, r) for r in page],
+            return jsonify({"rows": [_record_view(user, obj_name, obj, r) for r in page],
                             "total": len(rows), "limit": limit,
                             "offset": offset})
-        return jsonify([serialize(user, obj, r) for r in rows[:200]])
+        return jsonify([_record_view(user, obj_name, obj, r) for r in rows[:200]])
 
     # Shared create/update pipelines (used by the REST endpoints, upsert,
     # web-to-lead, and CSV import). Return (status_code, payload).
@@ -110,7 +121,7 @@ def register(app: Flask):
         if not obj or not rec or not security.can(user, "read", obj_name) \
                 or not security.can_see_record(user, rec, obj_name):
             return jsonify({"error": "Not found"}), 404
-        return jsonify(serialize(user, obj, rec))
+        return jsonify(_record_view(user, obj_name, obj, rec))
 
     @app.patch("/api/sobjects/<obj_name>/<rid>")
     @require_auth
@@ -232,6 +243,49 @@ def register(app: Flask):
         scope = None if security.is_admin(user) else user["id"]
         return jsonify(store.recycle_list(deleted_by=scope))
 
+    def _remap_restored_fk(child_entry, parent_obj, old_pid, new_pid):
+        """Point a restored child's FKs at its parent's new id (in-memory).
+
+        Used when the parent's original id was taken and it was restored as
+        a copy: without remapping, the restored children would dangle.
+        """
+        codef = registry.get_object(child_entry["object_name"])
+        if not codef:
+            return
+        data = json.loads(child_entry["data"])
+        for f in datamodel.relationship_fields(codef):
+            ref = f.get("reference_to")
+            refs = ref if isinstance(ref, list) else [ref]
+            if parent_obj in refs and str(data.get(f["name"]) or "") == str(old_pid):
+                data[f["name"]] = new_pid
+        child_entry["data"] = json.dumps(data)
+
+    def _restore_entry(user, entry):
+        """Restore one recycle-bin entry plus its cascade-deleted children.
+
+        The parent is restored first so FK targets exist, then each child is
+        restored recursively (depth-first). Returns (new_record_id,
+        restored_count). Children the user may not create are left in the bin
+        and not counted.
+        """
+        obj_name = entry["object_name"]
+        record = json.loads(entry["data"])
+        old_id = record.get("id")
+        if old_id and store.get(obj_name, old_id):
+            record.pop("id", None)  # id taken (e.g. re-created); restore as a copy
+        new_rid = store.insert(obj_name, record)
+        count = 1
+        if old_id:
+            for child in store.recycle_children(obj_name, old_id):
+                if not security.can(user, "create", child["object_name"]):
+                    continue  # leave it in the bin; not counted
+                if new_rid != old_id:
+                    _remap_restored_fk(child, obj_name, old_id, new_rid)
+                _cid, _n = _restore_entry(user, child)
+                count += _n
+        store.recycle_delete(entry["id"])
+        return new_rid, count
+
     @app.post("/api/recycle-bin/<bid>/restore")
     @require_auth
     def restore_recycle_bin(bid):
@@ -242,12 +296,8 @@ def register(app: Flask):
         obj_name = entry["object_name"]
         if not security.can(user, "create", obj_name):
             return jsonify({"error": "Not permitted"}), 403
-        record = json.loads(entry["data"])
-        if store.get(obj_name, record.get("id")):
-            record.pop("id", None)  # id taken (e.g. re-created); restore as a copy
-        new_rid = store.insert(obj_name, record)
-        store.recycle_delete(bid)
-        return jsonify({"restored": True, "Id": new_rid})
+        new_rid, count = _restore_entry(user, entry)
+        return jsonify({"restored": True, "Id": new_rid, "restored_count": count})
 
     @app.delete("/api/recycle-bin/<bid>")
     @require_auth

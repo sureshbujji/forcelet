@@ -374,14 +374,17 @@ def test_account_hierarchy(client, h):
     _ = c  # grandchild created above
 
 
-def test_account_hierarchy_cycle_safe(client, h):
+def test_account_hierarchy_cycle_safe(client, h, app):
     a = _mk(client, h, "Account", {"Name": "A"})
     b = _mk(client, h, "Account", {"Name": "B", "ParentAccountId": a})
     c = _mk(client, h, "Account", {"Name": "C", "ParentAccountId": b})
-    # introduce a cycle: A -> C -> B -> A
+    # write-time guard (Phase 2): the API must refuse to introduce a cycle
     r = client.patch(f"/api/sobjects/Account/{a}", headers=h,
                      json={"ParentAccountId": c})
-    assert r.status_code == 200, r.get_json()
+    assert r.status_code == 422, r.get_json()
+    # read-side guard: a cycle injected below the API (legacy data) must
+    # still terminate the hierarchy endpoint
+    app.mf_store.update("Account", a, {"ParentAccountId": c})
     r = client.get(f"/api/sales/accounts/{b}/hierarchy", headers=h)
     assert r.status_code == 200, r.get_json()  # terminates
 

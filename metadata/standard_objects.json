@@ -1,3080 +1,3126 @@
 [
- {
-  "fields": [
-   {
-    "label": "Account Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Industry",
-    "name": "Industry",
-    "picklist_values": [
-     "Technology",
-     "Healthcare",
-     "Finance",
-     "Manufacturing",
-     "Retail",
-     "Other"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Annual Revenue",
-    "name": "AnnualRevenue",
-    "type": "Currency"
-   },
-   {
-    "label": "Phone",
-    "name": "Phone",
-    "type": "Phone"
-   },
-   {
-    "label": "Website",
-    "name": "Website",
-    "type": "URL"
-   },
-   {
-    "label": "Billing City",
-    "length": 80,
-    "name": "BillingCity",
-    "type": "Text"
-   },
-   {
-    "label": "Billing State",
-    "length": 40,
-    "name": "BillingState",
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "label": "Total Pipeline",
-    "name": "TotalPipeline",
-    "rollup": {
-     "field": "Amount",
-     "func": "sum",
-     "object": "Opportunity",
-     "via": "AccountId"
-    },
-    "type": "Currency"
-   },
-   {
-    "label": "Open Opportunities",
-    "name": "OpenOpportunityCount",
-    "rollup": {
-     "field": "Amount",
-     "filter": {
-      "not": {
-       "in": [
-        {
-         "field": "Stage"
-        },
-        [
-         "Closed Won",
-         "Closed Lost"
-        ]
-       ]
-      }
-     },
-     "func": "count",
-     "object": "Opportunity",
-     "via": "AccountId"
-    },
-    "type": "Number"
-   },
-   {
-    "name": "ParentAccountId",
-    "label": "Parent Account",
-    "type": "Lookup",
-    "reference_to": "Account"
-   }
-  ],
-  "is_custom": false,
-  "label": "Account",
-  "name": "Account",
-  "plural": "Accounts"
- },
- {
-  "fields": [
-   {
-    "label": "First Name",
-    "length": 60,
-    "name": "FirstName",
-    "type": "Text"
-   },
-   {
-    "label": "Last Name",
-    "length": 60,
-    "name": "LastName",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Email",
-    "name": "Email",
-    "type": "Email"
-   },
-   {
-    "label": "Phone",
-    "name": "Phone",
-    "type": "Phone"
-   },
-   {
-    "label": "Title",
-    "length": 80,
-    "name": "Title",
-    "type": "Text"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   }
-  ],
-  "is_custom": false,
-  "label": "Contact",
-  "name": "Contact",
-  "plural": "Contacts"
- },
- {
-  "fields": [
-   {
-    "label": "First Name",
-    "length": 60,
-    "name": "FirstName",
-    "type": "Text"
-   },
-   {
-    "label": "Last Name",
-    "length": 60,
-    "name": "LastName",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Company",
-    "length": 120,
-    "name": "Company",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Email",
-    "name": "Email",
-    "type": "Email"
-   },
-   {
-    "label": "Phone",
-    "name": "Phone",
-    "type": "Phone"
-   },
-   {
-    "default": "New",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "New",
-     "Working",
-     "Nurturing",
-     "Qualified",
-     "Unqualified",
-     "Converted"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Rating",
-    "name": "Rating",
-    "picklist_values": [
-     "Hot",
-     "Warm",
-     "Cold"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Lead Source",
-    "name": "LeadSource",
-    "picklist_values": [
-     "Web",
-     "Referral",
-     "Partner",
-     "Trade Show",
-     "Other"
-    ],
-    "type": "Picklist"
-   }
-  ],
-  "is_custom": false,
-  "label": "Lead",
-  "name": "Lead",
-  "plural": "Leads"
- },
- {
-  "fields": [
-   {
-    "label": "Opportunity Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "label": "Amount",
-    "name": "Amount",
-    "type": "Currency"
-   },
-   {
-    "default": "Prospecting",
-    "label": "Stage",
-    "name": "Stage",
-    "picklist_values": [
-     "Prospecting",
-     "Qualification",
-     "Proposal",
-     "Negotiation",
-     "Closed Won",
-     "Closed Lost"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Probability %",
-    "name": "Probability",
-    "type": "Percent"
-   },
-   {
-    "label": "Close Date",
-    "name": "CloseDate",
-    "type": "Date"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "label": "Discount %",
-    "name": "DiscountPercent",
-    "type": "Percent"
-   },
-   {
-    "formula": {
-     "days_between": [
+  {
+    "fields": [
       {
-       "field": "CreatedDate"
+        "label": "Account Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
       },
       {
-       "today": true
+        "label": "Industry",
+        "name": "Industry",
+        "picklist_values": [
+          "Technology",
+          "Healthcare",
+          "Finance",
+          "Manufacturing",
+          "Retail",
+          "Other"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Annual Revenue",
+        "name": "AnnualRevenue",
+        "type": "Currency"
+      },
+      {
+        "label": "Phone",
+        "name": "Phone",
+        "type": "Phone"
+      },
+      {
+        "label": "Website",
+        "name": "Website",
+        "type": "URL"
+      },
+      {
+        "label": "Billing City",
+        "length": 80,
+        "name": "BillingCity",
+        "type": "Text"
+      },
+      {
+        "label": "Billing State",
+        "length": 40,
+        "name": "BillingState",
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "label": "Total Pipeline",
+        "name": "TotalPipeline",
+        "rollup": {
+          "field": "Amount",
+          "func": "sum",
+          "object": "Opportunity",
+          "via": "AccountId"
+        },
+        "type": "Currency"
+      },
+      {
+        "label": "Open Opportunities",
+        "name": "OpenOpportunityCount",
+        "rollup": {
+          "field": "Amount",
+          "filter": {
+            "not": {
+              "in": [
+                {
+                  "field": "Stage"
+                },
+                [
+                  "Closed Won",
+                  "Closed Lost"
+                ]
+              ]
+            }
+          },
+          "func": "count",
+          "object": "Opportunity",
+          "via": "AccountId"
+        },
+        "type": "Number"
+      },
+      {
+        "name": "ParentAccountId",
+        "label": "Parent Account",
+        "type": "Lookup",
+        "reference_to": "Account"
       }
-     ]
-    },
-    "label": "Days Open",
-    "name": "DaysOpen",
-    "type": "Number"
-   },
-   {
-    "label": "Forecast Category",
-    "name": "ForecastCategory",
-    "picklist_values": [
-     "Pipeline",
-     "Best Case",
-     "Commit",
-     "Omitted",
-     "Closed"
     ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Primary Campaign Source",
-    "name": "PrimaryCampaignId",
-    "reference_to": "Campaign",
-    "type": "Lookup"
-   }
-  ],
-  "is_custom": false,
-  "label": "Opportunity",
-  "name": "Opportunity",
-  "plural": "Opportunities"
- },
- {
-  "fields": [
-   {
-    "label": "Subject",
-    "length": 120,
-    "name": "Subject",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "default": "New",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "New",
-     "Working",
-     "Escalated",
-     "Closed"
+    "is_custom": false,
+    "label": "Account",
+    "name": "Account",
+    "plural": "Accounts"
+  },
+  {
+    "fields": [
+      {
+        "label": "First Name",
+        "length": 60,
+        "name": "FirstName",
+        "type": "Text"
+      },
+      {
+        "label": "Last Name",
+        "length": 60,
+        "name": "LastName",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Email",
+        "name": "Email",
+        "type": "Email"
+      },
+      {
+        "label": "Phone",
+        "name": "Phone",
+        "type": "Phone"
+      },
+      {
+        "label": "Title",
+        "length": 80,
+        "name": "Title",
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      }
     ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "default": "Medium",
-    "label": "Priority",
-    "name": "Priority",
-    "picklist_values": [
-     "Low",
-     "Medium",
-     "High",
-     "Critical"
-    ],
-    "type": "Picklist"
-   },
-   {
+    "is_custom": false,
     "label": "Contact",
-    "name": "ContactId",
-    "reference_to": "Contact",
-    "type": "Lookup"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "default": "Other",
-    "label": "Origin",
-    "name": "Origin",
-    "picklist_values": [
-     "Web",
-     "Email",
-     "Phone",
-     "Other"
+    "name": "Contact",
+    "plural": "Contacts"
+  },
+  {
+    "fields": [
+      {
+        "label": "First Name",
+        "length": 60,
+        "name": "FirstName",
+        "type": "Text"
+      },
+      {
+        "label": "Last Name",
+        "length": 60,
+        "name": "LastName",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Company",
+        "length": 120,
+        "name": "Company",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Email",
+        "name": "Email",
+        "type": "Email"
+      },
+      {
+        "label": "Phone",
+        "name": "Phone",
+        "type": "Phone"
+      },
+      {
+        "default": "New",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "New",
+          "Working",
+          "Nurturing",
+          "Qualified",
+          "Unqualified",
+          "Converted"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Rating",
+        "name": "Rating",
+        "picklist_values": [
+          "Hot",
+          "Warm",
+          "Cold"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Lead Source",
+        "name": "LeadSource",
+        "picklist_values": [
+          "Web",
+          "Referral",
+          "Partner",
+          "Trade Show",
+          "Other"
+        ],
+        "type": "Picklist"
+      }
     ],
-    "type": "Picklist"
-   }
-  ],
-  "is_custom": false,
-  "label": "Case",
-  "name": "Case",
-  "plural": "Cases"
- },
- {
-  "fields": [
-   {
-    "label": "Subject",
-    "length": 120,
-    "name": "Subject",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "default": "Not Started",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Not Started",
-     "In Progress",
-     "Completed",
-     "Deferred"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "default": "Normal",
-    "label": "Priority",
-    "name": "Priority",
-    "picklist_values": [
-     "Low",
-     "Normal",
-     "High"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Due Date",
-    "name": "DueDate",
-    "type": "Date"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "name": "IsRecurring",
-    "label": "Recurring",
-    "type": "Checkbox"
-   },
-   {
-    "name": "RecurrenceType",
-    "label": "Recurrence Type",
-    "type": "Picklist",
-    "picklist_values": [
-     "Daily",
-     "Weekly",
-     "Monthly"
-    ]
-   },
-   {
-    "name": "RecurrenceInterval",
-    "label": "Repeat Every",
-    "type": "Number",
-    "default": 1
-   },
-   {
-    "name": "RecurrenceEndDate",
-    "label": "Repeat Until",
-    "type": "Date"
-   },
-   {
-    "name": "RecurrenceCount",
-    "label": "Number of Occurrences",
-    "type": "Number"
-   },
-   {
-    "name": "OccurrenceNumber",
-    "label": "Occurrence #",
-    "type": "Number",
-    "default": 1
-   }
-  ],
-  "is_custom": false,
-  "label": "Task",
-  "name": "Task",
-  "plural": "Tasks"
- },
- {
-  "fields": [
-   {
-    "label": "Product Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Product Code",
-    "length": 40,
-    "name": "ProductCode",
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "label": "Family",
-    "name": "Family",
-    "picklist_values": [
-     "Hardware",
-     "Software",
-     "Services"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": false,
-  "label": "Product",
-  "name": "Product",
-  "org_wide_visible": true,
-  "plural": "Products"
- },
- {
-  "fields": [
-   {
-    "label": "Price Book Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   },
-   {
-    "default": false,
-    "label": "Standard",
-    "name": "IsStandard",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": false,
-  "label": "Price Book",
-  "name": "PriceBook",
-  "org_wide_visible": true,
-  "plural": "Price Books"
- },
- {
-  "fields": [
-   {
-    "label": "Price Book",
-    "name": "PriceBookId",
-    "reference_to": "PriceBook",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Product",
-    "name": "ProductId",
-    "reference_to": "Product",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Unit Price",
-    "name": "UnitPrice",
-    "required": true,
-    "type": "Currency"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": false,
-  "label": "Price Book Entry",
-  "name": "PriceBookEntry",
-  "org_wide_visible": true,
-  "plural": "Price Book Entries"
- },
- {
-  "fields": [
-   {
-    "label": "Quote Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Opportunity",
-    "name": "OpportunityId",
-    "reference_to": "Opportunity",
-    "type": "Lookup"
-   },
-   {
-    "label": "Price Book",
-    "name": "PriceBookId",
-    "reference_to": "PriceBook",
-    "type": "Lookup"
-   },
-   {
-    "default": "Draft",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Draft",
-     "Needs Review",
-     "Approved",
-     "Rejected"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Expiration Date",
-    "name": "ExpirationDate",
-    "type": "Date"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "label": "Grand Total",
-    "name": "GrandTotal",
-    "rollup": {
-     "field": "TotalPrice",
-     "func": "sum",
-     "object": "QuoteLineItem",
-     "via": "QuoteId"
-    },
-    "type": "Currency"
-   }
-  ],
-  "is_custom": false,
-  "label": "Quote",
-  "name": "Quote",
-  "plural": "Quotes"
- },
- {
-  "fields": [
-   {
-    "label": "Quote",
-    "name": "QuoteId",
-    "reference_to": "Quote",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Price Book Entry",
-    "name": "PriceBookEntryId",
-    "reference_to": "PriceBookEntry",
-    "type": "Lookup"
-   },
-   {
-    "default": 1,
-    "label": "Quantity",
-    "name": "Quantity",
-    "required": true,
-    "type": "Number"
-   },
-   {
-    "label": "Unit Price",
-    "name": "UnitPrice",
-    "required": true,
-    "type": "Currency"
-   },
-   {
-    "label": "Discount %",
-    "name": "Discount",
-    "type": "Percent"
-   },
-   {
-    "label": "Total Price",
-    "name": "TotalPrice",
-    "type": "Currency"
-   }
-  ],
-  "is_custom": false,
-  "label": "Quote Line Item",
-  "name": "QuoteLineItem",
-  "plural": "Quote Line Items"
- },
- {
-  "fields": [
-   {
-    "label": "Model Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Make",
-    "length": 80,
-    "name": "Make",
-    "type": "Text"
-   },
-   {
-    "label": "Model Year",
-    "name": "ModelYear",
-    "type": "Number"
-   },
-   {
-    "label": "Trim",
-    "length": 80,
-    "name": "Trim",
-    "type": "Text"
-   },
-   {
-    "label": "Body Style",
-    "name": "BodyStyle",
-    "picklist_values": [
-     "Sedan",
-     "SUV",
-     "Coupe",
-     "Truck",
-     "Hatchback",
-     "Convertible"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Base MSRP",
-    "name": "BaseMSRP",
-    "type": "Currency"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Vehicle Definition",
-  "name": "VehicleDefinition",
-  "plural": "Vehicle Definitions"
- },
- {
-  "fields": [
-   {
-    "label": "Vehicle Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "VIN",
-    "length": 17,
-    "name": "VIN",
-    "type": "Text"
-   },
-   {
-    "label": "Model",
-    "name": "VehicleDefinitionId",
-    "reference_to": "VehicleDefinition",
-    "type": "Lookup"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "default": "In Stock",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "In Stock",
-     "Reserved",
-     "Sold",
-     "In Service",
-     "Delivered"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Odometer (mi)",
-    "name": "Odometer",
-    "type": "Number"
-   },
-   {
-    "label": "Color",
-    "length": 40,
-    "name": "Color",
-    "type": "Text"
-   },
-   {
-    "label": "License Plate",
-    "length": 20,
-    "name": "LicensePlate",
-    "type": "Text"
-   },
-   {
-    "label": "Purchase Date",
-    "name": "PurchaseDate",
-    "type": "Date"
-   }
-  ],
-  "is_custom": false,
-  "label": "Vehicle",
-  "name": "Vehicle",
-  "plural": "Vehicles"
- },
- {
-  "fields": [
-   {
-    "label": "Asset Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "label": "Product",
-    "name": "ProductId",
-    "reference_to": "Product",
-    "type": "Lookup"
-   },
-   {
-    "label": "Vehicle",
-    "name": "VehicleId",
-    "reference_to": "Vehicle",
-    "type": "Lookup"
-   },
-   {
-    "label": "Serial Number",
-    "length": 80,
-    "name": "SerialNumber",
-    "type": "Text"
-   },
-   {
-    "default": "Purchased",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Purchased",
-     "Registered",
-     "In Service",
-     "Retired"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Purchase Date",
-    "name": "PurchaseDate",
-    "type": "Date"
-   },
-   {
-    "label": "Install Date",
-    "name": "InstallDate",
-    "type": "Date"
-   },
-   {
-    "label": "Warranty End Date",
-    "name": "WarrantyEndDate",
-    "type": "Date"
-   }
-  ],
-  "is_custom": false,
-  "label": "Asset",
-  "name": "Asset",
-  "plural": "Assets"
- },
- {
-  "fields": [
-   {
-    "label": "Order Number",
-    "length": 20,
-    "name": "OrderNumber",
-    "type": "Text"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "default": "Draft",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Draft",
-     "Submitted",
-     "Activated",
-     "Fulfilled",
-     "Cancelled"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Order Date",
-    "name": "OrderDate",
-    "type": "Date"
-   },
-   {
-    "label": "Total Amount",
-    "name": "TotalAmount",
-    "rollup": {
-     "field": "LineTotal",
-     "func": "sum",
-     "object": "OrderItem",
-     "via": "OrderId"
-    },
-    "type": "Currency"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Order",
-  "name": "Order",
-  "plural": "Orders"
- },
- {
-  "fields": [
-   {
-    "label": "Order",
-    "name": "OrderId",
-    "reference_to": "Order",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Product",
-    "name": "ProductId",
-    "reference_to": "Product",
-    "type": "Lookup"
-   },
-   {
-    "label": "Vehicle",
-    "name": "VehicleId",
-    "reference_to": "Vehicle",
-    "type": "Lookup"
-   },
-   {
-    "default": 1,
-    "label": "Quantity",
-    "name": "Quantity",
-    "required": true,
-    "type": "Number"
-   },
-   {
-    "label": "Unit Price",
-    "name": "UnitPrice",
-    "required": true,
-    "type": "Currency"
-   },
-   {
-    "label": "Line Total",
-    "name": "LineTotal",
-    "type": "Currency"
-   }
-  ],
-  "is_custom": false,
-  "label": "Order Product",
-  "name": "OrderItem",
-  "plural": "Order Products"
- },
- {
-  "fields": [
-   {
-    "label": "Delivery Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Delivery Number",
-    "length": 20,
-    "name": "DeliveryNumber",
-    "type": "Text"
-   },
-   {
-    "label": "Order",
-    "name": "OrderId",
-    "reference_to": "Order",
-    "type": "Lookup"
-   },
-   {
-    "label": "Vehicle",
-    "name": "VehicleId",
-    "reference_to": "Vehicle",
-    "type": "Lookup"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "default": "Scheduled",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Scheduled",
-     "In Transit",
-     "Delivered",
-     "Cancelled"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Scheduled Date",
-    "name": "ScheduledDate",
-    "type": "Date"
-   },
-   {
-    "label": "Delivered Date",
-    "name": "DeliveredDate",
-    "type": "Date"
-   },
-   {
-    "label": "Delivery Address",
-    "name": "DeliveryAddress",
-    "type": "TextArea"
-   },
-   {
-    "label": "Driver",
-    "name": "DriverId",
-    "reference_to": "Contact",
-    "type": "Lookup"
-   }
-  ],
-  "is_custom": false,
-  "label": "Delivery",
-  "name": "Delivery",
-  "plural": "Deliveries"
- },
- {
-  "fields": [
-   {
-    "label": "Work Order Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Work Order Number",
-    "length": 20,
-    "name": "WorkOrderNumber",
-    "type": "Text"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "label": "Contact",
-    "name": "ContactId",
-    "reference_to": "Contact",
-    "type": "Lookup"
-   },
-   {
-    "label": "Vehicle",
-    "name": "VehicleId",
-    "reference_to": "Vehicle",
-    "type": "Lookup"
-   },
-   {
-    "label": "Asset",
-    "name": "AssetId",
-    "reference_to": "Asset",
-    "type": "Lookup"
-   },
-   {
-    "default": "New",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "New",
-     "In Progress",
-     "On Hold",
-     "Completed",
-     "Cancelled"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "default": "Medium",
-    "label": "Priority",
-    "name": "Priority",
-    "picklist_values": [
-     "Low",
-     "Medium",
-     "High",
-     "Critical"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Subject",
-    "length": 120,
-    "name": "Subject",
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "label": "Scheduled Start",
-    "name": "ScheduledStart",
-    "type": "DateTime"
-   },
-   {
-    "label": "Scheduled End",
-    "name": "ScheduledEnd",
-    "type": "DateTime"
-   },
-   {
-    "label": "Completed Date",
-    "name": "CompletedDate",
-    "type": "Date"
-   },
-   {
-    "label": "Work Type",
-    "name": "WorkTypeId",
-    "reference_to": "WorkType",
-    "type": "Lookup"
-   },
-   {
-    "label": "Service Territory",
-    "name": "ServiceTerritoryId",
-    "reference_to": "ServiceTerritory",
-    "type": "Lookup"
-   },
-   {
-    "label": "Duration (min)",
-    "name": "DurationMinutes",
-    "type": "Number"
-   },
-   {
-    "label": "Service Address",
-    "name": "ServiceAddress",
-    "type": "Address"
-   }
-  ],
-  "is_custom": false,
-  "label": "Work Order",
-  "name": "WorkOrder",
-  "plural": "Work Orders"
- },
- {
-  "fields": [
-   {
-    "label": "Appointment Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Work Order",
-    "name": "WorkOrderId",
-    "reference_to": "WorkOrder",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "default": "Scheduled",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "None",
-     "Scheduled",
-     "Dispatched",
-     "In Progress",
-     "Completed",
-     "Cannot Complete",
-     "Cancelled"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Scheduled Start",
-    "name": "ScheduledStart",
-    "type": "DateTime"
-   },
-   {
-    "label": "Scheduled End",
-    "name": "ScheduledEnd",
-    "type": "DateTime"
-   },
-   {
-    "label": "Technician",
-    "length": 80,
-    "name": "Technician",
-    "type": "Text"
-   },
-   {
-    "label": "Address",
-    "name": "Address",
-    "type": "TextArea"
-   },
-   {
-    "label": "Assigned Resource",
-    "name": "ServiceResourceId",
-    "reference_to": "ServiceResource",
-    "type": "Lookup"
-   },
-   {
-    "label": "Service Territory",
-    "name": "ServiceTerritoryId",
-    "reference_to": "ServiceTerritory",
-    "type": "Lookup"
-   },
-   {
-    "label": "Arrival Window Start",
-    "name": "ArrivalWindowStart",
-    "type": "DateTime"
-   },
-   {
-    "label": "Arrival Window End",
-    "name": "ArrivalWindowEnd",
-    "type": "DateTime"
-   },
-   {
-    "label": "Actual Start",
-    "name": "ActualStart",
-    "type": "DateTime"
-   },
-   {
-    "label": "Actual End",
-    "name": "ActualEnd",
-    "type": "DateTime"
-   },
-   {
-    "label": "Location",
-    "name": "Location",
-    "type": "Geolocation"
-   },
-   {
-    "label": "Travel Time (min)",
-    "name": "TravelTimeMinutes",
-    "type": "Number"
-   }
-  ],
-  "is_custom": false,
-  "label": "Service Appointment",
-  "name": "ServiceAppointment",
-  "plural": "Service Appointments"
- },
- {
-  "fields": [
-   {
-    "label": "Subject",
-    "length": 120,
-    "name": "Subject",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "label": "Start",
-    "name": "StartDateTime",
-    "type": "DateTime"
-   },
-   {
-    "label": "End",
-    "name": "EndDateTime",
-    "type": "DateTime"
-   },
-   {
-    "label": "Location",
-    "length": 120,
-    "name": "Location",
-    "type": "Text"
-   },
-   {
-    "default": "Meeting",
-    "label": "Type",
-    "name": "EventType",
-    "picklist_values": [
-     "Meeting",
-     "Call",
-     "Demo",
-     "Other"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "label": "Contact",
-    "name": "ContactId",
-    "reference_to": "Contact",
-    "type": "Lookup"
-   }
-  ],
-  "is_custom": false,
-  "label": "Event",
-  "name": "Event",
-  "plural": "Events"
- },
- {
-  "fields": [
-   {
-    "label": "Campaign Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Type",
-    "name": "Type",
-    "picklist_values": [
-     "Email",
-     "Webinar",
-     "Trade Show",
-     "Advertisement",
-     "Referral",
-     "Other"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "default": "Planned",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Planned",
-     "In Progress",
-     "Completed",
-     "Aborted"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Start Date",
-    "name": "StartDate",
-    "type": "Date"
-   },
-   {
-    "label": "End Date",
-    "name": "EndDate",
-    "type": "Date"
-   },
-   {
-    "label": "Budgeted Cost",
-    "name": "BudgetedCost",
-    "type": "Currency"
-   },
-   {
-    "label": "Actual Cost",
-    "name": "ActualCost",
-    "type": "Currency"
-   },
-   {
-    "label": "Expected Revenue",
-    "name": "ExpectedRevenue",
-    "type": "Currency"
-   },
-   {
-    "label": "Responses",
-    "name": "NumResponses",
-    "rollup": {
-     "field": "Responded",
-     "filter": {
-      "==": [
-       {
-        "field": "Responded"
-       },
-       true
-      ]
-     },
-     "func": "count",
-     "object": "CampaignMember",
-     "via": "CampaignId"
-    },
-    "type": "Number"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Campaign",
-  "name": "Campaign",
-  "plural": "Campaigns"
- },
- {
-  "fields": [
-   {
-    "label": "Campaign",
-    "name": "CampaignId",
-    "reference_to": "Campaign",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Contact",
-    "name": "ContactId",
-    "reference_to": "Contact",
-    "type": "Lookup"
-   },
-   {
+    "is_custom": false,
     "label": "Lead",
-    "name": "LeadId",
-    "reference_to": "Lead",
-    "type": "Lookup"
-   },
-   {
-    "default": "Sent",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Sent",
-     "Responded"
+    "name": "Lead",
+    "plural": "Leads"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Amount",
+        "name": "Amount",
+        "type": "Currency"
+      },
+      {
+        "default": "Prospecting",
+        "label": "Stage",
+        "name": "Stage",
+        "picklist_values": [
+          "Prospecting",
+          "Qualification",
+          "Proposal",
+          "Negotiation",
+          "Closed Won",
+          "Closed Lost"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Probability %",
+        "name": "Probability",
+        "type": "Percent"
+      },
+      {
+        "label": "Close Date",
+        "name": "CloseDate",
+        "type": "Date"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "label": "Discount %",
+        "name": "DiscountPercent",
+        "type": "Percent"
+      },
+      {
+        "formula": {
+          "days_between": [
+            {
+              "field": "CreatedDate"
+            },
+            {
+              "today": true
+            }
+          ]
+        },
+        "label": "Days Open",
+        "name": "DaysOpen",
+        "type": "Number"
+      },
+      {
+        "label": "Forecast Category",
+        "name": "ForecastCategory",
+        "picklist_values": [
+          "Pipeline",
+          "Best Case",
+          "Commit",
+          "Omitted",
+          "Closed"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Primary Campaign Source",
+        "name": "PrimaryCampaignId",
+        "reference_to": "Campaign",
+        "type": "Lookup"
+      }
     ],
-    "type": "Picklist",
-    "dynamic_picklist": true
-   },
-   {
-    "default": false,
-    "label": "Responded",
-    "name": "Responded",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": false,
-  "label": "Campaign Member",
-  "name": "CampaignMember",
-  "plural": "Campaign Members"
- },
- {
-  "fields": [
-   {
-    "label": "Contract Number",
-    "length": 20,
-    "name": "ContractNumber",
-    "type": "Text"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "default": "Draft",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Draft",
-     "Activated",
-     "Expired",
-     "Cancelled"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Start Date",
-    "name": "StartDate",
-    "type": "Date"
-   },
-   {
-    "label": "End Date",
-    "name": "EndDate",
-    "type": "Date"
-   },
-   {
-    "label": "Term (months)",
-    "name": "ContractTerm",
-    "type": "Number"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Contract",
-  "name": "Contract",
-  "plural": "Contracts"
- },
- {
-  "fields": [
-   {
-    "label": "Title",
-    "length": 200,
-    "name": "Title",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Article Number",
-    "length": 20,
-    "name": "ArticleNumber",
-    "type": "Text"
-   },
-   {
-    "label": "Summary",
-    "name": "Summary",
-    "type": "TextArea"
-   },
-   {
-    "label": "Body",
-    "name": "Body",
-    "type": "TextArea"
-   },
-   {
-    "default": "Draft",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Draft",
-     "Published",
-     "Archived"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Category",
-    "name": "Category",
-    "picklist_values": [
-     "Troubleshooting",
-     "How-To",
-     "FAQ",
-     "Known Issue"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "default": 0,
-    "label": "Views",
-    "name": "ViewCount",
-    "type": "Number"
-   },
-   {
-    "label": "Product",
-    "name": "ProductId",
-    "reference_to": "Product",
-    "type": "Lookup"
-   }
-  ],
-  "is_custom": false,
-  "label": "Knowledge Article",
-  "name": "KnowledgeArticle",
-  "plural": "Knowledge Articles"
- },
- {
-  "fields": [
-   {
-    "label": "Territory Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Parent Territory",
-    "name": "ParentTerritoryId",
-    "reference_to": "ServiceTerritory",
-    "type": "Lookup"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "label": "Operating Hours",
-    "name": "OperatingHoursId",
-    "reference_to": "OperatingHours",
-    "type": "Lookup"
-   },
-   {
-    "label": "Address",
-    "name": "Address",
-    "type": "Address"
-   }
-  ],
-  "is_custom": false,
-  "label": "Service Territory",
-  "name": "ServiceTerritory",
-  "plural": "Service Territories"
- },
- {
-  "fields": [
-   {
-    "label": "Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Operating Hours",
-  "name": "OperatingHours",
-  "plural": "Operating Hours"
- },
- {
-  "fields": [
-   {
-    "label": "Operating Hours",
-    "name": "OperatingHoursId",
-    "reference_to": "OperatingHours",
-    "type": "MasterDetail"
-   },
-   {
-    "label": "Day of Week",
-    "name": "DayOfWeek",
-    "picklist_values": [
-     "Monday",
-     "Tuesday",
-     "Wednesday",
-     "Thursday",
-     "Friday",
-     "Saturday",
-     "Sunday"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Start Time",
-    "name": "StartTime",
-    "type": "Time"
-   },
-   {
-    "label": "End Time",
-    "name": "EndTime",
-    "type": "Time"
-   }
-  ],
-  "is_custom": false,
-  "label": "Time Slot",
-  "name": "TimeSlot",
-  "plural": "Time Slots"
- },
- {
-  "fields": [
-   {
-    "label": "Resource Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "default": "Technician",
-    "label": "Type",
-    "name": "ResourceType",
-    "picklist_values": [
-     "Technician",
-     "Crew",
-     "Equipment"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Login Username",
-    "length": 80,
-    "name": "Username",
-    "type": "Text"
-   },
-   {
-    "label": "Service Territory",
-    "name": "ServiceTerritoryId",
-    "reference_to": "ServiceTerritory",
-    "type": "Lookup"
-   },
-   {
-    "label": "Operating Hours",
-    "name": "OperatingHoursId",
-    "reference_to": "OperatingHours",
-    "type": "Lookup"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   },
-   {
-    "label": "Phone",
-    "name": "Phone",
-    "type": "Phone"
-   },
-   {
-    "label": "Email",
-    "name": "Email",
-    "type": "Email"
-   },
-   {
-    "label": "Home Base",
-    "name": "HomeBase",
-    "type": "Geolocation"
-   }
-  ],
-  "is_custom": false,
-  "label": "Service Resource",
-  "name": "ServiceResource",
-  "plural": "Service Resources"
- },
- {
-  "fields": [
-   {
-    "label": "Skill Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Skill",
-  "name": "Skill",
-  "plural": "Skills"
- },
- {
-  "fields": [
-   {
-    "label": "Service Resource",
-    "name": "ServiceResourceId",
-    "reference_to": "ServiceResource",
-    "type": "MasterDetail"
-   },
-   {
-    "label": "Skill",
-    "name": "SkillId",
-    "reference_to": "Skill",
-    "type": "MasterDetail"
-   },
-   {
-    "label": "Skill Level",
-    "name": "SkillLevel",
-    "type": "Number"
-   }
-  ],
-  "is_custom": false,
-  "label": "Resource Skill",
-  "name": "ServiceResourceSkill",
-  "plural": "Resource Skills"
- },
- {
-  "fields": [
-   {
-    "label": "Work Type Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "label": "Estimated Duration (min)",
-    "name": "EstimatedDuration",
-    "type": "Number"
-   }
-  ],
-  "is_custom": false,
-  "label": "Work Type",
-  "name": "WorkType",
-  "plural": "Work Types"
- },
- {
-  "fields": [
-   {
-    "label": "Work Type",
-    "name": "WorkTypeId",
-    "reference_to": "WorkType",
-    "type": "MasterDetail"
-   },
-   {
-    "label": "Skill",
-    "name": "SkillId",
-    "reference_to": "Skill",
-    "type": "MasterDetail"
-   }
-  ],
-  "is_custom": false,
-  "label": "Work Type Skill",
-  "name": "WorkTypeSkill",
-  "plural": "Work Type Skills"
- },
- {
-  "fields": [
-   {
-    "label": "Service Resource",
-    "name": "ServiceResourceId",
-    "reference_to": "ServiceResource",
-    "type": "MasterDetail"
-   },
-   {
-    "label": "Start",
-    "name": "Start",
-    "type": "DateTime"
-   },
-   {
-    "label": "End",
-    "name": "End",
-    "type": "DateTime"
-   },
-   {
-    "default": "Vacation",
-    "label": "Type",
-    "name": "Type",
-    "picklist_values": [
-     "Vacation",
-     "Sick",
-     "Training",
-     "Other"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Notes",
-    "name": "Notes",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Resource Absence",
-  "name": "ResourceAbsence",
-  "plural": "Resource Absences"
- },
- {
-  "fields": [
-   {
-    "label": "Crew Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Service Territory",
-    "name": "ServiceTerritoryId",
-    "reference_to": "ServiceTerritory",
-    "type": "Lookup"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": false,
-  "label": "Service Crew",
-  "name": "ServiceCrew",
-  "plural": "Service Crews"
- },
- {
-  "fields": [
-   {
-    "label": "Service Crew",
-    "name": "ServiceCrewId",
-    "reference_to": "ServiceCrew",
-    "type": "MasterDetail"
-   },
-   {
-    "label": "Service Resource",
-    "name": "ServiceResourceId",
-    "reference_to": "ServiceResource",
-    "type": "MasterDetail"
-   },
-   {
-    "default": "Member",
-    "label": "Role",
-    "name": "Role",
-    "picklist_values": [
-     "Leader",
-     "Member"
-    ],
-    "type": "Picklist"
-   }
-  ],
-  "is_custom": false,
-  "label": "Crew Member",
-  "name": "ServiceCrewMember",
-  "plural": "Crew Members"
- },
- {
-  "fields": [
-   {
-    "label": "Location Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "default": "Warehouse",
-    "label": "Type",
-    "name": "LocationType",
-    "picklist_values": [
-     "Van",
-     "Warehouse"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Service Resource",
-    "name": "ServiceResourceId",
-    "reference_to": "ServiceResource",
-    "type": "Lookup"
-   },
-   {
-    "label": "Address",
-    "name": "Address",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Location",
-  "name": "Location",
-  "plural": "Locations"
- },
- {
-  "fields": [
-   {
-    "label": "Product Item Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Product",
-    "name": "ProductId",
-    "reference_to": "Product",
-    "type": "Lookup"
-   },
-   {
-    "label": "Location",
-    "name": "LocationId",
-    "reference_to": "Location",
-    "type": "Lookup"
-   },
-   {
-    "default": 0,
-    "label": "Quantity On Hand",
-    "name": "QuantityOnHand",
-    "type": "Number"
-   }
-  ],
-  "is_custom": false,
-  "label": "Product Item",
-  "name": "ProductItem",
-  "plural": "Product Items"
- },
- {
-  "fields": [
-   {
-    "label": "Product Consumed Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Work Order",
-    "name": "WorkOrderId",
-    "reference_to": "WorkOrder",
-    "type": "Lookup"
-   },
-   {
-    "label": "Service Appointment",
-    "name": "ServiceAppointmentId",
-    "reference_to": "ServiceAppointment",
-    "type": "Lookup"
-   },
-   {
-    "label": "Product",
-    "name": "ProductId",
-    "reference_to": "Product",
-    "type": "Lookup"
-   },
-   {
-    "default": 1,
-    "label": "Quantity",
-    "name": "Quantity",
-    "required": true,
-    "type": "Number"
-   },
-   {
-    "label": "Unit Price",
-    "name": "UnitPrice",
-    "type": "Currency"
-   }
-  ],
-  "is_custom": false,
-  "label": "Product Consumed",
-  "name": "ProductConsumed",
-  "plural": "Products Consumed"
- },
- {
-  "fields": [
-   {
-    "label": "Request Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Product",
-    "name": "ProductId",
-    "reference_to": "Product",
-    "type": "Lookup"
-   },
-   {
-    "label": "Source Location",
-    "name": "SourceLocationId",
-    "reference_to": "Location",
-    "type": "Lookup"
-   },
-   {
-    "label": "Destination Location",
-    "name": "DestinationLocationId",
-    "reference_to": "Location",
-    "type": "Lookup"
-   },
-   {
-    "default": 1,
-    "label": "Quantity",
-    "name": "Quantity",
-    "required": true,
-    "type": "Number"
-   },
-   {
-    "default": "Submitted",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Draft",
-     "Submitted",
-     "Approved",
-     "Fulfilled",
-     "Cancelled"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Requested By",
-    "length": 80,
-    "name": "RequestedBy",
-    "type": "Text"
-   }
-  ],
-  "is_custom": false,
-  "label": "Product Request",
-  "name": "ProductRequest",
-  "plural": "Product Requests"
- },
- {
-  "fields": [
-   {
-    "label": "Plan Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
-    "label": "Work Type",
-    "name": "WorkTypeId",
-    "reference_to": "WorkType",
-    "type": "Lookup"
-   },
-   {
-    "label": "Service Territory",
-    "name": "ServiceTerritoryId",
-    "reference_to": "ServiceTerritory",
-    "type": "Lookup"
-   },
-   {
-    "default": "Monthly",
-    "label": "Frequency",
-    "name": "Frequency",
-    "picklist_values": [
-     "Weekly",
-     "Monthly",
-     "Quarterly",
-     "Yearly"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Start Date",
-    "name": "StartDate",
-    "type": "Date"
-   },
-   {
-    "label": "End Date",
-    "name": "EndDate",
-    "type": "Date"
-   },
-   {
-    "label": "Next Run Date",
-    "name": "NextRunDate",
-    "type": "Date"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   },
-   {
-    "label": "Work Order Subject",
-    "length": 120,
-    "name": "Subject",
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "default": "Medium",
-    "label": "Priority",
-    "name": "Priority",
-    "picklist_values": [
-     "Low",
-     "Medium",
-     "High",
-     "Critical"
-    ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Duration (min)",
-    "name": "DurationMinutes",
-    "type": "Number"
-   }
-  ],
-  "is_custom": false,
-  "label": "Maintenance Plan",
-  "name": "MaintenancePlan",
-  "plural": "Maintenance Plans"
- },
- {
-  "fields": [
-   {
-    "label": "Time Entry Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Service Resource",
-    "name": "ServiceResourceId",
-    "reference_to": "ServiceResource",
-    "type": "Lookup"
-   },
-   {
-    "label": "Service Appointment",
-    "name": "ServiceAppointmentId",
-    "reference_to": "ServiceAppointment",
-    "type": "Lookup"
-   },
-   {
-    "label": "Work Date",
-    "name": "WorkDate",
-    "type": "Date"
-   },
-   {
-    "label": "Hours",
-    "name": "Hours",
-    "required": true,
-    "type": "Number"
-   },
-   {
-    "default": "Work",
-    "label": "Type",
-    "name": "EntryType",
-    "picklist_values": [
-     "Work",
-     "Travel",
-     "Break"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Notes",
-    "name": "Notes",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Time Entry",
-  "name": "TimeEntry",
-  "plural": "Time Entries"
- },
- {
-  "fields": [
-   {
-    "label": "Report Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Service Appointment",
-    "name": "ServiceAppointmentId",
-    "reference_to": "ServiceAppointment",
-    "type": "Lookup"
-   },
-   {
-    "label": "Summary",
-    "name": "Summary",
-    "type": "TextArea"
-   },
-   {
-    "label": "Signed By",
-    "length": 80,
-    "name": "SignatureName",
-    "type": "Text"
-   },
-   {
-    "label": "Signature (PNG data URL)",
-    "name": "SignatureData",
-    "type": "TextArea"
-   },
-   {
-    "label": "Signed At",
-    "name": "SignedAt",
-    "type": "DateTime"
-   }
-  ],
-  "is_custom": false,
-  "label": "Service Report",
-  "name": "ServiceReport",
-  "plural": "Service Reports"
- },
- {
-  "fields": [
-   {
-    "label": "Full Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Contact",
-    "name": "ContactId",
-    "reference_to": "Contact",
-    "type": "Lookup"
-   },
-   {
-    "label": "Username",
-    "length": 80,
-    "name": "Username",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Password Hash",
-    "length": 255,
-    "name": "PasswordHash",
-    "type": "Text"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": false,
-  "label": "Community User",
-  "name": "CommunityUser",
-  "plural": "Community Users"
- },
- {
-  "fields": [
-   {
+    "is_custom": false,
     "label": "Opportunity",
-    "name": "OpportunityId",
-    "reference_to": "Opportunity",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
+    "name": "Opportunity",
+    "plural": "Opportunities"
+  },
+  {
+    "fields": [
+      {
+        "label": "Subject",
+        "length": 120,
+        "name": "Subject",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "default": "New",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "New",
+          "Working",
+          "Escalated",
+          "Closed"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "default": "Medium",
+        "label": "Priority",
+        "name": "Priority",
+        "picklist_values": [
+          "Low",
+          "Medium",
+          "High",
+          "Critical"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "type": "Lookup"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "default": "Other",
+        "label": "Origin",
+        "name": "Origin",
+        "picklist_values": [
+          "Web",
+          "Email",
+          "Phone",
+          "Other"
+        ],
+        "type": "Picklist"
+      }
+    ],
+    "is_custom": false,
+    "label": "Case",
+    "name": "Case",
+    "plural": "Cases"
+  },
+  {
+    "fields": [
+      {
+        "label": "Subject",
+        "length": 120,
+        "name": "Subject",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "default": "Not Started",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Not Started",
+          "In Progress",
+          "Completed",
+          "Deferred"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "default": "Normal",
+        "label": "Priority",
+        "name": "Priority",
+        "picklist_values": [
+          "Low",
+          "Normal",
+          "High"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Due Date",
+        "name": "DueDate",
+        "type": "Date"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "name": "IsRecurring",
+        "label": "Recurring",
+        "type": "Checkbox"
+      },
+      {
+        "name": "RecurrenceType",
+        "label": "Recurrence Type",
+        "type": "Picklist",
+        "picklist_values": [
+          "Daily",
+          "Weekly",
+          "Monthly"
+        ]
+      },
+      {
+        "name": "RecurrenceInterval",
+        "label": "Repeat Every",
+        "type": "Number",
+        "default": 1
+      },
+      {
+        "name": "RecurrenceEndDate",
+        "label": "Repeat Until",
+        "type": "Date"
+      },
+      {
+        "name": "RecurrenceCount",
+        "label": "Number of Occurrences",
+        "type": "Number"
+      },
+      {
+        "name": "OccurrenceNumber",
+        "label": "Occurrence #",
+        "type": "Number",
+        "default": 1
+      },
+      {
+        "name": "WhoId",
+        "label": "Who",
+        "type": "PolymorphicLookup",
+        "reference_to": [
+          "Contact",
+          "Lead"
+        ]
+      },
+      {
+        "name": "WhatId",
+        "label": "What",
+        "type": "PolymorphicLookup",
+        "reference_to": [
+          "Account",
+          "Opportunity",
+          "Campaign",
+          "Case"
+        ]
+      }
+    ],
+    "is_custom": false,
+    "label": "Task",
+    "name": "Task",
+    "plural": "Tasks"
+  },
+  {
+    "fields": [
+      {
+        "label": "Product Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Product Code",
+        "length": 40,
+        "name": "ProductCode",
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "label": "Family",
+        "name": "Family",
+        "picklist_values": [
+          "Hardware",
+          "Software",
+          "Services"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
+    "label": "Product",
+    "name": "Product",
+    "org_wide_visible": true,
+    "plural": "Products"
+  },
+  {
+    "fields": [
+      {
+        "label": "Price Book Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      },
+      {
+        "default": false,
+        "label": "Standard",
+        "name": "IsStandard",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
+    "label": "Price Book",
+    "name": "PriceBook",
+    "org_wide_visible": true,
+    "plural": "Price Books"
+  },
+  {
+    "fields": [
+      {
+        "label": "Price Book",
+        "name": "PriceBookId",
+        "reference_to": "PriceBook",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Unit Price",
+        "name": "UnitPrice",
+        "required": true,
+        "type": "Currency"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
     "label": "Price Book Entry",
-    "name": "PriceBookEntryId",
-    "reference_to": "PriceBookEntry",
-    "type": "Lookup"
-   },
-   {
-    "label": "Product",
-    "name": "ProductId",
-    "reference_to": "Product",
-    "type": "Lookup"
-   },
-   {
-    "label": "Source Quote",
-    "name": "SourceQuoteId",
-    "reference_to": "Quote",
-    "type": "Lookup"
-   },
-   {
-    "default": 1,
-    "label": "Quantity",
-    "name": "Quantity",
-    "required": true,
-    "type": "Number"
-   },
-   {
-    "label": "Sales Price",
-    "name": "UnitPrice",
-    "required": true,
-    "type": "Currency"
-   },
-   {
-    "default": 0,
-    "label": "Discount (%)",
-    "name": "Discount",
-    "type": "Percent"
-   },
-   {
-    "label": "Total Price",
-    "name": "TotalPrice",
-    "type": "Currency"
-   },
-   {
-    "label": "Service Date",
-    "name": "ServiceDate",
-    "type": "Date"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": false,
-  "label": "Opportunity Product",
-  "name": "OpportunityLineItem",
-  "plural": "Opportunity Products"
- },
- {
-  "fields": [
-   {
-    "label": "Opportunity Product",
-    "name": "OpportunityLineItemId",
-    "reference_to": "OpportunityLineItem",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Period",
-    "name": "Period",
-    "required": true,
-    "type": "Date"
-   },
-   {
-    "label": "Amount",
-    "name": "Amount",
-    "required": true,
-    "type": "Currency"
-   },
-   {
-    "default": "Revenue",
-    "label": "Type",
-    "name": "Type",
-    "picklist_values": [
-     "Revenue"
+    "name": "PriceBookEntry",
+    "org_wide_visible": true,
+    "plural": "Price Book Entries"
+  },
+  {
+    "fields": [
+      {
+        "label": "Quote Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "type": "Lookup",
+        "delete_behavior": "clear"
+      },
+      {
+        "label": "Price Book",
+        "name": "PriceBookId",
+        "reference_to": "PriceBook",
+        "type": "Lookup",
+        "delete_behavior": "clear"
+      },
+      {
+        "default": "Draft",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Draft",
+          "Needs Review",
+          "Approved",
+          "Rejected"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Expiration Date",
+        "name": "ExpirationDate",
+        "type": "Date"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "label": "Grand Total",
+        "name": "GrandTotal",
+        "rollup": {
+          "field": "TotalPrice",
+          "func": "sum",
+          "object": "QuoteLineItem",
+          "via": "QuoteId"
+        },
+        "type": "Currency"
+      }
     ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Description",
-    "length": 120,
-    "name": "Description",
-    "type": "Text"
-   }
-  ],
-  "is_custom": false,
-  "label": "Revenue Schedule",
-  "name": "RevenueSchedule",
-  "plural": "Revenue Schedules"
- },
- {
-  "fields": [
-   {
+    "is_custom": false,
     "label": "Quote",
-    "name": "QuoteId",
-    "reference_to": "Quote",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Opportunity",
-    "name": "OpportunityId",
-    "reference_to": "Opportunity",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": false,
-  "label": "Quote Sync",
-  "name": "QuoteSync",
-  "plural": "Quote Syncs"
- },
- {
-  "fields": [
-   {
-    "label": "Opportunity",
-    "name": "OpportunityId",
-    "reference_to": "Opportunity",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Contact",
-    "name": "ContactId",
-    "reference_to": "Contact",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "default": "Other",
-    "label": "Role",
-    "name": "Role",
-    "picklist_values": [
-     "Decision Maker",
-     "Economic Buyer",
-     "Champion",
-     "End User",
-     "Influencer",
-     "Other"
+    "name": "Quote",
+    "plural": "Quotes"
+  },
+  {
+    "fields": [
+      {
+        "label": "Quote",
+        "name": "QuoteId",
+        "reference_to": "Quote",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Price Book Entry",
+        "name": "PriceBookEntryId",
+        "reference_to": "PriceBookEntry",
+        "type": "Lookup"
+      },
+      {
+        "default": 1,
+        "label": "Quantity",
+        "name": "Quantity",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "label": "Unit Price",
+        "name": "UnitPrice",
+        "required": true,
+        "type": "Currency"
+      },
+      {
+        "label": "Discount %",
+        "name": "Discount",
+        "type": "Percent"
+      },
+      {
+        "label": "Total Price",
+        "name": "TotalPrice",
+        "type": "Currency"
+      }
     ],
-    "type": "Picklist"
-   },
-   {
-    "default": false,
-    "label": "Primary",
-    "name": "IsPrimary",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": false,
-  "label": "Opportunity Contact Role",
-  "name": "OpportunityContactRole",
-  "plural": "Opportunity Contact Roles"
- },
- {
-  "fields": [
-   {
-    "label": "Opportunity",
-    "name": "OpportunityId",
-    "reference_to": "Opportunity",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "User",
-    "length": 64,
-    "name": "UserId",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "default": "Sales Rep",
-    "label": "Team Role",
-    "name": "TeamRole",
-    "picklist_values": [
-     "Account Manager",
-     "Sales Rep",
-     "SE",
-     "Executive Sponsor",
-     "Other"
+    "is_custom": false,
+    "label": "Quote Line Item",
+    "name": "QuoteLineItem",
+    "plural": "Quote Line Items"
+  },
+  {
+    "fields": [
+      {
+        "label": "Model Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Make",
+        "length": 80,
+        "name": "Make",
+        "type": "Text"
+      },
+      {
+        "label": "Model Year",
+        "name": "ModelYear",
+        "type": "Number"
+      },
+      {
+        "label": "Trim",
+        "length": 80,
+        "name": "Trim",
+        "type": "Text"
+      },
+      {
+        "label": "Body Style",
+        "name": "BodyStyle",
+        "picklist_values": [
+          "Sedan",
+          "SUV",
+          "Coupe",
+          "Truck",
+          "Hatchback",
+          "Convertible"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Base MSRP",
+        "name": "BaseMSRP",
+        "type": "Currency"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
     ],
-    "type": "Picklist"
-   },
-   {
-    "default": "Read",
-    "label": "Opportunity Access",
-    "name": "AccessLevel",
-    "picklist_values": [
-     "Read",
-     "Edit"
+    "is_custom": false,
+    "label": "Vehicle Definition",
+    "name": "VehicleDefinition",
+    "plural": "Vehicle Definitions"
+  },
+  {
+    "fields": [
+      {
+        "label": "Vehicle Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "VIN",
+        "length": 17,
+        "name": "VIN",
+        "type": "Text"
+      },
+      {
+        "label": "Model",
+        "name": "VehicleDefinitionId",
+        "reference_to": "VehicleDefinition",
+        "type": "Lookup"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "default": "In Stock",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "In Stock",
+          "Reserved",
+          "Sold",
+          "In Service",
+          "Delivered"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Odometer (mi)",
+        "name": "Odometer",
+        "type": "Number"
+      },
+      {
+        "label": "Color",
+        "length": 40,
+        "name": "Color",
+        "type": "Text"
+      },
+      {
+        "label": "License Plate",
+        "length": 20,
+        "name": "LicensePlate",
+        "type": "Text"
+      },
+      {
+        "label": "Purchase Date",
+        "name": "PurchaseDate",
+        "type": "Date"
+      }
     ],
-    "type": "Picklist"
-   }
-  ],
-  "is_custom": false,
-  "label": "Opportunity Team Member",
-  "name": "OpportunityTeamMember",
-  "plural": "Opportunity Team Members"
- },
- {
-  "fields": [
-   {
-    "label": "Opportunity",
-    "name": "OpportunityId",
-    "reference_to": "Opportunity",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Team Member",
-    "name": "TeamMemberId",
-    "reference_to": "OpportunityTeamMember",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "default": "Revenue",
-    "label": "Split Type",
-    "name": "SplitType",
-    "picklist_values": [
-     "Revenue",
-     "Credit"
+    "is_custom": false,
+    "label": "Vehicle",
+    "name": "Vehicle",
+    "plural": "Vehicles"
+  },
+  {
+    "fields": [
+      {
+        "label": "Asset Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "type": "Lookup"
+      },
+      {
+        "label": "Vehicle",
+        "name": "VehicleId",
+        "reference_to": "Vehicle",
+        "type": "Lookup"
+      },
+      {
+        "label": "Serial Number",
+        "length": 80,
+        "name": "SerialNumber",
+        "type": "Text"
+      },
+      {
+        "default": "Purchased",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Purchased",
+          "Registered",
+          "In Service",
+          "Retired"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Purchase Date",
+        "name": "PurchaseDate",
+        "type": "Date"
+      },
+      {
+        "label": "Install Date",
+        "name": "InstallDate",
+        "type": "Date"
+      },
+      {
+        "label": "Warranty End Date",
+        "name": "WarrantyEndDate",
+        "type": "Date"
+      }
     ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Split %",
-    "name": "SplitPercentage",
-    "required": true,
-    "type": "Number"
-   }
-  ],
-  "is_custom": false,
-  "label": "Opportunity Split",
-  "name": "OpportunitySplit",
-  "plural": "Opportunity Splits"
- },
- {
-  "fields": [
-   {
-    "label": "Team Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": true,
-  "label": "Case Team Definition",
-  "name": "CaseTeamDef",
-  "plural": "Case Team Definitions"
- },
- {
-  "fields": [
-   {
-    "label": "Case Team",
-    "name": "CaseTeamDefId",
-    "reference_to": "CaseTeamDef",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "User",
-    "length": 64,
-    "name": "UserId",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "default": "Support Agent",
-    "label": "Team Role",
-    "name": "TeamRole",
-    "picklist_values": [
-     "Support Agent",
-     "Support Manager",
-     "SME",
-     "Other"
-    ],
-    "required": true,
-    "type": "Picklist"
-   }
-  ],
-  "is_custom": true,
-  "label": "Case Team Member",
-  "name": "CaseTeamMemberDef",
-  "plural": "Case Team Members"
- },
- {
-  "fields": [
-   {
-    "label": "Entitlement Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Account",
-    "name": "AccountId",
-    "reference_to": "Account",
-    "type": "Lookup"
-   },
-   {
+    "is_custom": false,
     "label": "Asset",
-    "name": "AssetId",
-    "reference_to": "Asset",
-    "type": "Lookup"
-   },
-   {
-    "default": "Web Support",
-    "label": "Type",
-    "name": "Type",
-    "picklist_values": [
-     "Phone Support",
-     "Web Support",
-     "Premier"
+    "name": "Asset",
+    "plural": "Assets"
+  },
+  {
+    "fields": [
+      {
+        "label": "Order Number",
+        "length": 20,
+        "name": "OrderNumber",
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "default": "Draft",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Draft",
+          "Submitted",
+          "Activated",
+          "Fulfilled",
+          "Cancelled"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Order Date",
+        "name": "OrderDate",
+        "type": "Date"
+      },
+      {
+        "label": "Total Amount",
+        "name": "TotalAmount",
+        "rollup": {
+          "field": "LineTotal",
+          "func": "sum",
+          "object": "OrderItem",
+          "via": "OrderId"
+        },
+        "type": "Currency"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
     ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "default": "Draft",
-    "label": "Status",
-    "name": "Status",
-    "picklist_values": [
-     "Draft",
-     "Active",
-     "Expired"
-    ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Start Date",
-    "name": "StartDate",
-    "type": "Date"
-   },
-   {
-    "label": "End Date",
-    "name": "EndDate",
-    "type": "Date"
-   },
-   {
-    "label": "Cases Per Period",
-    "name": "CasesPerPeriod",
-    "type": "Number"
-   },
-   {
-    "label": "Entitlement Process",
-    "name": "EntitlementProcessId",
-    "reference_to": "EntitlementProcess",
-    "type": "Lookup"
-   }
-  ],
-  "is_custom": true,
-  "label": "Entitlement",
-  "name": "Entitlement",
-  "plural": "Entitlements"
- },
- {
-  "fields": [
-   {
-    "label": "Process Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Description",
-    "name": "Description",
-    "type": "TextArea"
-   },
-   {
-    "default": true,
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": true,
-  "label": "Entitlement Process",
-  "name": "EntitlementProcess",
-  "plural": "Entitlement Processes"
- },
- {
-  "fields": [
-   {
-    "label": "Entitlement Process",
-    "name": "EntitlementProcessId",
-    "reference_to": "EntitlementProcess",
-    "required": true,
-    "type": "Lookup"
-   },
-   {
-    "label": "Milestone Name",
-    "length": 80,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Target (minutes)",
-    "name": "TargetMinutes",
-    "required": true,
-    "type": "Number"
-   },
-   {
+    "is_custom": false,
     "label": "Order",
-    "name": "MilestoneOrder",
-    "type": "Number"
-   }
-  ],
-  "is_custom": true,
-  "label": "Entitlement Process Milestone",
-  "name": "EntitlementProcessMilestone",
-  "plural": "Entitlement Process Milestones"
- },
- {
-  "fields": [
-   {
-    "label": "Title",
-    "length": 120,
-    "name": "Title",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Body",
-    "name": "Body",
-    "type": "TextArea"
-   },
-   {
-    "label": "Parent Record",
-    "length": 64,
-    "name": "ParentId",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Parent Type",
-    "name": "ParentType",
-    "picklist_values": [
-     "Account",
-     "Contact",
-     "Opportunity",
-     "Case",
-     "Lead"
+    "name": "Order",
+    "plural": "Orders"
+  },
+  {
+    "fields": [
+      {
+        "label": "Order",
+        "name": "OrderId",
+        "reference_to": "Order",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "type": "Lookup"
+      },
+      {
+        "label": "Vehicle",
+        "name": "VehicleId",
+        "reference_to": "Vehicle",
+        "type": "Lookup"
+      },
+      {
+        "default": 1,
+        "label": "Quantity",
+        "name": "Quantity",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "label": "Unit Price",
+        "name": "UnitPrice",
+        "required": true,
+        "type": "Currency"
+      },
+      {
+        "label": "Line Total",
+        "name": "LineTotal",
+        "type": "Currency"
+      }
     ],
-    "required": true,
-    "type": "Picklist"
-   },
-   {
-    "label": "Owner",
-    "length": 64,
-    "name": "OwnerId",
-    "type": "Text"
-   },
-   {
-    "default": false,
-    "label": "Private",
-    "name": "IsPrivate",
-    "type": "Checkbox"
-   }
-  ],
-  "is_custom": true,
-  "label": "Note",
-  "name": "Note",
-  "plural": "Notes"
- },
- {
-  "fields": [
-   {
-    "label": "Rule Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Object",
-    "length": 80,
-    "name": "ObjectName",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Match Fields (comma-separated)",
-    "name": "Fields",
-    "type": "TextArea"
-   },
-   {
-    "label": "Match Type",
-    "name": "MatchType",
-    "picklist_values": [
-     "Exact",
-     "Fuzzy"
+    "is_custom": false,
+    "label": "Order Product",
+    "name": "OrderItem",
+    "plural": "Order Products"
+  },
+  {
+    "fields": [
+      {
+        "label": "Delivery Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Delivery Number",
+        "length": 20,
+        "name": "DeliveryNumber",
+        "type": "Text"
+      },
+      {
+        "label": "Order",
+        "name": "OrderId",
+        "reference_to": "Order",
+        "type": "Lookup"
+      },
+      {
+        "label": "Vehicle",
+        "name": "VehicleId",
+        "reference_to": "Vehicle",
+        "type": "Lookup"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "default": "Scheduled",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Scheduled",
+          "In Transit",
+          "Delivered",
+          "Cancelled"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Scheduled Date",
+        "name": "ScheduledDate",
+        "type": "Date"
+      },
+      {
+        "label": "Delivered Date",
+        "name": "DeliveredDate",
+        "type": "Date"
+      },
+      {
+        "label": "Delivery Address",
+        "name": "DeliveryAddress",
+        "type": "TextArea"
+      },
+      {
+        "label": "Driver",
+        "name": "DriverId",
+        "reference_to": "Contact",
+        "type": "Lookup"
+      }
     ],
-    "type": "Picklist",
-    "default": "Exact"
-   },
-   {
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox",
-    "default": true
-   }
-  ],
-  "is_custom": true,
-  "label": "Matching Rule",
-  "name": "MatchingRule",
-  "plural": "Matching Rules"
- },
- {
-  "fields": [
-   {
-    "label": "Rule Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Object",
-    "length": 80,
-    "name": "ObjectName",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Matching Rule",
-    "name": "MatchingRuleId",
-    "reference_to": "MatchingRule",
-    "type": "Lookup"
-   },
-   {
-    "label": "Action",
-    "name": "Action",
-    "picklist_values": [
-     "Block",
-     "Warn"
+    "is_custom": false,
+    "label": "Delivery",
+    "name": "Delivery",
+    "plural": "Deliveries"
+  },
+  {
+    "fields": [
+      {
+        "label": "Work Order Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Work Order Number",
+        "length": 20,
+        "name": "WorkOrderNumber",
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "type": "Lookup"
+      },
+      {
+        "label": "Vehicle",
+        "name": "VehicleId",
+        "reference_to": "Vehicle",
+        "type": "Lookup"
+      },
+      {
+        "label": "Asset",
+        "name": "AssetId",
+        "reference_to": "Asset",
+        "type": "Lookup"
+      },
+      {
+        "default": "New",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "New",
+          "In Progress",
+          "On Hold",
+          "Completed",
+          "Cancelled"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "default": "Medium",
+        "label": "Priority",
+        "name": "Priority",
+        "picklist_values": [
+          "Low",
+          "Medium",
+          "High",
+          "Critical"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Subject",
+        "length": 120,
+        "name": "Subject",
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "label": "Scheduled Start",
+        "name": "ScheduledStart",
+        "type": "DateTime"
+      },
+      {
+        "label": "Scheduled End",
+        "name": "ScheduledEnd",
+        "type": "DateTime"
+      },
+      {
+        "label": "Completed Date",
+        "name": "CompletedDate",
+        "type": "Date"
+      },
+      {
+        "label": "Work Type",
+        "name": "WorkTypeId",
+        "reference_to": "WorkType",
+        "type": "Lookup"
+      },
+      {
+        "label": "Service Territory",
+        "name": "ServiceTerritoryId",
+        "reference_to": "ServiceTerritory",
+        "type": "Lookup"
+      },
+      {
+        "label": "Duration (min)",
+        "name": "DurationMinutes",
+        "type": "Number"
+      },
+      {
+        "label": "Service Address",
+        "name": "ServiceAddress",
+        "type": "Address"
+      }
     ],
-    "type": "Picklist",
-    "default": "Warn"
-   },
-   {
-    "label": "Message",
-    "name": "Message",
-    "type": "TextArea"
-   },
-   {
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox",
-    "default": true
-   },
-   {
-    "label": "Applies On",
-    "name": "AppliesOn",
-    "picklist_values": [
-     "Create",
-     "Update",
-     "Both"
+    "is_custom": false,
+    "label": "Work Order",
+    "name": "WorkOrder",
+    "plural": "Work Orders"
+  },
+  {
+    "fields": [
+      {
+        "label": "Appointment Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Work Order",
+        "name": "WorkOrderId",
+        "reference_to": "WorkOrder",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "default": "Scheduled",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "None",
+          "Scheduled",
+          "Dispatched",
+          "In Progress",
+          "Completed",
+          "Cannot Complete",
+          "Cancelled"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Scheduled Start",
+        "name": "ScheduledStart",
+        "type": "DateTime"
+      },
+      {
+        "label": "Scheduled End",
+        "name": "ScheduledEnd",
+        "type": "DateTime"
+      },
+      {
+        "label": "Technician",
+        "length": 80,
+        "name": "Technician",
+        "type": "Text"
+      },
+      {
+        "label": "Address",
+        "name": "Address",
+        "type": "TextArea"
+      },
+      {
+        "label": "Assigned Resource",
+        "name": "ServiceResourceId",
+        "reference_to": "ServiceResource",
+        "type": "Lookup"
+      },
+      {
+        "label": "Service Territory",
+        "name": "ServiceTerritoryId",
+        "reference_to": "ServiceTerritory",
+        "type": "Lookup"
+      },
+      {
+        "label": "Arrival Window Start",
+        "name": "ArrivalWindowStart",
+        "type": "DateTime"
+      },
+      {
+        "label": "Arrival Window End",
+        "name": "ArrivalWindowEnd",
+        "type": "DateTime"
+      },
+      {
+        "label": "Actual Start",
+        "name": "ActualStart",
+        "type": "DateTime"
+      },
+      {
+        "label": "Actual End",
+        "name": "ActualEnd",
+        "type": "DateTime"
+      },
+      {
+        "label": "Location",
+        "name": "Location",
+        "type": "Geolocation"
+      },
+      {
+        "label": "Travel Time (min)",
+        "name": "TravelTimeMinutes",
+        "type": "Number"
+      }
     ],
-    "type": "Picklist",
-    "default": "Both"
-   }
-  ],
-  "is_custom": true,
-  "label": "Duplicate Rule",
-  "name": "DuplicateRule",
-  "plural": "Duplicate Rules"
- },
- {
-  "fields": [
-   {
-    "label": "Quota Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Owner",
-    "length": 80,
-    "name": "OwnerId",
-    "type": "Text"
-   },
-   {
-    "label": "Period",
-    "length": 20,
-    "name": "Period",
-    "type": "Text"
-   },
-   {
-    "label": "Quota Amount",
-    "name": "QuotaAmount",
-    "type": "Currency"
-   },
-   {
-    "label": "Object",
-    "length": 80,
-    "name": "ObjectName",
-    "type": "Text",
-    "default": "Opportunity"
-   }
-  ],
-  "is_custom": true,
-  "label": "Forecast Quota",
-  "name": "ForecastQuota",
-  "plural": "Forecast Quotas"
- },
- {
-  "fields": [
-   {
-    "label": "Alert Name",
-    "length": 120,
-    "name": "Name",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Object",
-    "length": 80,
-    "name": "ObjectName",
-    "required": true,
-    "type": "Text"
-   },
-   {
-    "label": "Trigger Event",
-    "name": "TriggerEvent",
-    "picklist_values": [
-     "Create",
-     "Update"
+    "is_custom": false,
+    "label": "Service Appointment",
+    "name": "ServiceAppointment",
+    "plural": "Service Appointments"
+  },
+  {
+    "fields": [
+      {
+        "label": "Subject",
+        "length": 120,
+        "name": "Subject",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "label": "Start",
+        "name": "StartDateTime",
+        "type": "DateTime"
+      },
+      {
+        "label": "End",
+        "name": "EndDateTime",
+        "type": "DateTime"
+      },
+      {
+        "label": "Location",
+        "length": 120,
+        "name": "Location",
+        "type": "Text"
+      },
+      {
+        "default": "Meeting",
+        "label": "Type",
+        "name": "EventType",
+        "picklist_values": [
+          "Meeting",
+          "Call",
+          "Demo",
+          "Other"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "type": "Lookup"
+      },
+      {
+        "name": "WhoId",
+        "label": "Who",
+        "type": "PolymorphicLookup",
+        "reference_to": [
+          "Contact",
+          "Lead"
+        ]
+      },
+      {
+        "name": "WhatId",
+        "label": "What",
+        "type": "PolymorphicLookup",
+        "reference_to": [
+          "Account",
+          "Opportunity",
+          "Campaign"
+        ]
+      }
     ],
-    "type": "Picklist"
-   },
-   {
-    "label": "Recipients (comma-separated user ids or email addresses)",
-    "name": "Recipients",
-    "type": "TextArea"
-   },
-   {
-    "label": "Email Template",
-    "length": 80,
-    "name": "EmailTemplateId",
-    "type": "Text"
-   },
-   {
-    "label": "Active",
-    "name": "IsActive",
-    "type": "Checkbox",
-    "default": true
-   },
-   {
-    "label": "Criteria (field-equals JSON, optional)",
-    "name": "Criteria",
-    "type": "TextArea"
-   }
-  ],
-  "is_custom": true,
-  "label": "Email Alert",
-  "name": "EmailAlert",
-  "plural": "Email Alerts"
- },
- {
-  "fields": [
-   {
-    "label": "Influence Name",
-    "length": 120,
-    "name": "Name",
-    "type": "Text"
-   },
-   {
+    "is_custom": false,
+    "label": "Event",
+    "name": "Event",
+    "plural": "Events"
+  },
+  {
+    "fields": [
+      {
+        "label": "Campaign Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Type",
+        "name": "Type",
+        "picklist_values": [
+          "Email",
+          "Webinar",
+          "Trade Show",
+          "Advertisement",
+          "Referral",
+          "Other"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "default": "Planned",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Planned",
+          "In Progress",
+          "Completed",
+          "Aborted"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Start Date",
+        "name": "StartDate",
+        "type": "Date"
+      },
+      {
+        "label": "End Date",
+        "name": "EndDate",
+        "type": "Date"
+      },
+      {
+        "label": "Budgeted Cost",
+        "name": "BudgetedCost",
+        "type": "Currency"
+      },
+      {
+        "label": "Actual Cost",
+        "name": "ActualCost",
+        "type": "Currency"
+      },
+      {
+        "label": "Expected Revenue",
+        "name": "ExpectedRevenue",
+        "type": "Currency"
+      },
+      {
+        "label": "Responses",
+        "name": "NumResponses",
+        "rollup": {
+          "field": "Responded",
+          "filter": {
+            "==": [
+              {
+                "field": "Responded"
+              },
+              true
+            ]
+          },
+          "func": "count",
+          "object": "CampaignMember",
+          "via": "CampaignId"
+        },
+        "type": "Number"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
     "label": "Campaign",
-    "name": "CampaignId",
-    "reference_to": "Campaign",
-    "type": "Lookup"
-   },
-   {
-    "label": "Opportunity",
-    "name": "OpportunityId",
-    "reference_to": "Opportunity",
-    "type": "Lookup"
-   },
-   {
-    "label": "Contact",
-    "name": "ContactId",
-    "reference_to": "Contact",
-    "type": "Lookup"
-   },
-   {
-    "label": "Influence %",
-    "name": "InfluencePercent",
-    "type": "Percent"
-   },
-   {
-    "label": "Attribution Model",
-    "name": "Model",
-    "picklist_values": [
-     "Primary Campaign Source",
-     "First Touch",
-     "Last Touch",
-     "Even Split"
+    "name": "Campaign",
+    "plural": "Campaigns"
+  },
+  {
+    "fields": [
+      {
+        "label": "Campaign",
+        "name": "CampaignId",
+        "reference_to": "Campaign",
+        "required": true,
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "type": "Lookup"
+      },
+      {
+        "label": "Lead",
+        "name": "LeadId",
+        "reference_to": "Lead",
+        "type": "Lookup"
+      },
+      {
+        "default": "Sent",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Sent",
+          "Responded"
+        ],
+        "type": "Picklist",
+        "dynamic_picklist": true
+      },
+      {
+        "default": false,
+        "label": "Responded",
+        "name": "Responded",
+        "type": "Checkbox"
+      }
     ],
-    "type": "Picklist"
-   }
-  ],
-  "is_custom": true,
-  "label": "Campaign Influence",
-  "name": "CampaignInfluence",
-  "plural": "Campaign Influence"
- }
+    "is_custom": false,
+    "label": "Campaign Member",
+    "name": "CampaignMember",
+    "plural": "Campaign Members"
+  },
+  {
+    "fields": [
+      {
+        "label": "Contract Number",
+        "length": 20,
+        "name": "ContractNumber",
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "default": "Draft",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Draft",
+          "Activated",
+          "Expired",
+          "Cancelled"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Start Date",
+        "name": "StartDate",
+        "type": "Date"
+      },
+      {
+        "label": "End Date",
+        "name": "EndDate",
+        "type": "Date"
+      },
+      {
+        "label": "Term (months)",
+        "name": "ContractTerm",
+        "type": "Number"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
+    "label": "Contract",
+    "name": "Contract",
+    "plural": "Contracts"
+  },
+  {
+    "fields": [
+      {
+        "label": "Title",
+        "length": 200,
+        "name": "Title",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Article Number",
+        "length": 20,
+        "name": "ArticleNumber",
+        "type": "Text"
+      },
+      {
+        "label": "Summary",
+        "name": "Summary",
+        "type": "TextArea"
+      },
+      {
+        "label": "Body",
+        "name": "Body",
+        "type": "TextArea"
+      },
+      {
+        "default": "Draft",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Draft",
+          "Published",
+          "Archived"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Category",
+        "name": "Category",
+        "picklist_values": [
+          "Troubleshooting",
+          "How-To",
+          "FAQ",
+          "Known Issue"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "default": 0,
+        "label": "Views",
+        "name": "ViewCount",
+        "type": "Number"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "type": "Lookup"
+      }
+    ],
+    "is_custom": false,
+    "label": "Knowledge Article",
+    "name": "KnowledgeArticle",
+    "plural": "Knowledge Articles"
+  },
+  {
+    "fields": [
+      {
+        "label": "Territory Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Parent Territory",
+        "name": "ParentTerritoryId",
+        "reference_to": "ServiceTerritory",
+        "type": "Lookup"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "label": "Operating Hours",
+        "name": "OperatingHoursId",
+        "reference_to": "OperatingHours",
+        "type": "Lookup"
+      },
+      {
+        "label": "Address",
+        "name": "Address",
+        "type": "Address"
+      }
+    ],
+    "is_custom": false,
+    "label": "Service Territory",
+    "name": "ServiceTerritory",
+    "plural": "Service Territories"
+  },
+  {
+    "fields": [
+      {
+        "label": "Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
+    "label": "Operating Hours",
+    "name": "OperatingHours",
+    "plural": "Operating Hours"
+  },
+  {
+    "fields": [
+      {
+        "label": "Operating Hours",
+        "name": "OperatingHoursId",
+        "reference_to": "OperatingHours",
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Day of Week",
+        "name": "DayOfWeek",
+        "picklist_values": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+          "Sunday"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Start Time",
+        "name": "StartTime",
+        "type": "Time"
+      },
+      {
+        "label": "End Time",
+        "name": "EndTime",
+        "type": "Time"
+      }
+    ],
+    "is_custom": false,
+    "label": "Time Slot",
+    "name": "TimeSlot",
+    "plural": "Time Slots"
+  },
+  {
+    "fields": [
+      {
+        "label": "Resource Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "default": "Technician",
+        "label": "Type",
+        "name": "ResourceType",
+        "picklist_values": [
+          "Technician",
+          "Crew",
+          "Equipment"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Login Username",
+        "length": 80,
+        "name": "Username",
+        "type": "Text"
+      },
+      {
+        "label": "Service Territory",
+        "name": "ServiceTerritoryId",
+        "reference_to": "ServiceTerritory",
+        "type": "Lookup"
+      },
+      {
+        "label": "Operating Hours",
+        "name": "OperatingHoursId",
+        "reference_to": "OperatingHours",
+        "type": "Lookup"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      },
+      {
+        "label": "Phone",
+        "name": "Phone",
+        "type": "Phone"
+      },
+      {
+        "label": "Email",
+        "name": "Email",
+        "type": "Email"
+      },
+      {
+        "label": "Home Base",
+        "name": "HomeBase",
+        "type": "Geolocation"
+      }
+    ],
+    "is_custom": false,
+    "label": "Service Resource",
+    "name": "ServiceResource",
+    "plural": "Service Resources"
+  },
+  {
+    "fields": [
+      {
+        "label": "Skill Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
+    "label": "Skill",
+    "name": "Skill",
+    "plural": "Skills"
+  },
+  {
+    "fields": [
+      {
+        "label": "Service Resource",
+        "name": "ServiceResourceId",
+        "reference_to": "ServiceResource",
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Skill",
+        "name": "SkillId",
+        "reference_to": "Skill",
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Skill Level",
+        "name": "SkillLevel",
+        "type": "Number"
+      }
+    ],
+    "is_custom": false,
+    "label": "Resource Skill",
+    "name": "ServiceResourceSkill",
+    "plural": "Resource Skills"
+  },
+  {
+    "fields": [
+      {
+        "label": "Work Type Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "label": "Estimated Duration (min)",
+        "name": "EstimatedDuration",
+        "type": "Number"
+      }
+    ],
+    "is_custom": false,
+    "label": "Work Type",
+    "name": "WorkType",
+    "plural": "Work Types"
+  },
+  {
+    "fields": [
+      {
+        "label": "Work Type",
+        "name": "WorkTypeId",
+        "reference_to": "WorkType",
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Skill",
+        "name": "SkillId",
+        "reference_to": "Skill",
+        "type": "MasterDetail"
+      }
+    ],
+    "is_custom": false,
+    "label": "Work Type Skill",
+    "name": "WorkTypeSkill",
+    "plural": "Work Type Skills"
+  },
+  {
+    "fields": [
+      {
+        "label": "Service Resource",
+        "name": "ServiceResourceId",
+        "reference_to": "ServiceResource",
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Start",
+        "name": "Start",
+        "type": "DateTime"
+      },
+      {
+        "label": "End",
+        "name": "End",
+        "type": "DateTime"
+      },
+      {
+        "default": "Vacation",
+        "label": "Type",
+        "name": "Type",
+        "picklist_values": [
+          "Vacation",
+          "Sick",
+          "Training",
+          "Other"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Notes",
+        "name": "Notes",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
+    "label": "Resource Absence",
+    "name": "ResourceAbsence",
+    "plural": "Resource Absences"
+  },
+  {
+    "fields": [
+      {
+        "label": "Crew Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Service Territory",
+        "name": "ServiceTerritoryId",
+        "reference_to": "ServiceTerritory",
+        "type": "Lookup"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
+    "label": "Service Crew",
+    "name": "ServiceCrew",
+    "plural": "Service Crews"
+  },
+  {
+    "fields": [
+      {
+        "label": "Service Crew",
+        "name": "ServiceCrewId",
+        "reference_to": "ServiceCrew",
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Service Resource",
+        "name": "ServiceResourceId",
+        "reference_to": "ServiceResource",
+        "type": "MasterDetail"
+      },
+      {
+        "default": "Member",
+        "label": "Role",
+        "name": "Role",
+        "picklist_values": [
+          "Leader",
+          "Member"
+        ],
+        "type": "Picklist"
+      }
+    ],
+    "is_custom": false,
+    "label": "Crew Member",
+    "name": "ServiceCrewMember",
+    "plural": "Crew Members"
+  },
+  {
+    "fields": [
+      {
+        "label": "Location Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "default": "Warehouse",
+        "label": "Type",
+        "name": "LocationType",
+        "picklist_values": [
+          "Van",
+          "Warehouse"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Service Resource",
+        "name": "ServiceResourceId",
+        "reference_to": "ServiceResource",
+        "type": "Lookup"
+      },
+      {
+        "label": "Address",
+        "name": "Address",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
+    "label": "Location",
+    "name": "Location",
+    "plural": "Locations"
+  },
+  {
+    "fields": [
+      {
+        "label": "Product Item Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "type": "Lookup"
+      },
+      {
+        "label": "Location",
+        "name": "LocationId",
+        "reference_to": "Location",
+        "type": "Lookup"
+      },
+      {
+        "default": 0,
+        "label": "Quantity On Hand",
+        "name": "QuantityOnHand",
+        "type": "Number"
+      }
+    ],
+    "is_custom": false,
+    "label": "Product Item",
+    "name": "ProductItem",
+    "plural": "Product Items"
+  },
+  {
+    "fields": [
+      {
+        "label": "Product Consumed Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Work Order",
+        "name": "WorkOrderId",
+        "reference_to": "WorkOrder",
+        "type": "Lookup",
+        "delete_behavior": "clear"
+      },
+      {
+        "label": "Service Appointment",
+        "name": "ServiceAppointmentId",
+        "reference_to": "ServiceAppointment",
+        "type": "Lookup"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "type": "Lookup"
+      },
+      {
+        "default": 1,
+        "label": "Quantity",
+        "name": "Quantity",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "label": "Unit Price",
+        "name": "UnitPrice",
+        "type": "Currency"
+      }
+    ],
+    "is_custom": false,
+    "label": "Product Consumed",
+    "name": "ProductConsumed",
+    "plural": "Products Consumed"
+  },
+  {
+    "fields": [
+      {
+        "label": "Request Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "type": "Lookup"
+      },
+      {
+        "label": "Source Location",
+        "name": "SourceLocationId",
+        "reference_to": "Location",
+        "type": "Lookup"
+      },
+      {
+        "label": "Destination Location",
+        "name": "DestinationLocationId",
+        "reference_to": "Location",
+        "type": "Lookup"
+      },
+      {
+        "default": 1,
+        "label": "Quantity",
+        "name": "Quantity",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "default": "Submitted",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Draft",
+          "Submitted",
+          "Approved",
+          "Fulfilled",
+          "Cancelled"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Requested By",
+        "length": 80,
+        "name": "RequestedBy",
+        "type": "Text"
+      }
+    ],
+    "is_custom": false,
+    "label": "Product Request",
+    "name": "ProductRequest",
+    "plural": "Product Requests"
+  },
+  {
+    "fields": [
+      {
+        "label": "Plan Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Work Type",
+        "name": "WorkTypeId",
+        "reference_to": "WorkType",
+        "type": "Lookup"
+      },
+      {
+        "label": "Service Territory",
+        "name": "ServiceTerritoryId",
+        "reference_to": "ServiceTerritory",
+        "type": "Lookup"
+      },
+      {
+        "default": "Monthly",
+        "label": "Frequency",
+        "name": "Frequency",
+        "picklist_values": [
+          "Weekly",
+          "Monthly",
+          "Quarterly",
+          "Yearly"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Start Date",
+        "name": "StartDate",
+        "type": "Date"
+      },
+      {
+        "label": "End Date",
+        "name": "EndDate",
+        "type": "Date"
+      },
+      {
+        "label": "Next Run Date",
+        "name": "NextRunDate",
+        "type": "Date"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      },
+      {
+        "label": "Work Order Subject",
+        "length": 120,
+        "name": "Subject",
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "default": "Medium",
+        "label": "Priority",
+        "name": "Priority",
+        "picklist_values": [
+          "Low",
+          "Medium",
+          "High",
+          "Critical"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Duration (min)",
+        "name": "DurationMinutes",
+        "type": "Number"
+      }
+    ],
+    "is_custom": false,
+    "label": "Maintenance Plan",
+    "name": "MaintenancePlan",
+    "plural": "Maintenance Plans"
+  },
+  {
+    "fields": [
+      {
+        "label": "Time Entry Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Service Resource",
+        "name": "ServiceResourceId",
+        "reference_to": "ServiceResource",
+        "type": "Lookup"
+      },
+      {
+        "label": "Service Appointment",
+        "name": "ServiceAppointmentId",
+        "reference_to": "ServiceAppointment",
+        "type": "Lookup"
+      },
+      {
+        "label": "Work Date",
+        "name": "WorkDate",
+        "type": "Date"
+      },
+      {
+        "label": "Hours",
+        "name": "Hours",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "default": "Work",
+        "label": "Type",
+        "name": "EntryType",
+        "picklist_values": [
+          "Work",
+          "Travel",
+          "Break"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Notes",
+        "name": "Notes",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
+    "label": "Time Entry",
+    "name": "TimeEntry",
+    "plural": "Time Entries"
+  },
+  {
+    "fields": [
+      {
+        "label": "Report Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Service Appointment",
+        "name": "ServiceAppointmentId",
+        "reference_to": "ServiceAppointment",
+        "type": "Lookup"
+      },
+      {
+        "label": "Summary",
+        "name": "Summary",
+        "type": "TextArea"
+      },
+      {
+        "label": "Signed By",
+        "length": 80,
+        "name": "SignatureName",
+        "type": "Text"
+      },
+      {
+        "label": "Signature (PNG data URL)",
+        "name": "SignatureData",
+        "type": "TextArea"
+      },
+      {
+        "label": "Signed At",
+        "name": "SignedAt",
+        "type": "DateTime"
+      }
+    ],
+    "is_custom": false,
+    "label": "Service Report",
+    "name": "ServiceReport",
+    "plural": "Service Reports"
+  },
+  {
+    "fields": [
+      {
+        "label": "Full Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "type": "Lookup"
+      },
+      {
+        "label": "Username",
+        "length": 80,
+        "name": "Username",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Password Hash",
+        "length": 255,
+        "name": "PasswordHash",
+        "type": "Text"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
+    "label": "Community User",
+    "name": "CommunityUser",
+    "plural": "Community Users"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Price Book Entry",
+        "name": "PriceBookEntryId",
+        "reference_to": "PriceBookEntry",
+        "type": "Lookup"
+      },
+      {
+        "label": "Product",
+        "name": "ProductId",
+        "reference_to": "Product",
+        "type": "Lookup"
+      },
+      {
+        "label": "Source Quote",
+        "name": "SourceQuoteId",
+        "reference_to": "Quote",
+        "type": "Lookup"
+      },
+      {
+        "default": 1,
+        "label": "Quantity",
+        "name": "Quantity",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "label": "Sales Price",
+        "name": "UnitPrice",
+        "required": true,
+        "type": "Currency"
+      },
+      {
+        "default": 0,
+        "label": "Discount (%)",
+        "name": "Discount",
+        "type": "Percent"
+      },
+      {
+        "label": "Total Price",
+        "name": "TotalPrice",
+        "type": "Currency"
+      },
+      {
+        "label": "Service Date",
+        "name": "ServiceDate",
+        "type": "Date"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": false,
+    "label": "Opportunity Product",
+    "name": "OpportunityLineItem",
+    "plural": "Opportunity Products"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity Product",
+        "name": "OpportunityLineItemId",
+        "reference_to": "OpportunityLineItem",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Period",
+        "name": "Period",
+        "required": true,
+        "type": "Date"
+      },
+      {
+        "label": "Amount",
+        "name": "Amount",
+        "required": true,
+        "type": "Currency"
+      },
+      {
+        "default": "Revenue",
+        "label": "Type",
+        "name": "Type",
+        "picklist_values": [
+          "Revenue"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Description",
+        "length": 120,
+        "name": "Description",
+        "type": "Text"
+      }
+    ],
+    "is_custom": false,
+    "label": "Revenue Schedule",
+    "name": "RevenueSchedule",
+    "plural": "Revenue Schedules"
+  },
+  {
+    "fields": [
+      {
+        "label": "Quote",
+        "name": "QuoteId",
+        "reference_to": "Quote",
+        "required": true,
+        "type": "Lookup",
+        "delete_behavior": "block"
+      },
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "Lookup",
+        "delete_behavior": "block"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
+    "label": "Quote Sync",
+    "name": "QuoteSync",
+    "plural": "Quote Syncs"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "default": "Other",
+        "label": "Role",
+        "name": "Role",
+        "picklist_values": [
+          "Decision Maker",
+          "Economic Buyer",
+          "Champion",
+          "End User",
+          "Influencer",
+          "Other"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "default": false,
+        "label": "Primary",
+        "name": "IsPrimary",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": false,
+    "label": "Opportunity Contact Role",
+    "name": "OpportunityContactRole",
+    "plural": "Opportunity Contact Roles"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "User",
+        "length": 64,
+        "name": "UserId",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "default": "Sales Rep",
+        "label": "Team Role",
+        "name": "TeamRole",
+        "picklist_values": [
+          "Account Manager",
+          "Sales Rep",
+          "SE",
+          "Executive Sponsor",
+          "Other"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "default": "Read",
+        "label": "Opportunity Access",
+        "name": "AccessLevel",
+        "picklist_values": [
+          "Read",
+          "Edit"
+        ],
+        "type": "Picklist"
+      }
+    ],
+    "is_custom": false,
+    "label": "Opportunity Team Member",
+    "name": "OpportunityTeamMember",
+    "plural": "Opportunity Team Members"
+  },
+  {
+    "fields": [
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "required": true,
+        "type": "MasterDetail"
+      },
+      {
+        "label": "Team Member",
+        "name": "TeamMemberId",
+        "reference_to": "OpportunityTeamMember",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "default": "Revenue",
+        "label": "Split Type",
+        "name": "SplitType",
+        "picklist_values": [
+          "Revenue",
+          "Credit"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Split %",
+        "name": "SplitPercentage",
+        "required": true,
+        "type": "Number"
+      }
+    ],
+    "is_custom": false,
+    "label": "Opportunity Split",
+    "name": "OpportunitySplit",
+    "plural": "Opportunity Splits"
+  },
+  {
+    "fields": [
+      {
+        "label": "Team Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": true,
+    "label": "Case Team Definition",
+    "name": "CaseTeamDef",
+    "plural": "Case Team Definitions"
+  },
+  {
+    "fields": [
+      {
+        "label": "Case Team",
+        "name": "CaseTeamDefId",
+        "reference_to": "CaseTeamDef",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "User",
+        "length": 64,
+        "name": "UserId",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "default": "Support Agent",
+        "label": "Team Role",
+        "name": "TeamRole",
+        "picklist_values": [
+          "Support Agent",
+          "Support Manager",
+          "SME",
+          "Other"
+        ],
+        "required": true,
+        "type": "Picklist"
+      }
+    ],
+    "is_custom": true,
+    "label": "Case Team Member",
+    "name": "CaseTeamMemberDef",
+    "plural": "Case Team Members"
+  },
+  {
+    "fields": [
+      {
+        "label": "Entitlement Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Account",
+        "name": "AccountId",
+        "reference_to": "Account",
+        "type": "Lookup"
+      },
+      {
+        "label": "Asset",
+        "name": "AssetId",
+        "reference_to": "Asset",
+        "type": "Lookup"
+      },
+      {
+        "default": "Web Support",
+        "label": "Type",
+        "name": "Type",
+        "picklist_values": [
+          "Phone Support",
+          "Web Support",
+          "Premier"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "default": "Draft",
+        "label": "Status",
+        "name": "Status",
+        "picklist_values": [
+          "Draft",
+          "Active",
+          "Expired"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Start Date",
+        "name": "StartDate",
+        "type": "Date"
+      },
+      {
+        "label": "End Date",
+        "name": "EndDate",
+        "type": "Date"
+      },
+      {
+        "label": "Cases Per Period",
+        "name": "CasesPerPeriod",
+        "type": "Number"
+      },
+      {
+        "label": "Entitlement Process",
+        "name": "EntitlementProcessId",
+        "reference_to": "EntitlementProcess",
+        "type": "Lookup"
+      }
+    ],
+    "is_custom": true,
+    "label": "Entitlement",
+    "name": "Entitlement",
+    "plural": "Entitlements"
+  },
+  {
+    "fields": [
+      {
+        "label": "Process Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Description",
+        "name": "Description",
+        "type": "TextArea"
+      },
+      {
+        "default": true,
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": true,
+    "label": "Entitlement Process",
+    "name": "EntitlementProcess",
+    "plural": "Entitlement Processes"
+  },
+  {
+    "fields": [
+      {
+        "label": "Entitlement Process",
+        "name": "EntitlementProcessId",
+        "reference_to": "EntitlementProcess",
+        "required": true,
+        "type": "Lookup"
+      },
+      {
+        "label": "Milestone Name",
+        "length": 80,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Target (minutes)",
+        "name": "TargetMinutes",
+        "required": true,
+        "type": "Number"
+      },
+      {
+        "label": "Order",
+        "name": "MilestoneOrder",
+        "type": "Number"
+      }
+    ],
+    "is_custom": true,
+    "label": "Entitlement Process Milestone",
+    "name": "EntitlementProcessMilestone",
+    "plural": "Entitlement Process Milestones"
+  },
+  {
+    "fields": [
+      {
+        "label": "Title",
+        "length": 120,
+        "name": "Title",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Body",
+        "name": "Body",
+        "type": "TextArea"
+      },
+      {
+        "label": "Parent Record",
+        "length": 64,
+        "name": "ParentId",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Parent Type",
+        "name": "ParentType",
+        "picklist_values": [
+          "Account",
+          "Contact",
+          "Opportunity",
+          "Case",
+          "Lead"
+        ],
+        "required": true,
+        "type": "Picklist"
+      },
+      {
+        "label": "Owner",
+        "length": 64,
+        "name": "OwnerId",
+        "type": "Text"
+      },
+      {
+        "default": false,
+        "label": "Private",
+        "name": "IsPrivate",
+        "type": "Checkbox"
+      }
+    ],
+    "is_custom": true,
+    "label": "Note",
+    "name": "Note",
+    "plural": "Notes"
+  },
+  {
+    "fields": [
+      {
+        "label": "Rule Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Object",
+        "length": 80,
+        "name": "ObjectName",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Match Fields (comma-separated)",
+        "name": "Fields",
+        "type": "TextArea"
+      },
+      {
+        "label": "Match Type",
+        "name": "MatchType",
+        "picklist_values": [
+          "Exact",
+          "Fuzzy"
+        ],
+        "type": "Picklist",
+        "default": "Exact"
+      },
+      {
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox",
+        "default": true
+      }
+    ],
+    "is_custom": true,
+    "label": "Matching Rule",
+    "name": "MatchingRule",
+    "plural": "Matching Rules"
+  },
+  {
+    "fields": [
+      {
+        "label": "Rule Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Object",
+        "length": 80,
+        "name": "ObjectName",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Matching Rule",
+        "name": "MatchingRuleId",
+        "reference_to": "MatchingRule",
+        "type": "Lookup"
+      },
+      {
+        "label": "Action",
+        "name": "Action",
+        "picklist_values": [
+          "Block",
+          "Warn"
+        ],
+        "type": "Picklist",
+        "default": "Warn"
+      },
+      {
+        "label": "Message",
+        "name": "Message",
+        "type": "TextArea"
+      },
+      {
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox",
+        "default": true
+      },
+      {
+        "label": "Applies On",
+        "name": "AppliesOn",
+        "picklist_values": [
+          "Create",
+          "Update",
+          "Both"
+        ],
+        "type": "Picklist",
+        "default": "Both"
+      }
+    ],
+    "is_custom": true,
+    "label": "Duplicate Rule",
+    "name": "DuplicateRule",
+    "plural": "Duplicate Rules"
+  },
+  {
+    "fields": [
+      {
+        "label": "Quota Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Owner",
+        "length": 80,
+        "name": "OwnerId",
+        "type": "Text"
+      },
+      {
+        "label": "Period",
+        "length": 20,
+        "name": "Period",
+        "type": "Text"
+      },
+      {
+        "label": "Quota Amount",
+        "name": "QuotaAmount",
+        "type": "Currency"
+      },
+      {
+        "label": "Object",
+        "length": 80,
+        "name": "ObjectName",
+        "type": "Text",
+        "default": "Opportunity"
+      }
+    ],
+    "is_custom": true,
+    "label": "Forecast Quota",
+    "name": "ForecastQuota",
+    "plural": "Forecast Quotas"
+  },
+  {
+    "fields": [
+      {
+        "label": "Alert Name",
+        "length": 120,
+        "name": "Name",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Object",
+        "length": 80,
+        "name": "ObjectName",
+        "required": true,
+        "type": "Text"
+      },
+      {
+        "label": "Trigger Event",
+        "name": "TriggerEvent",
+        "picklist_values": [
+          "Create",
+          "Update"
+        ],
+        "type": "Picklist"
+      },
+      {
+        "label": "Recipients (comma-separated user ids or email addresses)",
+        "name": "Recipients",
+        "type": "TextArea"
+      },
+      {
+        "label": "Email Template",
+        "length": 80,
+        "name": "EmailTemplateId",
+        "type": "Text"
+      },
+      {
+        "label": "Active",
+        "name": "IsActive",
+        "type": "Checkbox",
+        "default": true
+      },
+      {
+        "label": "Criteria (field-equals JSON, optional)",
+        "name": "Criteria",
+        "type": "TextArea"
+      }
+    ],
+    "is_custom": true,
+    "label": "Email Alert",
+    "name": "EmailAlert",
+    "plural": "Email Alerts"
+  },
+  {
+    "fields": [
+      {
+        "label": "Influence Name",
+        "length": 120,
+        "name": "Name",
+        "type": "Text"
+      },
+      {
+        "label": "Campaign",
+        "name": "CampaignId",
+        "reference_to": "Campaign",
+        "type": "MasterDetail",
+        "required": true
+      },
+      {
+        "label": "Opportunity",
+        "name": "OpportunityId",
+        "reference_to": "Opportunity",
+        "type": "Lookup",
+        "delete_behavior": "clear"
+      },
+      {
+        "label": "Contact",
+        "name": "ContactId",
+        "reference_to": "Contact",
+        "type": "Lookup"
+      },
+      {
+        "label": "Influence %",
+        "name": "InfluencePercent",
+        "type": "Percent"
+      },
+      {
+        "label": "Attribution Model",
+        "name": "Model",
+        "picklist_values": [
+          "Primary Campaign Source",
+          "First Touch",
+          "Last Touch",
+          "Even Split"
+        ],
+        "type": "Picklist"
+      }
+    ],
+    "is_custom": true,
+    "label": "Campaign Influence",
+    "name": "CampaignInfluence",
+    "plural": "Campaign Influence"
+  }
 ]

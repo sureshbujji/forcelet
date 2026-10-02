@@ -102,7 +102,7 @@ class Store:
                       "mf_person_accounts", "mf_archive_rules",
                       "mf_dynamic_forms", "mf_divisions", "mf_seed_templates",
                       "mf_import_runs", "mf_custom_labels", "mf_translations",
-                      "mf_rollup_rules", "mf_folders",
+                      "mf_rollup_rules", "mf_folders", "mf_report_types",
                       "mf_delegated_groups",
                       "mf_queues", "mf_notification_types",
                       "mf_currencies", "mf_exchange_rates",
@@ -192,7 +192,14 @@ class Store:
                       is_read INTEGER DEFAULT 0, created_at TEXT)""")
         c.execute("""CREATE TABLE IF NOT EXISTS mf_recycle_bin
                      (id TEXT PRIMARY KEY, object_name TEXT, record_id TEXT,
-                      data TEXT, deleted_by TEXT, deleted_at TEXT)""")
+                      data TEXT, deleted_by TEXT, deleted_at TEXT,
+                      parent_object TEXT, parent_id TEXT)""")
+        # migration: cascade-deleted children link back to their parent
+        for _col in ("parent_object", "parent_id"):
+            try:
+                c.execute(f"ALTER TABLE mf_recycle_bin ADD COLUMN {_col} TEXT")
+            except Exception:
+                pass  # column already exists on newer databases
         self._commit()
 
     def meta_put(self, table: str, key: str, definition: dict):
@@ -330,15 +337,33 @@ class Store:
         return cur.rowcount > 0
 
     # ------------------------------------------------------------ recycle bin
-    def recycle_put(self, obj_name: str, record: dict, deleted_by: str) -> str:
+    def recycle_put(self, obj_name: str, record: dict, deleted_by: str,
+                    parent_ref: dict | None = None) -> str:
+        """Recycle a deleted record.
+
+        ``parent_ref`` optionally links a cascade-deleted child to its direct
+        parent: ``{"object": <obj_name>, "id": <record_id>}``. Linked children
+        are retrievable via :meth:`recycle_children`.
+        """
         bid = new_id()
+        parent_ref = parent_ref or {}
         self._execute(
-            "INSERT INTO mf_recycle_bin (id, object_name, record_id, data, deleted_by, deleted_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (bid, obj_name, record.get("id"), json.dumps(record), deleted_by, utcnow()),
+            "INSERT INTO mf_recycle_bin (id, object_name, record_id, data, deleted_by,"
+            " deleted_at, parent_object, parent_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (bid, obj_name, record.get("id"), json.dumps(record), deleted_by, utcnow(),
+             parent_ref.get("object"), parent_ref.get("id")),
         )
         self._commit()
         return bid
+
+    def recycle_children(self, parent_object: str, parent_id: str) -> list:
+        """Recycle-bin entries cascade-deleted under the given parent record."""
+        rows = self._fetchall(
+            "SELECT * FROM mf_recycle_bin WHERE parent_object=? AND parent_id=?"
+            " ORDER BY deleted_at DESC",
+            (parent_object, parent_id))
+        return [dict(r) for r in rows]
 
     def recycle_list(self, deleted_by: str | None = None):
         if deleted_by:

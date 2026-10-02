@@ -1310,7 +1310,7 @@ async function relatedLists(recId){
     if(only&&!only.has(o.name)) continue;
     const d=await getDesc(o.name);
     if(!d||!d.permissions||!d.permissions.read) continue;
-    const rels=d.fields.filter(f=>(f.type==="Lookup"||f.type==="MasterDetail")&&f.reference_to===curObj);
+    const rels=d.fields.filter(f=>(f.type==="Lookup"||f.type==="MasterDetail"||f.type==="PolymorphicLookup")&&(f.reference_to===curObj||(Array.isArray(f.reference_to)&&f.reference_to.includes(curObj))));
     if(!rels.length) continue;
     const r=await api("GET",`/api/sobjects/${o.name}`);
     const rows=(r.data||[]).filter(x=>rels.some(rf=>String(x[rf.name])===String(recId)));
@@ -1581,8 +1581,10 @@ function dfInit(){ if(document.getElementById("df_obj")) dfOnObj(); }
 
 // ------------------------------------------------------------ reports
 let REP_EDIT=null, REP_FOLDERS=[], REP_ORIG=null;
-const RP={aggs:[],sorts:[],cross:[],formulas:[],hl:[]};
+const RP={aggs:[],sorts:[],cross:[],formulas:[],hl:[],rowformulas:[],blocks:[]};
 const RP_AGGFUNCS=["sum","avg","min","max","count","count_distinct"];
+const RP_DATE_PARTS=["exact","day","week","month","quarter","year","fiscal_quarter","fiscal_year"];
+const RP_CHART_TYPES=["bar","line","donut","pie","funnel","scatter","stacked","area"];
 async function showReports(){
   setActive("__reports");
   document.getElementById("main").innerHTML=skel(3);
@@ -1638,6 +1640,8 @@ async function repRenderBuilder(rep){
   RP.cross=(rep&&rep.cross_filters)||[];
   RP.formulas=(rep&&rep.summary_formulas)||[];
   RP.hl=(rep&&rep.highlight)||[];
+  RP.rowformulas=(rep&&rep.row_formulas)||[];
+  RP.blocks=(rep&&rep.blocks)||[];
   const objs=objects.map(o=>`<option ${rep&&rep.object===o.name?"selected":""}>${o.name}</option>`).join("");
   const bucket=rep&&rep.bucket||{};
   const bucketLines=(bucket.buckets||[]).map(b=>`${b.name}: ${b.from??""}-${b.to??""}`).join("\n");
@@ -1648,10 +1652,13 @@ async function repRenderBuilder(rep){
   <div class="grid2">
    <div><label>Name</label><input id="nr_name" value="${esc(rep?rep.name:"")}">
     <label>Object</label><select id="nr_obj" onchange="repObjChanged()">${objs}</select>
+    <label>Report type</label><select id="nr_rtype"><option value="">Standard</option></select>
     <label>Columns (comma-separated; <code>Account.Name</code> traverses lookups)</label><input id="nr_cols" value="${esc((rep&&rep.columns||[]).join(", "))}" placeholder="Name, Amount, Stage, Account.Name">
-    <label>Group by (up to 3 levels)</label><div class="btnrow"><select id="nr_g1" style="max-width:180px"></select><select id="nr_g2" style="max-width:180px"></select><select id="nr_g3" style="max-width:180px"></select></div>
+    <label>Group by (up to 3 levels)</label><div class="btnrow">${[1,2,3].map(i=>`<select id="nr_g${i}" style="max-width:180px" onchange="document.getElementById('nr_p${i}').value='exact'"></select>`).join("")}</div>
+    <label>Date part per group level (optional)</label><div class="btnrow">${[1,2,3].map(i=>`<select id="nr_p${i}" style="max-width:180px">${RP_DATE_PARTS.map(p=>`<option value="${p}">${p.replace("_"," ")}</option>`).join("")}</select>`).join("")}<input id="nr_fiscal_month" type="number" min="1" max="12" placeholder="Fiscal start mo" title="Fiscal year start month (1-12)" style="max-width:110px"></div>
+    <label style="margin-top:6px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="nr_matrix"> Matrix report — group columns too (up to 2 levels)</label><div class="btnrow"><select id="nr_cg1" style="max-width:180px"></select><select id="nr_cg2" style="max-width:180px"></select></div>
     <label>Group sort</label><select id="nr_gsort">${["count_desc","count_asc","label_asc"].map(v=>`<option value="${v}" ${rep&&rep.group_sort===v?"selected":""}>${v.replace("_"," ")}</option>`).join("")}</select>
-    <label>Chart (summary reports)</label><select id="nr_chart"><option value="">None</option>${["bar","line","donut"].map(v=>`<option ${chartType===v?"selected":""}>${v}</option>`).join("")}</select>
+    <label>Chart (summary reports)</label><select id="nr_chart"><option value="">None</option>${RP_CHART_TYPES.map(v=>`<option ${chartType===v?"selected":""}>${v}</option>`).join("")}</select>
    </div>
    <div><label>Folder</label><select id="nr_folder">${folders}</select>
     <label>Sort rows</label><div id="rp_sorts"></div><button class="btn secondary small" onclick="RP.sorts.push({field:'',dir:'asc'});repRenderSorts()">+ Sort</button>
@@ -1664,11 +1671,14 @@ async function repRenderBuilder(rep){
   <div class="section-title" style="margin-top:10px">Filters</div><div class="cb-host" id="cb_rp"></div><input type="hidden" id="nr_filter">
   <div class="section-title" style="margin-top:10px">Cross filters (WITH / WITHOUT related)</div><div id="rp_cross"></div><button class="btn secondary small" onclick="RP.cross.push({mode:'with',object:'',via:''});repRenderCross()">+ Cross filter</button>
   <div class="section-title" style="margin-top:10px">Summary formulas (over group aggregates — use {"agg":"alias"})</div><div id="rp_formulas"></div><button class="btn secondary small" onclick="RP.formulas.push({name:'',label:'',formula:''});repRenderFormulas()">+ Formula</button>
+  <div class="section-title" style="margin-top:10px">Row-level formulas (per record — use {"field":"Name"})</div><div id="rp_rowformulas"></div><button class="btn secondary small" onclick="RP.rowformulas.push({name:'',label:'',formula:''});repRenderRowFormulas()">+ Row formula</button>
+  <div class="section-title" style="margin-top:10px">Joined report blocks (2–5 blocks, each its own object)</div><div id="rp_blocks"></div><button class="btn secondary small" onclick="RP.blocks.push({name:'',object:'',columns:'',group_by:''});repRenderBlocks()">+ Block</button>
   <div class="section-title" style="margin-top:10px">Conditional highlighting</div><div id="rp_hl"></div><button class="btn secondary small" onclick="RP.hl.push({field:'',op:'>',value:'',color:'#fef3c7'});repRenderHl()">+ Rule</button>
   <div class="btnrow" style="margin-top:14px"><button class="btn" onclick="saveReport()">${REP_EDIT?"Save changes":"Create report"}</button>${REP_EDIT?` <button class="btn secondary" onclick="REP_EDIT=null;showReports()">Cancel</button>`:""}</div>`;
   cbInit("cb_rp","nr_obj","nr_filter");
-  repRenderAggs(); repRenderSorts(); repRenderCross(); repRenderFormulas(); repRenderHl();
+  repRenderAggs(); repRenderSorts(); repRenderCross(); repRenderFormulas(); repRenderRowFormulas(); repRenderBlocks(); repRenderHl();
   await repObjChanged(rep);
+  repLoadTypes(rep);
   const ru=document.getElementById("nr_runas");
   const ud=await api("GET","/api/users/directory");
   (ud.data||[]).forEach(u=>{ const o=document.createElement("option"); o.value=u.id; o.textContent=u.name+" ("+u.username+")"; if(rep&&rep.run_as_user===u.id)o.selected=true; ru.appendChild(o); });
@@ -1680,6 +1690,16 @@ async function repObjChanged(rep){
   const opts=`<option value="">—</option>`+fields.map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join("")+`<option value="_bucket">Bucket (see bucketing)</option>`;
   const gb=rep&&rep.group_by?(Array.isArray(rep.group_by)?rep.group_by:[rep.group_by]):[];
   ["nr_g1","nr_g2","nr_g3"].forEach((id,i)=>{ const el=document.getElementById(id); el.innerHTML=opts; if(gb[i]) el.value=gb[i]; });
+  const cg=rep&&rep.column_group_by?(Array.isArray(rep.column_group_by)?rep.column_group_by:[rep.column_group_by]):[];
+  ["nr_cg1","nr_cg2"].forEach((id,i)=>{ const el=document.getElementById(id); if(!el) return; el.innerHTML=opts; if(cg[i]) el.value=cg[i]; });
+  const dp=(rep&&rep.date_parts)||{};
+  [["nr_g1","nr_p1"],["nr_g2","nr_p2"],["nr_g3","nr_p3"]].forEach(([g,p])=>{
+    const pel=document.getElementById(p); if(!pel) return;
+    const f=document.getElementById(g).value;
+    pel.value=(f&&dp[f])||"exact";
+  });
+  const mx=document.getElementById("nr_matrix"); if(mx) mx.checked=!!(rep&&rep.column_group_by&&rep.column_group_by.length);
+  const fm=document.getElementById("nr_fiscal_month"); if(fm&&rep&&rep.fiscal_start_month) fm.value=rep.fiscal_start_month;
 }
 function repRenderAggs(){
   document.getElementById("rp_aggs").innerHTML=RP.aggs.map((a,i)=>`<div class="btnrow"><select onchange="RP.aggs[${i}].func=this.value" style="max-width:150px">${RP_AGGFUNCS.map(f=>`<option ${a.func===f?"selected":""}>${f}</option>`).join("")}</select><input value="${esc(a.field||"")}" placeholder="field (blank for count)" oninput="RP.aggs[${i}].field=this.value" style="max-width:200px"><button class="btn danger small" onclick="RP.aggs.splice(${i},1);repRenderAggs()">✕</button></div>`).join("")||'<p class="muted">None — plain row counts only.</p>';
@@ -1692,6 +1712,19 @@ function repRenderCross(){
 }
 function repRenderFormulas(){
   document.getElementById("rp_formulas").innerHTML=RP.formulas.map((f,i)=>`<div class="btnrow"><input value="${esc(f.name||"")}" placeholder="name" oninput="RP.formulas[${i}].name=this.value" style="max-width:130px"><input value="${esc(f.label||"")}" placeholder="label" oninput="RP.formulas[${i}].label=this.value" style="max-width:150px"><input value="${esc(typeof f.formula==="string"?f.formula:JSON.stringify(f.formula||""))}" placeholder='{"*":[{"agg":"sum_Amount"},100]}' oninput="RP.formulas[${i}].formula=this.value" style="flex:1"><button class="btn danger small" onclick="RP.formulas.splice(${i},1);repRenderFormulas()">✕</button></div>`).join("");
+}
+function repRenderRowFormulas(){
+  document.getElementById("rp_rowformulas").innerHTML=RP.rowformulas.map((f,i)=>`<div class="btnrow"><input value="${esc(f.name||"")}" placeholder="name" oninput="RP.rowformulas[${i}].name=this.value" style="max-width:130px"><input value="${esc(f.label||"")}" placeholder="label" oninput="RP.rowformulas[${i}].label=this.value" style="max-width:150px"><input value="${esc(typeof f.formula==="string"?f.formula:JSON.stringify(f.formula||""))}" placeholder='{"*":[{"field":"Amount"},1.1]}' oninput="RP.rowformulas[${i}].formula=this.value" style="flex:1"><button class="btn danger small" onclick="RP.rowformulas.splice(${i},1);repRenderRowFormulas()">✕</button></div>`).join("");
+}
+function repRenderBlocks(){
+  document.getElementById("rp_blocks").innerHTML=RP.blocks.map((b,i)=>`<div class="btnrow"><input value="${esc(b.name||"")}" placeholder="block name" oninput="RP.blocks[${i}].name=this.value" style="max-width:130px"><select onchange="RP.blocks[${i}].object=this.value" style="max-width:170px"><option value="">— object —</option>${objects.map(o=>`<option ${b.object===o.name?"selected":""}>${o.name}</option>`).join("")}</select><input value="${esc(b.columns||"")}" placeholder="columns, comma-separated" oninput="RP.blocks[${i}].columns=this.value" style="flex:1"><input value="${esc(b.group_by||"")}" placeholder="group by field" oninput="RP.blocks[${i}].group_by=this.value" style="max-width:150px"><button class="btn danger small" onclick="RP.blocks.splice(${i},1);repRenderBlocks()">✕</button></div>`).join("");
+}
+async function repLoadTypes(rep){
+  const sel=document.getElementById("nr_rtype"); if(!sel) return;
+  try{
+    const r=await api("GET","/api/report-types");
+    (r.data||[]).forEach(t=>{ const o=document.createElement("option"); o.value=t.id; o.textContent=t.name; if(rep&&rep.report_type_id===t.id) o.selected=true; sel.appendChild(o); });
+  }catch(e){ /* no custom report types API — standard only */ }
 }
 function repRenderHl(){
   document.getElementById("rp_hl").innerHTML=RP.hl.map((h,i)=>`<div class="btnrow"><input value="${esc(h.field||"")}" placeholder="field" oninput="RP.hl[${i}].field=this.value" style="max-width:150px"><select onchange="RP.hl[${i}].op=this.value" style="max-width:110px">${["==","!=",">","<",">=", "<="].map(o=>`<option ${h.op===o?"selected":""}>${o}</option>`).join("")}</select><input value="${esc(h.value||"")}" placeholder="value" oninput="RP.hl[${i}].value=this.value" style="max-width:130px"><input type="color" value="${esc(h.color||"#fef3c7")}" onchange="RP.hl[${i}].color=this.value" title="highlight color"><button class="btn danger small" onclick="RP.hl.splice(${i},1);repRenderHl()">✕</button></div>`).join("");
@@ -1709,7 +1742,8 @@ function repParseBuckets(){
   return {field, buckets};
 }
 function repCollect(){
-  const builtFilter=cbBuildExpr("cb_rp");
+  const nestedTgl=document.getElementById("cb_rp_nested");
+  const builtFilter=nestedTgl&&nestedTgl.checked?cbBuildNested("cb_rp"):cbBuildExpr("cb_rp");
   const body={name:document.getElementById("nr_name").value.trim(), object:document.getElementById("nr_obj").value,
     columns:document.getElementById("nr_cols").value.split(",").map(s2=>s2.trim()).filter(Boolean),
     filters:Object.keys(builtFilter).length?builtFilter:((REP_ORIG&&REP_ORIG.filters)||{}), active:true,
@@ -1724,6 +1758,22 @@ function repCollect(){
   for(const f of RP.formulas){ if(!f.name) continue; let parsed; try{ parsed=typeof f.formula==="string"?JSON.parse(f.formula):f.formula; }catch(e){ throw new Error(`Bad formula JSON for ${f.name}`); } body.summary_formulas.push({name:f.name,label:f.label||f.name,formula:parsed}); }
   const ct=document.getElementById("nr_chart").value; if(ct) body.chart={type:ct};
   const bk=repParseBuckets(); if(bk) body.bucket=bk;
+  const cg=["nr_cg1","nr_cg2"].map(id=>document.getElementById(id).value).filter(Boolean);
+  if(cg.length) body.column_group_by=cg;
+  const dp={};
+  [["nr_g1","nr_p1"],["nr_g2","nr_p2"],["nr_g3","nr_p3"]].forEach(([g,p])=>{
+    const f=document.getElementById(g).value, part=document.getElementById(p).value;
+    if(f&&part&&part!=="exact") dp[f]=part;
+  });
+  if(Object.keys(dp).length) body.date_parts=dp;
+  const fm=parseInt((document.getElementById("nr_fiscal_month")||{}).value||"",10);
+  if(fm>=1&&fm<=12) body.fiscal_start_month=fm;
+  const rf=[];
+  for(const f of RP.rowformulas){ if(!f.name) continue; let parsed; try{ parsed=typeof f.formula==="string"?JSON.parse(f.formula):f.formula; }catch(e){ parsed=f.formula; } rf.push({name:f.name,label:f.label||f.name,formula:parsed}); }
+  if(rf.length) body.row_formulas=rf;
+  const bl=RP.blocks.filter(b=>b.object).slice(0,5).map(b=>({name:b.name||b.object,object:b.object,columns:(b.columns||"").split(",").map(s=>s.trim()).filter(Boolean),group_by:(b.group_by||"").trim()||null}));
+  if(bl.length) body.blocks=bl;
+  const rt=document.getElementById("nr_rtype").value; if(rt) body.report_type_id=rt;
   if(!body.name) throw new Error("Name is required.");
   return body;
 }
@@ -1781,7 +1831,8 @@ async function runReport(id,page,opts){
   const drillNote=opts.drill?` <span class="pill">filtered: ${esc(opts.drill.field)} = ${esc(opts.drill.value)}</span> <button class="btn secondary small" onclick="runReport('${id}',1)">Clear</button>`:"";
   let html=`<div class="btnrow"><span class="muted">${d.row_count} row(s)</span>${drillNote}<span style="flex:1"></span>`
     +`<button class="btn secondary small" onclick="window.open('/api/reports/${id}/export?format=csv&token='+token,'_blank')">CSV</button> `
-    +`<button class="btn secondary small" onclick="window.open('/api/reports/${id}/export?format=xlsx&token='+token,'_blank')">Excel</button></div>`;
+    +`<button class="btn secondary small" onclick="window.open('/api/reports/${id}/export?format=xlsx&token='+token,'_blank')">Excel</button> `
+    +`<button class="btn secondary small" onclick="repPrint('${id}')">Print</button></div>`;
   const groups=d.groups||[];
   const gbLevel=(Array.isArray(rep.group_by)?rep.group_by:[rep.group_by]).filter(Boolean)[0];
   if(d.chart&&d.chart.type&&groups.length){
@@ -1804,6 +1855,14 @@ async function runReport(id,page,opts){
     html+=`<div class="btnrow" style="margin-top:8px"><button class="btn secondary small" ${d.page<=1?"disabled":""} onclick="runReport('${id}',${d.page-1})">‹ Prev</button><span class="muted">Page ${d.page} of ${d.pages}</span><button class="btn secondary small" ${d.page>=d.pages?"disabled":""} onclick="runReport('${id}',${d.page+1})">Next ›</button></div>`;
   }
   el.innerHTML=html;
+}
+function repPrint(id){
+  const el=document.getElementById("rep_"+id); if(!el) return;
+  const clone=el.cloneNode(true);
+  clone.querySelectorAll(".btnrow").forEach(b=>b.remove());
+  const w=window.open("","_blank");
+  w.document.write(`<html><head><title>Report</title><style>table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:4px 6px;font-size:12px;text-align:left}body{font-family:sans-serif;color:#111}.bar-row{margin:2px 0}</style></head><body>${clone.innerHTML}</body></html>`);
+  w.document.close(); w.focus(); w.print();
 }
 
 
@@ -2895,13 +2954,50 @@ const COND_BUILDERS=[
 function cbInit(bid,objSelId,targetId){
   const host=document.getElementById(bid); if(!host) return;
   CB_STATE[bid]={objSel:objSelId,target:targetId,fields:[]};
-  host.innerHTML=`<div class="cb"><div class="cb-cap">Condition builder — no JSON needed</div><div class="cb-rows"></div>
+  host.innerHTML=`<div class="cb"><div class="cb-cap">Condition builder — no JSON needed</div>
+   <div class="cb-flat"><div class="cb-rows"></div>
    <div class="btnrow"><button class="btn secondary small" onclick="cbAddRow('${bid}')">+ Condition</button>
-   <select id="${bid}_logic" style="max-width:150px"><option value="and">Match all</option><option value="or">Match any</option></select>
-   <button class="btn secondary small" onclick="cbInsert('${bid}')">Insert into field ↓</button></div></div>`;
+   <select id="${bid}_logic" style="max-width:150px"><option value="and">Match all</option><option value="or">Match any</option></select></div></div>
+   <div class="cb-nested" style="display:none"></div>
+   <div class="btnrow"><label class="muted" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="${bid}_nested" onchange="cbToggleNested('${bid}')"> Nested groups (advanced)</label>
+   <span style="flex:1"></span><button class="btn secondary small" onclick="cbInsert('${bid}')">Insert into field ↓</button></div></div>`;
   cbLoadFields(bid);
   const os=document.getElementById(objSelId); if(os) os.onchange=()=>cbLoadFields(bid);
   cbAddRow(bid);
+}
+function cbToggleNested(bid){
+  const on=(document.getElementById(bid+"_nested")||{}).checked;
+  const flat=document.querySelector(`#${bid} .cb-flat`), nest=document.querySelector(`#${bid} .cb-nested`);
+  if(flat) flat.style.display=on?"none":"";
+  if(nest){ nest.style.display=on?"":"none"; if(on&&!nest.querySelector(".cb-group")) cbAddGroup(bid,nest); }
+}
+function cbAddGroup(bid,container){
+  const st=CB_STATE[bid]; if(!st||!container) return;
+  const div=document.createElement("div"); div.className="cb-group";
+  div.style.cssText="border:1px dashed var(--line);border-radius:8px;padding:8px;margin:8px 0";
+  div.innerHTML=`<div class="btnrow"><select class="cb-gop" style="max-width:120px"><option value="and">AND</option><option value="or">OR</option><option value="not">NOT</option></select>
+   <span style="flex:1"></span><button class="btn secondary small" onclick="cbAddRow('${bid}',this.closest('.cb-group').querySelector('.cb-grows'))">+ Condition</button>
+   <button class="btn secondary small" onclick="cbAddGroup('${bid}',this.closest('.cb-group').querySelector('.cb-gsubs'))">+ Subgroup</button>
+   <button class="btn danger small" onclick="this.closest('.cb-group').remove()">✕</button></div>
+   <div class="cb-grows"></div><div class="cb-gsubs"></div>`;
+  container.appendChild(div);
+  host2Rows(bid);
+}
+function cbBuildGroup(g){
+  const op=(g.querySelector(":scope > .btnrow .cb-gop")||{}).value||"and";
+  const conds=[];
+  g.querySelectorAll(":scope > .cb-grows > .cb-row").forEach(row=>{ const e=cbRowExpr(row); if(e) conds.push(e); });
+  g.querySelectorAll(":scope > .cb-gsubs > .cb-group").forEach(sg=>{ const e=cbBuildGroup(sg); if(e&&Object.keys(e).length) conds.push(e); });
+  if(!conds.length) return null;
+  if(op==="not") return conds.length===1?{not:conds[0]}:{not:{and:conds}};
+  return {[op]:conds};
+}
+function cbBuildNested(bid){
+  const root=document.querySelector(`#${bid} .cb-nested`); if(!root) return {};
+  const parts=[];
+  root.querySelectorAll(":scope > .cb-group").forEach(g=>{ const e=cbBuildGroup(g); if(e) parts.push(e); });
+  if(!parts.length) return {};
+  return parts.length===1?parts[0]:{and:parts};
 }
 async function cbLoadFields(bid){
   const st=CB_STATE[bid]; if(!st) return;
@@ -2911,40 +3007,64 @@ async function cbLoadFields(bid){
   host2Rows(bid);
 }
 function host2Rows(bid){
-  document.querySelectorAll(`#${bid} .cb-field`).forEach(sel=>{
+  document.querySelectorAll(`#${bid} .cb-field, #${bid} .cb-valfield`).forEach(sel=>{
     const st=CB_STATE[bid], cur=sel.value;
     sel.innerHTML=(st.fields||[]).map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join("");
     if(cur&&[...sel.options].some(o=>o.value===cur)) sel.value=cur;
   });
 }
-function cbAddRow(bid){
-  const st=CB_STATE[bid]; if(!st) return;
-  const box=document.querySelector(`#${bid} .cb-rows`); if(!box) return;
-  const div=document.createElement("div"); div.className="cb-row";
-  div.innerHTML=`<select class="cb-field">${(st.fields||[]).map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join("")}</select>
+function cbRowHtml(bid){
+  const st=CB_STATE[bid];
+  const opts=(st.fields||[]).map(f=>`<option value="${esc(f.name)}">${esc(f.label||f.name)}</option>`).join("");
+  return `<select class="cb-field">${opts}</select>
    <select class="cb-op">${CB_OPS.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select>
-   <input class="cb-val" placeholder="value"><button class="btn danger small cb-x" onclick="this.parentElement.remove()">✕</button>`;
+   <input class="cb-val" placeholder="value"><label class="muted" title="Compare to another field" style="display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" class="cb-isfield" onchange="cbToggleValField(this)"> field</label>
+   <select class="cb-valfield" style="display:none;max-width:150px">${opts}</select><button class="btn danger small cb-x" onclick="this.parentElement.remove()">✕</button>`;
+}
+function cbToggleValField(cb){
+  const row=cb.closest(".cb-row"); if(!row) return;
+  const isF=cb.checked;
+  row.querySelector(".cb-val").style.display=isF?"none":"";
+  row.querySelector(".cb-valfield").style.display=isF?"":"none";
+}
+function cbAddRow(bid,box){
+  const st=CB_STATE[bid]; if(!st) return;
+  box=box||document.querySelector(`#${bid} .cb-rows`); if(!box) return;
+  const div=document.createElement("div"); div.className="cb-row";
+  div.innerHTML=cbRowHtml(bid);
   box.appendChild(div);
+}
+function cbRowExpr(row){
+  const f=(row.querySelector(".cb-field")||{}).value, op=(row.querySelector(".cb-op")||{}).value;
+  if(!f||!op) return null;
+  let rhs;
+  if(row.querySelector(".cb-isfield").checked){
+    const f2=(row.querySelector(".cb-valfield")||{}).value;
+    if(!f2) return null;
+    rhs={field:f2};
+  }else{
+    rhs=cbVal((row.querySelector(".cb-val")||{}).value);
+  }
+  if(op==="isblank") return {isblank:{field:f}};
+  if(op==="notblank") return {not:{isblank:{field:f}}};
+  if(op==="is_last_n_days") return {[op]:[{field:f},(typeof rhs==="number"?rhs:30)]};
+  if(op.startsWith("is_")) return {[op]:[{field:f}]};
+  return {[op]:[{field:f},rhs]};
 }
 function cbVal(s){ s=(s||"").trim(); if(s==="") return ""; if(/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s); if(s==="true") return true; if(s==="false") return false; return s; }
 function cbBuildExpr(bid){
   const st=CB_STATE[bid]; if(!st) return {};
   const logic=(document.getElementById(bid+"_logic")||{}).value||"and";
   const conds=[];
-  document.querySelectorAll(`#${bid} .cb-row`).forEach(row=>{
-    const f=row.querySelector(".cb-field").value, op=row.querySelector(".cb-op").value, raw=row.querySelector(".cb-val").value;
-    if(!f) return;
-    if(op==="isblank") conds.push({isblank:{field:f}});
-    else if(op==="notblank") conds.push({not:{isblank:{field:f}}});
-    else if(op==="is_last_n_days") conds.push({[op]:[{field:f},cbVal(raw)||30]});
-    else if(op.startsWith("is_")) conds.push({[op]:[{field:f}]});
-    else conds.push({[op]:[{field:f},cbVal(raw)]});
+  document.querySelectorAll(`#${bid} .cb-flat .cb-row`).forEach(row=>{
+    const e=cbRowExpr(row); if(e) conds.push(e);
   });
   return conds.length===1?conds[0]:conds.length?{[logic]:conds}:{};
 }
 function cbInsert(bid){
   const st=CB_STATE[bid]; if(!st) return;
-  const expr=cbBuildExpr(bid);
+  const nested=(document.getElementById(bid+"_nested")||{}).checked;
+  const expr=nested?cbBuildNested(bid):cbBuildExpr(bid);
   if(!Object.keys(expr).length){ toast("Add at least one condition first.","error"); return; }
   document.getElementById(st.target).value=JSON.stringify(expr);
   toast("Condition inserted — review, then save.","ok");
@@ -5276,9 +5396,13 @@ async function renderDashboards(){
   if(isAdmin){
     html+=dashBuild
       ?`<button class="btn secondary small" onclick="dashNew()">+ New</button> <button class="btn danger small" onclick="dashDel()">Delete</button> <button class="btn secondary small" onclick="dashBuild=false;renderDashboards()">Done</button>`
-      :`<button class="btn secondary small" onclick="dashBuild=true;dashWidgets=JSON.parse(JSON.stringify((curDash&&curDash.widgets)||[]));DASH_FILTERS=JSON.parse(JSON.stringify((curDash&&curDash.filters)||[]));renderDashboards()">⚙ Customize</button>`;
+      :`<button class="btn secondary small" onclick="dashBuild=true;dashWidgets=JSON.parse(JSON.stringify((curDash&&curDash.widgets)||[]));dashWidgets.forEach(w=>{w._wf=dashWfFromExpr(w.filters)});DASH_FILTERS=JSON.parse(JSON.stringify((curDash&&curDash.filters)||[]));renderDashboards()">⚙ Customize</button>`;
   }
   html+=`</div>`;
+  if(curDash){
+    const _rs=curDash.refresh_schedule||"", _lra=curDash.last_run_at||"";
+    html+=`<div style="margin:2px 0 8px"><span class="pill">${_rs?`Data as of ${esc(_lra||"never refreshed")} · refresh ${_rs}`:"Live"}</span></div>`;
+  }
   if(!curDash){
     html+=`<div class="card"><p class="muted">No dashboards yet.</p>${isAdmin?`<button class="btn" onclick="dashSeed()">Create starter dashboard</button> <button class="btn secondary" onclick="dashNew()">Blank dashboard</button>`:""}</div>`;
   }else if(dashBuild){
@@ -5333,12 +5457,14 @@ function dashBuildHtml(reps){
       +`<label>Group by override (optional — replaces report grouping)</label><input value="${esc(w.group_by||"")}" placeholder="e.g. Stage" oninput="dashWidgets[${i}].group_by=this.value">`
       +`<label>Aggregate override (optional — func:field, e.g. sum:Amount)</label><input value="${esc(w.aggregate||"")}" placeholder="sum:Amount" oninput="dashWidgets[${i}].aggregate=this.value">`
       +`<div class="grid2"><div><label>Gauge max (gauge only)</label><input type="number" value="${esc(w.gauge_max||"")}" oninput="dashWidgets[${i}].gauge_max=this.value"></div>`
-      +`<div><label>Scatter X, Y fields</label><div class="btnrow"><input value="${esc(w.scatter_x||"")}" placeholder="X field" oninput="dashWidgets[${i}].scatter_x=this.value" style="max-width:110px"><input value="${esc(w.scatter_y||"")}" placeholder="Y field" oninput="dashWidgets[${i}].scatter_y=this.value" style="max-width:110px"></div></div></div></div>`;
+      +`<div><label>Scatter X, Y fields</label><div class="btnrow"><input value="${esc(w.scatter_x||"")}" placeholder="X field" oninput="dashWidgets[${i}].scatter_x=this.value" style="max-width:110px"><input value="${esc(w.scatter_y||"")}" placeholder="Y field" oninput="dashWidgets[${i}].scatter_y=this.value" style="max-width:110px"></div></div></div>`
+      +`<details style="margin-top:6px"><summary class="muted">Widget filters (ANDed with dashboard filters)</summary><div id="dwf_${i}"></div><button class="btn secondary small" onclick="dashWidgets[${i}]._wf=dashWidgets[${i}]._wf||[];dashWidgets[${i}]._wf.push({field:'',op:'==',value:''});dashRenderWFilters(${i})">+ Filter</button></details></div>`;
   });
   html+=`</div>`;
   html+=`<div class="card" style="margin-top:12px"><b>Dashboard settings</b><div class="grid2" style="margin-top:6px">`
     +`<div><label>Name</label><input id="dash_name" value="${esc(curDash.name)}"><label>Folder</label><select id="dash_folder"><option value="">Unfiled</option>${DASH_FOLDERS.map(f=>`<option value="${f.id}" ${curDash.folder_id===f.id?"selected":""}>${esc(f.name)}</option>`).join("")}</select></div>`
     +`<div><label>Run as</label><select id="dash_runas"><option value="viewer" ${!curDash.run_as||curDash.run_as==="viewer"?"selected":""}>Viewer (each user sees own data)</option></select><label>Filters (apply to every widget, max 3)</label><div id="dash_filters"></div><button class="btn secondary small" onclick="DASH_FILTERS.push({field:'',op:'==',value:''});dashRenderFilters()">+ Filter</button></div>`
+    +`<div><label>Scheduled refresh</label><select id="dash_refresh"><option value="">None (live)</option>${["daily","weekly","monthly"].map(v=>`<option ${curDash.refresh_schedule===v?"selected":""}>${v}</option>`).join("")}</select><p class="muted" style="margin-top:4px">Refreshes widget data on schedule; the view shows “Data as of”.</p></div>`
     +`</div><div class="btnrow" style="margin-top:10px"><button class="btn secondary" onclick="dashWidgets.push({report_id:'',type:'bar',w:1});renderDashboards()">+ Add widget</button><span style="flex:1"></span><button class="btn" onclick="dashSave()">Save dashboard</button></div></div>`;
   html+=`<div class="card" style="margin-top:12px"><b>Live preview</b><div id="dashprev" class="dashgrid" style="margin-top:8px"><p class="muted">Loading…</p></div></div>`;
   return html;
@@ -5348,10 +5474,24 @@ async function dashBuildInit(){
   const ud=await api("GET","/api/users/directory");
   (ud.data||[]).forEach(u=>{ const o=document.createElement("option"); o.value=u.id; o.textContent=u.name+" ("+u.username+")"; if(curDash.run_as===u.id)o.selected=true; ru.appendChild(o); });
   dashRenderFilters();
+  dashWidgets.forEach((w,i)=>dashRenderWFilters(i));
 }
 function dashRenderFilters(){
   const box=document.getElementById("dash_filters"); if(!box) return;
   box.innerHTML=DASH_FILTERS.slice(0,3).map((f,i)=>`<div class="btnrow"><input value="${esc(f.field||"")}" placeholder="field" oninput="DASH_FILTERS[${i}].field=this.value" style="max-width:150px"><select onchange="DASH_FILTERS[${i}].op=this.value" style="max-width:110px">${["==","!=",">","<",">=","<=","contains"].map(o=>`<option ${f.op===o?"selected":""}>${o}</option>`).join("")}</select><input value="${esc(f.value||"")}" placeholder="value" oninput="DASH_FILTERS[${i}].value=this.value" style="max-width:130px"><button class="btn danger small" onclick="DASH_FILTERS.splice(${i},1);dashRenderFilters()">✕</button></div>`).join("");
+}
+function dashRenderWFilters(i){
+  const box=document.getElementById("dwf_"+i); if(!box) return;
+  const wf=dashWidgets[i]._wf||[];
+  box.innerHTML=wf.map((f,j)=>`<div class="btnrow"><input value="${esc(f.field||"")}" placeholder="field" oninput="dashWidgets[${i}]._wf[${j}].field=this.value" style="max-width:130px"><select onchange="dashWidgets[${i}]._wf[${j}].op=this.value" style="max-width:100px">${["==","!=" ,">","<",">=","<=","contains"].map(o=>`<option ${f.op===o?"selected":""}>${o}</option>`).join("")}</select><input value="${esc(f.value||"")}" placeholder="value" oninput="dashWidgets[${i}]._wf[${j}].value=this.value" style="max-width:120px"><button class="btn danger small" onclick="dashWidgets[${i}]._wf.splice(${j},1);dashRenderWFilters(${i})">✕</button></div>`).join("");
+}
+function dashWfFromExpr(expr){
+  // Best-effort: flat {op:[{field},value]} or {and:[...]} back into rows.
+  const rows=[];
+  const one=c=>{ const ks=Object.keys(c||{}); if(ks.length!==1) return; const op=ks[0], args=c[op];
+    if(Array.isArray(args)&&args.length===2&&args[0]&&typeof args[0]==="object"&&args[0].field) rows.push({field:args[0].field,op,value:args[1]}); };
+  if(expr&&typeof expr==="object"){ if(expr.and&&Array.isArray(expr.and)) expr.and.forEach(one); else one(expr); }
+  return rows;
 }
 async function dashRenderPreview(){
   const box=document.getElementById("dashprev"); if(!box||!curDash) return;
@@ -5374,6 +5514,8 @@ async function dashSave(){
     if((w.aggregate||"").trim()) o.aggregate=w.aggregate.trim();
     if(w.gauge_max) o.gauge_max=w.gauge_max;
     if(w.scatter_x) o.scatter_x=w.scatter_x; if(w.scatter_y) o.scatter_y=w.scatter_y;
+    const wf=(w._wf||[]).filter(f=>f.field).map(f=>({[f.op||"=="]:[{field:f.field},f.value]}));
+    if(wf.length) o.filters=wf.length===1?wf[0]:{and:wf};
     return o;
   });
   const filters=DASH_FILTERS.filter(f=>f.field).map(f=>({[f.op]:[{field:f.field},f.value]}));
@@ -5381,7 +5523,14 @@ async function dashSave(){
     folder_id:document.getElementById("dash_folder").value||null,
     run_as:document.getElementById("dash_runas").value||"viewer"};
   const r=await api("PUT","/api/dashboards/"+curDash.id,body);
-  if(r.ok){ curDash=r.data; dashBoards=dashBoards.map(d=>d.id===curDash.id?curDash:d); dashBuild=false; renderDashboards(); toast("Dashboard saved.","ok"); }
+  if(r.ok){
+    curDash=r.data; dashBoards=dashBoards.map(d=>d.id===curDash.id?curDash:d);
+    const rs=(document.getElementById("dash_refresh")||{}).value||null;
+    await api("POST",`/api/dashboards/${curDash.id}/refresh-sync`,{refresh_schedule:rs});
+    const r2=await api("GET","/api/dashboards");
+    if(r2.ok){ const upd=(r2.data||[]).find(d=>d.id===curDash.id); if(upd) curDash=upd; }
+    dashBuild=false; renderDashboards(); toast("Dashboard saved.","ok");
+  }
   else toast("Save failed: "+((r.data||{}).error||r.status),"error");
 }
 async function dashNew(){

@@ -29,6 +29,7 @@ FIELD_TYPES = {
     "URL":           {"sql": "TEXT",    "desc": "Web link"},
     "Lookup":        {"sql": "TEXT",    "desc": "Relationship to another object's record"},
     "MasterDetail":  {"sql": "TEXT",    "desc": "Master-detail: required parent, cascade delete, inherits sharing"},
+    "PolymorphicLookup": {"sql": "TEXT", "desc": "Relationship to a record in one of several objects (WhoId/WhatId/OwnerId style)"},
     "AutoNumber":    {"sql": "TEXT",    "desc": "Auto-generated sequence (prefix + zero-padded number); read-only"},
     "EncryptedText": {"sql": "TEXT",    "desc": "Text encrypted at rest; masked display (configurable visible chars)"},
     "Formula":       {"sql": "TEXT",    "desc": "Computed formula field (choose a return type)"},
@@ -185,6 +186,21 @@ def is_valid_api_name(name: str) -> bool:
     return bool(name) and bool(NAME_RE.match(name))
 
 
+def validate_polymorphic_definition(field: dict):
+    """Validate a PolymorphicLookup field definition. Raises ValueError.
+
+    `reference_to` must be a non-empty list of object API names.
+    """
+    ref = field.get("reference_to")
+    if not isinstance(ref, list) or not ref:
+        raise ValueError("PolymorphicLookup fields require 'reference_to' "
+                         "as a non-empty list of object names")
+    for name in ref:
+        if not isinstance(name, str) or not is_valid_api_name(name):
+            raise ValueError("PolymorphicLookup 'reference_to' must be a list "
+                             "of object API names")
+
+
 def validate_value(field: dict, value):
     """Validate + normalize a value for a field definition.
 
@@ -279,6 +295,15 @@ def validate_value(field: dict, value):
 
     if ftype == "Lookup":
         return True, str(value), None
+
+    if ftype == "PolymorphicLookup":
+        # Shape check only (non-empty id string); the target-object
+        # existence check needs store/registry access and lives in
+        # datamodel.resolve_lookup_value.
+        v = str(value).strip()
+        if not v:
+            return False, None, f"{label} is required"
+        return True, v, None
 
     if ftype == "MasterDetail":
         v = str(value).strip()

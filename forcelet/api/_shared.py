@@ -22,7 +22,7 @@ from .. import datamodel as _datamodel
 from .. import dynamic_forms as _dynforms
 from .. import duplicate_rules as _duprules
 from .. import email_alerts as _emailalerts
-from ..expressions import eval_expr, record_context
+from ..expressions import eval_expr, record_context, resolve_dotted_field
 from ..field_types import FIELD_TYPES, mask_secret, validate_value
 from ..security import (hash_token, session_timeouts)
 
@@ -383,7 +383,10 @@ def serialize(user, obj_def, record):
             continue
         if f.get("formula") or f.get("type") == "Formula":
             try:
-                data[f["name"]] = eval_expr(f["formula"], record_context(record))
+                data[f["name"]] = eval_expr(
+                    f["formula"], record_context(record),
+                    rel_resolver=lambda path: resolve_dotted_field(
+                        store, registry, obj_def["name"], record, path))
             except Exception:
                 data[f["name"]] = None
         elif f.get("rollup"):
@@ -535,6 +538,50 @@ def maybe_create_next_task_occurrence(user, rec):
         log.warning("recurring task: next occurrence failed", exc_info=True)
 
 
+def _resolve_relationship_values(obj, obj_name, values):
+    """Resolve Lookup/MasterDetail/PolymorphicLookup values to record Ids.
+
+    Accepts plain Id strings (existence-checked against the target objects)
+    and ``{"ExternalIdField": value}`` indirect references. Mutates ``values``
+    in place. Returns an error string on the first failure, else None.
+    """
+    store, registry, _sec = ctx()
+    for f in _datamodel.relationship_fields(obj):
+        fname = f["name"]
+        if fname not in values:
+            continue
+        try:
+            values[fname] = _datamodel.resolve_lookup_value(
+                store, registry, obj_name, f, values[fname])
+        except ValueError as e:
+            return str(e)
+    return None
+
+
+def _check_hierarchy_cycles(obj_name, rid_or_none, values):
+    """Reject self-referencing relationship values that would create a cycle.
+
+    Applies to Lookup/MasterDetail/PolymorphicLookup fields whose target
+    includes the object being written. Returns an error string on the first
+    failure, else None.
+    """
+    store, registry, _sec = ctx()
+    obj = registry.get_object(obj_name)
+    if not obj:
+        return None
+    for f in _datamodel.relationship_fields(obj):
+        ref = f.get("reference_to")
+        refs = ref if isinstance(ref, list) else [ref]
+        if obj_name not in refs or f["name"] not in values:
+            continue
+        try:
+            _datamodel.validate_hierarchy_no_cycle(
+                store, registry, obj_name, rid_or_none, f, values[f["name"]])
+        except ValueError as e:
+            return str(e)
+    return None
+
+
 def _do_create(user, obj_name, body, allow_duplicates=False):
     store, registry, security = ctx()
     obj = registry.get_object(obj_name)
@@ -552,6 +599,12 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
         if not values.get("Name"):
             # person accounts derive their display name from the person fields
             values["Name"] = _datamodel.person_display_name(values) or "Person Account"
+    # Relationship values: resolve indirect {"ExternalId": value} references
+    # to record Ids and existence-check plain Ids (incl. polymorphic targets).
+    # Must run before validate_record, which would mangle dict values.
+    rel_err = _resolve_relationship_values(obj, obj_name, values)
+    if rel_err:
+        return 422, {"error": "Validation failed", "details": [rel_err]}
     # Dynamic Forms: a required field hidden by a visibility rule must not
     # block the save. Rules are evaluated against the submitted values.
     df_hidden = _dynforms.hidden_fields(store, obj_name, values)
@@ -561,6 +614,9 @@ def _do_create(user, obj_name, body, allow_duplicates=False):
     md_err = _datamodel.validate_md_parents_exist(store, obj, clean)
     if md_err:
         return 422, {"error": "Validation failed", "details": [md_err]}
+    hier_err = _check_hierarchy_cycles(obj_name, None, clean)
+    if hier_err:
+        return 422, {"error": "Validation failed", "details": [hier_err]}
     if obj_name == "CampaignMember":
         serr = campaign_member_status_error(
             store, clean.get("CampaignId"), clean.get("Status"))
@@ -736,6 +792,10 @@ def _do_update(user, obj_name, rid, body, allow_duplicates=False):
         return 422, {"error": str(e)}
     editable = set(security.editable_fields(user, obj))
     values = {k: v for k, v in body.items() if k in editable}
+    # Resolve relationship values before validation (see _do_create).
+    rel_err = _resolve_relationship_values(obj, obj_name, values)
+    if rel_err:
+        return 422, {"error": "Validation failed", "details": [rel_err]}
     clean, errors = registry.validate_record(obj, values, partial=True)
     if errors:
         return 422, {"error": "Validation failed", "details": errors}
@@ -760,6 +820,9 @@ def _do_update(user, obj_name, rid, body, allow_duplicates=False):
     md_err = _datamodel.validate_md_parents_exist(store, obj, clean)
     if md_err:
         return 422, {"error": "Validation failed", "details": [md_err]}
+    hier_err = _check_hierarchy_cycles(obj_name, rid, clean)
+    if hier_err:
+        return 422, {"error": "Validation failed", "details": [hier_err]}
     working = {**rec, **clean}
     terr = automation.run_triggers(store, registry, security, obj_name,
                                   "before_update", working, rec, user)

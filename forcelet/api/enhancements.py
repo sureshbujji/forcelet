@@ -509,6 +509,58 @@ def register(app: Flask):
         store.config_delete("mf_report_subs", sid)
         return jsonify({"deleted": True})
 
+    # ------------------------------------------------------------ dashboard refresh
+    DASH_REFRESH_FREQUENCIES = ("daily", "weekly", "monthly")
+
+    def _sync_dash_refresh_job(dash: dict) -> dict:
+        """(Re)create the scheduled job that refreshes this dashboard.
+
+        Mirrors _sync_sub_job: the job runs
+        automation.refresh_dashboard(store, security, '<dash_id>').
+        """
+        if dash.get("refresh_job_id"):
+            store.config_delete("mf_scheduled_jobs", dash["refresh_job_id"])
+            dash.pop("refresh_job_id", None)
+        freq = {"daily": 1440, "weekly": 10080, "monthly": 43200}.get(
+            dash.get("refresh_schedule"))
+        if freq:
+            job = {"name": f"Dashboard refresh: {dash.get('name')}",
+                   "interval_minutes": freq, "active": True,
+                   "run_as": "admin",
+                   "code": "automation.refresh_dashboard(store, security, "
+                           f"'{dash['id']}')"}
+            jid = store.config_put("mf_scheduled_jobs", job)
+            dash["refresh_job_id"] = jid
+        return dash
+
+    @app.post("/api/dashboards/<did>/refresh-sync")
+    @require_auth
+    def sync_dash_refresh(did):
+        """(Re)sync the scheduled refresh job for a dashboard.
+
+        Reads refresh_schedule from the dashboard definition
+        (daily/weekly/monthly, or empty to disable). Accepts an optional
+        {"refresh_schedule": ...} body to set it in the same call.
+        """
+        dash = store.config_get("mf_dashboards", did)
+        if not dash:
+            return jsonify({"error": "Not found"}), 404
+        if request.mf_user["profile"] != "System Administrator" \
+                and dash.get("created_by") != request.mf_user["id"]:
+            return jsonify({"error": "Forbidden"}), 403
+        body = request.json or {}
+        if "refresh_schedule" in body:
+            rs = body.get("refresh_schedule")
+            if rs and rs not in DASH_REFRESH_FREQUENCIES:
+                return jsonify({"error": "refresh_schedule must be one of "
+                                         "daily, weekly, monthly or empty"}), 422
+            dash["refresh_schedule"] = rs or None
+        dash = _sync_dash_refresh_job(dash)
+        store.config_put("mf_dashboards", dash)
+        return jsonify({"refresh_schedule": dash.get("refresh_schedule"),
+                        "refresh_job_id": dash.get("refresh_job_id"),
+                        "last_run_at": dash.get("last_run_at")})
+
     # ------------------------------------------------------------ flow versioning
     @app.get("/api/admin/flows/<fid>/versions")
     @require_auth

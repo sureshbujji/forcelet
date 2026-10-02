@@ -76,6 +76,9 @@ class MetadataRegistry:
         if ftype == "MasterDetail":
             from .datamodel import validate_master_detail
             validate_master_detail(self, obj_name, field)
+        if ftype == "PolymorphicLookup":
+            from .field_types import validate_polymorphic_definition
+            validate_polymorphic_definition(field)
         if ftype in ("Picklist", "MultiPicklist") and not field.get("picklist_values") \
                 and not field.get("dynamic_picklist"):
             raise ValueError("Picklist fields require 'picklist_values'")
@@ -163,6 +166,11 @@ class MetadataRegistry:
             if spec["func"] != "count" and "field" not in spec:
                 raise ValueError("Roll-up spec needs 'field' for sum/avg/min/max")
             full["required"] = False
+        if full.get("formula"):
+            # Validate {"field"} references (incl. dotted cross-object paths)
+            # against the registry now; bad references fail at save time.
+            from .expressions import validate_formula_refs
+            validate_formula_refs(self, obj_name, full["formula"])
         obj["fields"].append(full)
         self.store.meta_put("mf_objects", obj_name, obj)
         self.store.add_column(obj_name, full)

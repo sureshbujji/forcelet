@@ -27,7 +27,15 @@ def md_fields(obj_def: dict) -> list:
 
 def relationship_fields(obj_def: dict) -> list:
     return [f for f in obj_def.get("fields", [])
-            if f.get("type") in ("Lookup", "MasterDetail")]
+            if f.get("type") in ("Lookup", "MasterDetail", "PolymorphicLookup")]
+
+
+def _reference_targets(field: dict) -> list:
+    """Object names a relationship field can point at (list for polymorphic)."""
+    ref = field.get("reference_to")
+    if isinstance(ref, list):
+        return [r for r in ref if isinstance(r, str) and r]
+    return [ref] if ref else []
 
 
 # ------------------------------------------------------- auto-number fields
@@ -70,8 +78,8 @@ def validate_master_detail(registry, obj_name: str, field: dict):
         cur_def = registry.get_object(cur)
         if not cur_def:
             continue
-        stack.extend(f.get("reference_to") for f in relationship_fields(cur_def)
-                     if f.get("reference_to"))
+        for f in relationship_fields(cur_def):
+            stack.extend(_reference_targets(f))
     for flag in ("unique", "external_id", "encrypted"):
         if field.get(flag):
             raise ValueError(f"MasterDetail fields cannot be {flag}")
@@ -101,6 +109,107 @@ def validate_md_parents_exist(store, obj_def: dict, values: dict) -> str | None:
                 return (f"{f.get('label', f['name'])} references a "
                         f"{f['reference_to']} record that does not exist")
     return None
+
+
+def resolve_lookup_value(store, registry, obj_name: str, field_def: dict, value) -> str | None:
+    """Resolve a relationship value to a record Id. Raises ValueError when invalid.
+
+    Accepts:
+      - a plain Id string, existence-checked against the target object(s);
+      - a dict ``{"<ExternalIdFieldName>": value}`` for indirect resolution
+        (0 matches or more than 1 match raises);
+      - None (or blank) for optional fields — passes through as None, but
+        raises when the field is required.
+    Works for Lookup, MasterDetail, and PolymorphicLookup fields.
+    """
+    label = field_def.get("label") or field_def.get("name") or "Field"
+    ftype = field_def.get("type")
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        if field_def.get("required") or ftype == "MasterDetail":
+            raise ValueError(f"{label} is required")
+        return None
+    targets = _reference_targets(field_def)
+    targets = [t for t in targets if registry.get_object(t)]
+    if not targets:
+        raise ValueError(f"{label} has no valid target object configured")
+    if isinstance(value, dict):
+        if len(value) != 1:
+            raise ValueError(f"{label}: indirect reference must be a single "
+                             "{<ExternalIdField>: value} mapping")
+        (ext_field, ext_val), = value.items()
+        for target in targets:
+            if ext_field not in registry.field_map(registry.get_object(target)):
+                raise ValueError(f"{label}: '{ext_field}' is not a field on {target}")
+        matches = []
+        for target in targets:
+            try:
+                rows = store.query(target, limit=100000)
+            except Exception:
+                continue
+            for row in rows:
+                if row.get(ext_field) is not None and str(row.get(ext_field)) == str(ext_val):
+                    matches.append((target, row["id"]))
+        if not matches:
+            raise ValueError(f"{label}: no {', '.join(targets)} record found "
+                             f"with {ext_field}='{ext_val}'")
+        if len(matches) > 1:
+            raise ValueError(f"{label}: multiple records match {ext_field}='{ext_val}' "
+                             f"({len(matches)} found)")
+        return matches[0][1]
+    vid = str(value).strip()
+    for target in targets:
+        try:
+            rec = store.get(target, vid)
+        except Exception:
+            rec = None
+        if rec:
+            return vid
+    raise ValueError(f"{label}: no {', '.join(targets)} record found with Id '{vid}'")
+
+
+def validate_hierarchy_no_cycle(store, registry, obj_name: str, rid_or_none: str | None,
+                                field_def: dict, parent_id: str | None):
+    """Raise ValueError if setting ``parent_id`` via a self-referencing field
+    would create a cycle.
+
+    ``rid_or_none`` is the record being saved (None for new records). Only
+    applies when ``field_def["reference_to"] == obj_name``. Walks up the
+    parent chain with a visited set; a repeated node, reaching
+    ``rid_or_none``, or a chain deeper than 50 all raise ValueError.
+
+    NOTE (Phase 2 wiring): datamodel.py has no record-save hook — field
+    validation lives in forcelet/api/_shared.py next to the
+    ``validate_md_parents_exist`` calls. Wire this there for self-referencing
+    Lookup/MasterDetail/PolymorphicLookup fields on create and update.
+    """
+    if not parent_id:
+        return
+    _ref = field_def.get("reference_to")
+    _refs = _ref if isinstance(_ref, list) else [_ref]
+    if obj_name not in _refs:
+        return  # not a self-reference; nothing to check
+    fname = field_def["name"]
+    flabel = field_def.get("label") or fname
+    if rid_or_none and str(parent_id) == str(rid_or_none):
+        raise ValueError(f"{flabel} cannot reference the record itself")
+    seen = set()
+    cur = str(parent_id)
+    depth = 0
+    while cur:
+        if cur in seen:
+            raise ValueError(f"{flabel}: parent chain contains a cycle")
+        seen.add(cur)
+        if rid_or_none and cur == str(rid_or_none):
+            raise ValueError(f"{flabel}: this would create a circular reference")
+        if depth >= 50:
+            raise ValueError(f"{flabel}: parent chain too deep (possible cycle)")
+        depth += 1
+        try:
+            rec = store.get(obj_name, cur)
+        except Exception:
+            rec = None
+        nxt = rec.get(fname) if rec else None
+        cur = str(nxt) if nxt else None
 
 
 # ------------------------------------------------------- lookup-based cascade registry
@@ -139,6 +248,44 @@ CASCADE_CHILDREN = {
     # Contract: no line-item object exists; nothing to cascade.
 }
 
+# Field names that appear in the curated CASCADE_CHILDREN registry above.
+# Used by get_delete_behavior() to preserve the L6 cascade fixes. A few
+# unrelated Lookup fields share these names (e.g. Quote.OpportunityId,
+# QuoteSync.QuoteId); those carry an explicit `delete_behavior` in
+# standard_objects.json so the name-based match never misfires.
+_CURATED_CASCADE_FIELDS = {
+    field_name
+    for _parent, pairs in CASCADE_CHILDREN.items()
+    for _child_obj, field_name in pairs
+}
+
+_DELETE_BEHAVIORS = ("clear", "block", "cascade")
+
+
+def get_delete_behavior(field_def: dict) -> str:
+    """Delete behavior for a relationship field: 'clear', 'block', or 'cascade'.
+
+    Precedence:
+      1. explicit `delete_behavior` on the field definition wins;
+      2. MasterDetail always cascades;
+      3. fields in the curated L6 CASCADE_CHILDREN registry cascade;
+      4. required lookups block the delete;
+      5. everything else clears the FK (Salesforce default for lookups).
+    PolymorphicLookup is treated like Lookup.
+    """
+    explicit = field_def.get("delete_behavior")
+    if isinstance(explicit, str) and explicit.strip().lower() in _DELETE_BEHAVIORS:
+        return explicit.strip().lower()
+    ftype = field_def.get("type")
+    if ftype == "MasterDetail":
+        return "cascade"
+    if ftype in ("Lookup", "PolymorphicLookup") \
+            and field_def.get("name") in _CURATED_CASCADE_FIELDS:
+        return "cascade"
+    if field_def.get("required"):
+        return "block"
+    return "clear"
+
 
 def _price_book_entry_referenced(store, entry_id: str) -> bool:
     """True when any opportunity or quote line item references this entry."""
@@ -172,13 +319,24 @@ def check_delete_blockers(store, registry, obj_name: str, rid: str) -> str | Non
 
 def cascade_delete(store, registry, user: dict, obj_name: str, rid: str,
                    depth: int = 0) -> list:
-    """Recursively delete detail children of a record.
+    """Delete detail children of a record according to each field's delete behavior.
 
-    Covers MasterDetail children (discovered dynamically) plus the curated
-    CASCADE_CHILDREN registry of Lookup-based detail children. Each child is
-    recycled, change-logged, and deleted. Returns a list of (object, id)
-    tuples that were cascade-deleted. Depth-guarded. Raises ValueError when a
-    Salesforce-semantics blocker (see check_delete_blockers) is hit.
+    Discovers every relationship field (MasterDetail, Lookup,
+    PolymorphicLookup) pointing at ``obj_name`` and applies
+    :func:`get_delete_behavior` per field:
+
+    - ``cascade``: children are recycled (linked to this parent via
+      ``parent_ref``), change-logged, and deleted, recursing first so
+      grandchildren go before children;
+    - ``clear``: the FK on each referencing child is set to NULL and the
+      change is audit-logged (never applied to required fields — those
+      fall through to ``block``);
+    - ``block``: raises ValueError when any referencing child exists.
+
+    "Block" is enforced for all children before any mutation happens, so a
+    blocked delete never leaves half-cleared children behind. Depth-guarded.
+    Raises ValueError when a Salesforce-semantics blocker (see
+    check_delete_blockers) is hit.
     """
     deleted = []
     if depth >= MAX_MD_DEPTH:
@@ -188,28 +346,48 @@ def cascade_delete(store, registry, user: dict, obj_name: str, rid: str,
         raise ValueError(blocker)
     pairs = []
     for child_def in registry.list_objects():
-        for f in md_fields(child_def):
-            if f.get("reference_to") == obj_name:
-                pairs.append((child_def["name"], f["name"]))
-    for cobj, field in CASCADE_CHILDREN.get(obj_name, []):
-        if registry.get_object(cobj):
-            pairs.append((cobj, field))
-    for cobj, field in pairs:
+        for f in relationship_fields(child_def):
+            if obj_name in _reference_targets(f):
+                pairs.append((child_def["name"], f))
+    # Pass 1: collect referencing rows; enforce "block" before mutating.
+    refs_by_pair = []
+    for cobj, fdef in pairs:
+        fname = fdef["name"]
+        behavior = get_delete_behavior(fdef)
+        if behavior == "clear" and fdef.get("required"):
+            behavior = "block"  # safety net: never null a required FK
         try:
             rows = store.query(cobj, limit=100000)
         except Exception:
             continue
-        for row in rows:
-            if row.get(field) == rid:
+        refs = [r for r in rows if r.get(fname) == rid]
+        if behavior == "block" and refs:
+            raise ValueError(f"Cannot delete {obj_name}: {len(refs)} related "
+                             f"{cobj} record(s) exist")
+        if refs:
+            refs_by_pair.append((cobj, fdef, behavior, refs))
+    # Pass 2: apply cascade / clear.
+    for cobj, fdef, behavior, refs in refs_by_pair:
+        fname = fdef["name"]
+        for row in refs:
+            if behavior == "cascade":
                 # recurse first so grandchildren go before children
                 deleted.extend(cascade_delete(store, registry, user, cobj,
                                               row["id"], depth + 1))
                 store.emit_change(cobj, row["id"], "delete", user,
                                   changed_fields=list(row.keys()),
                                   snapshot={k: v for k, v in row.items()})
-                store.recycle_put(cobj, row, user["id"])
+                store.recycle_put(cobj, row, user["id"],
+                                  parent_ref={"object": obj_name, "id": rid})
                 store.delete(cobj, row["id"])
                 deleted.append((cobj, row["id"]))
+            elif behavior == "clear":
+                store.update(cobj, row["id"], {fname: None})
+                store.emit_change(cobj, row["id"], "update", user,
+                                  changed_fields=[fname],
+                                  snapshot={"cleared_field": fname,
+                                            "old_value": row.get(fname),
+                                            "parent_deleted": rid})
     return deleted
 
 

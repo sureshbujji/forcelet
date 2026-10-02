@@ -66,7 +66,9 @@ def test_master_detail_requires_parent_and_validates_it(client):
     r = client.post("/api/sobjects/DMChild__c", headers=h,
                     json={"Name": "x", "Parent__c": "nope123"})
     assert r.status_code == 422
-    assert "does not exist" in r.get_json()["details"][0]
+    # Phase-2 wiring resolves relationship values (incl. MD parents) up front,
+    # so the unified "no <target> record found" message fires first.
+    assert "no DMParent__c record found" in r.get_json()["details"][0]
 
 
 def test_master_detail_rejects_self_and_cycles(client):

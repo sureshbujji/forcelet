@@ -2345,21 +2345,30 @@ def _registry_shim(store):
     return _Shim()
 
 
-def _resolve_sub_recipients(security, recipients):
-    """Recipient entries -> deduped email list.
+def _resolve_sub_recipient_users(security, recipients):
+    """Recipient entries -> list of {email, user, kind}.
 
-    Entries: {"type": "email"|"user"|"role", "value": ...}; legacy plain
-    strings are treated as raw email addresses.
+    kind is "user" (a resolved Forcelet user), "role" (an active member of
+    a role), or "email" (a raw address with no user identity — the digest
+    falls back to the subscription's default run user for these, clearly
+    marked as a shared-view copy).
     """
-    emails = []
     try:
         users = {u.get("id"): u for u in security.list_users()}
     except Exception:
         users = {}
+    out, seen = [], set()
+
+    def _add(email, user, kind):
+        email = (email or "").strip()
+        if not email or email.lower() in seen:
+            return
+        seen.add(email.lower())
+        out.append({"email": email, "user": user, "kind": kind})
+
     for r in recipients or []:
         if isinstance(r, str):
-            if r.strip():
-                emails.append(r.strip())
+            _add(r, None, "email")
             continue
         if not isinstance(r, dict):
             continue
@@ -2367,22 +2376,86 @@ def _resolve_sub_recipients(security, recipients):
         if not v:
             continue
         if t == "email":
-            emails.append(v)
+            _add(v, None, "email")
         elif t == "user":
             u = users.get(v)
             if u and u.get("email"):
-                emails.append(u["email"])
+                _add(u["email"], u, "user")
         elif t == "role":
             for u in users.values():
                 if u.get("role") == v and u.get("email") \
                         and u.get("is_active") is not False:
-                    emails.append(u["email"])
-    seen, out = set(), []
-    for e in emails:
-        if e.lower() not in seen:
-            seen.add(e.lower())
-            out.append(e)
+                    _add(u["email"], u, "role")
     return out
+
+
+def _digest_report_payload(store, security, run_user, rep, attach_kind):
+    """Build one recipient's report digest content.
+
+    Returns (lines, attachments, row_count, error). The report runs
+    sharing/FLS-scoped as run_user via run_report_data.
+    """
+    import base64
+    data = _report_run_for_digest(store, security, run_user, rep)
+    if data.get("error"):
+        return None, None, 0, data["error"]
+    row_count = data.get("row_count", 0)
+    lines = [f"Report: {rep.get('name')} — {row_count} record(s)"]
+    for g in (data.get("groups") or [])[:15]:
+        agg = g.get("aggregate")
+        lines.append(f"  {g.get('key')}: {g.get('count')}"
+                     + (f" (Σ {agg})" if agg is not None else ""))
+    attachments = []
+    if attach_kind in ("csv", "xlsx"):
+        from .api.reports import _export_columns, _csv_bytes, _xlsx_bytes
+        cols = _export_columns(rep, data.get("rows") or [])
+        payload = _xlsx_bytes(cols, data.get("rows") or []) \
+            if attach_kind == "xlsx" else _csv_bytes(cols, data.get("rows") or [])
+        attachments.append({
+            "filename": f"{(rep.get('name') or 'report')}.{attach_kind}",
+            "content_type": "application/vnd.openxmlformats-officedocument."
+                            "spreadsheetml.sheet" if attach_kind == "xlsx"
+                            else "text/csv",
+            "data": base64.b64encode(payload).decode("ascii")})
+    elif attach_kind == "html":
+        html = _dashboard_snapshot_html(
+            store, security, run_user,
+            {"name": rep.get("name"), "widgets": [
+                {"report_id": rep.get("id"), "type": "table"}]})
+        attachments.append({"filename": f"{rep.get('name') or 'report'}.html",
+                            "content_type": "text/html",
+                            "data": base64.b64encode(
+                                html.encode("utf-8")).decode("ascii")})
+    return lines, attachments, row_count, None
+
+
+def _digest_dashboard_payload(store, security, run_user, dash, attach_kind):
+    """Build one recipient's dashboard digest content.
+
+    Each widget's report runs sharing/FLS-scoped as run_user.
+    Returns (lines, attachments, row_count, error).
+    """
+    import base64
+    lines, attachments = [], []
+    row_count = 0
+    for w in dash.get("widgets") or []:
+        wrep = store.config_get("mf_reports", w.get("report_id") or "")
+        if not wrep:
+            continue
+        wdata = _report_run_for_digest(store, security, run_user, wrep)
+        if wdata.get("error"):
+            continue
+        n = wdata.get("row_count", 0)
+        row_count = max(row_count, n)
+        lines += [f"--- {wrep.get('name')} ({w.get('type', 'bar')}) ---",
+                  f"{n} record(s)"]
+    if attach_kind == "html":
+        html = _dashboard_snapshot_html(store, security, run_user, dash)
+        attachments.append({"filename": f"{dash.get('name') or 'dashboard'}.html",
+                            "content_type": "text/html",
+                            "data": base64.b64encode(
+                                html.encode("utf-8")).decode("ascii")})
+    return lines, attachments, row_count, None
 
 
 def _report_run_for_digest(store, security, user, rep):
@@ -2435,8 +2508,14 @@ def send_report_digest(store, security, sub_id: str) -> dict:
     _sync_sub_job), "only when conditions met" (condition.min_rows), and
     user/role recipient resolution. D5: dashboards honor their run_as
     setting instead of always running as admin.
+
+    Phase 2b: each recipient gets their own sharing-scoped snapshot — the
+    report (or each dashboard widget's report) runs AS the recipient via
+    run_report_data, so every recipient sees exactly the rows and fields
+    they are allowed to see. Raw-email recipients that cannot be resolved
+    to a Forcelet user fall back to the subscription's default run user
+    and their copy is marked as a shared view.
     """
-    import base64
     sub = store.config_get("mf_report_subs", sub_id)
     if not sub or not sub.get("active", True):
         return {"ok": False, "detail": "subscription missing or inactive"}
@@ -2446,91 +2525,114 @@ def send_report_digest(store, security, sub_id: str) -> dict:
         creator = security.get_user(sub.get("created_by") or "")
     except Exception:
         creator = None
-    # D5: dashboards run as their configured run_as user (viewer default).
+    # Default (fallback) run user: dashboards honor their run_as setting
+    # (D5), reports honor run_as_user when configured.
     dash = store.config_get("mf_dashboards", sub.get("dashboard_id") or "")
-    run_user = admin or {}
+    fallback_user = admin or {}
     if dash:
         run_as = dash.get("run_as") or "viewer"
         if run_as == "viewer":
-            run_user = creator or admin or {}
+            fallback_user = creator or admin or {}
         else:
             try:
-                run_user = security.get_user(run_as) or (creator or admin or {})
+                fallback_user = security.get_user(run_as) or (creator or admin or {})
             except Exception:
-                run_user = creator or admin or {}
+                fallback_user = creator or admin or {}
     rep = store.config_get("mf_reports", sub.get("report_id") or "")
     if rep and (rep.get("run_as_user")):
         try:
-            run_user = security.get_user(rep["run_as_user"]) or run_user
+            fallback_user = security.get_user(rep["run_as_user"]) or fallback_user
         except Exception:
             pass
-    recipients = _resolve_sub_recipients(security, sub.get("recipients"))
-    if not recipients:
+    targets = _resolve_sub_recipient_users(security, sub.get("recipients"))
+    if not targets:
         store.log_scheduled_run(sub.get("job_id") or sub_id, "ok",
                                 "digest skipped: no resolvable recipients")
         return {"ok": False, "detail": "no resolvable recipients"}
-    lines = [f"Report digest: {sub.get('name')}", ""]
-    attachments = []
     attach_kind = sub.get("attachment") or "none"
-    row_count = 0
-    if rep:
-        data = _report_run_for_digest(store, security, run_user, rep)
-        if data.get("error"):
-            return {"ok": False, "detail": data["error"]}
-        row_count = data.get("row_count", 0)
-        lines += [f"Report: {rep.get('name')} — {row_count} record(s)"]
-        for g in (data.get("groups") or [])[:15]:
-            agg = g.get("aggregate")
-            lines.append(f"  {g.get('key')}: {g.get('count')}"
-                         + (f" (Σ {agg})" if agg is not None else ""))
-        if attach_kind in ("csv", "xlsx"):
-            from .api.reports import _export_columns, _csv_bytes, _xlsx_bytes
-            cols = _export_columns(rep, data.get("rows") or [])
-            payload = _xlsx_bytes(cols, data.get("rows") or []) \
-                if attach_kind == "xlsx" else _csv_bytes(cols, data.get("rows") or [])
-            attachments.append({
-                "filename": f"{(rep.get('name') or 'report')}.{attach_kind}",
-                "content_type": "application/vnd.openxmlformats-officedocument."
-                                "spreadsheetml.sheet" if attach_kind == "xlsx"
-                                else "text/csv",
-                "data": base64.b64encode(payload).decode("ascii")})
-        elif attach_kind == "html":
-            html = _dashboard_snapshot_html(
-                store, security, run_user,
-                {"name": rep.get("name"), "widgets": [
-                    {"report_id": rep.get("id"), "type": "table"}]})
-            attachments.append({"filename": f"{rep.get('name') or 'report'}.html",
-                                "content_type": "text/html",
-                                "data": base64.b64encode(
-                                    html.encode("utf-8")).decode("ascii")})
-    if dash:
-        for w in dash.get("widgets") or []:
-            wrep = store.config_get("mf_reports", w.get("report_id") or "")
-            if not wrep:
-                continue
-            wdata = _report_run_for_digest(store, security, run_user, wrep)
-            n = wdata.get("row_count", 0)
-            row_count = max(row_count, n)
-            lines += [f"--- {wrep.get('name')} ({w.get('type', 'bar')}) ---",
-                      f"{n} record(s)"]
-        if attach_kind == "html":
-            html = _dashboard_snapshot_html(store, security, run_user, dash)
-            attachments.append({"filename": f"{dash.get('name') or 'dashboard'}.html",
-                                "content_type": "text/html",
-                                "data": base64.b64encode(
-                                    html.encode("utf-8")).decode("ascii")})
-    # R13: only-when-conditions-met.
     min_rows = (sub.get("condition") or {}).get("min_rows")
-    if isinstance(min_rows, int) and min_rows > 0 and row_count < min_rows:
-        store.log_scheduled_run(sub.get("job_id") or sub_id, "ok",
-                                f"digest skipped: {row_count} rows < min_rows {min_rows}")
-        return {"ok": True, "detail": "skipped: condition not met"}
-    body = "\n".join(lines)[:8000]
     subject = f"[Forcelet digest] {sub.get('name')}"
-    for rcpt in recipients:
+    sent, skipped, errors = 0, 0, []
+    for t in targets:
+        per_user = t["user"] or fallback_user
+        if rep:
+            lines, attachments, row_count, err = _digest_report_payload(
+                store, security, per_user, rep, attach_kind)
+        elif dash:
+            lines, attachments, row_count, err = _digest_dashboard_payload(
+                store, security, per_user, dash, attach_kind)
+        else:
+            err = "subscription has neither report nor dashboard"
+            lines, attachments, row_count = None, None, 0
+        if err:
+            errors.append(f"{t['email']}: {err}")
+            continue
+        # R13: only-when-conditions-met, evaluated per recipient.
+        if isinstance(min_rows, int) and min_rows > 0 and row_count < min_rows:
+            skipped += 1
+            continue
+        header = [f"Report digest: {sub.get('name')}", ""]
+        if t["kind"] == "email":
+            header.append("Shared-view copy: this address is not linked to a "
+                          "Forcelet user, so it shows the subscription's "
+                          "default data visibility.")
+            header.append("")
+        body = "\n".join(header + lines)[:8000]
         store.log_email("Report", sub.get("report_id") or sub.get("dashboard_id") or "",
-                        rcpt, subject, body, "report-digest", run_user or {},
-                        attachments=attachments)
-    store.log_scheduled_run(sub.get("job_id") or sub_id, "ok",
-                            f"digest sent to {len(recipients)}")
-    return {"ok": True, "detail": f"sent to {len(recipients)}"}
+                        t["email"], subject, body, "report-digest",
+                        per_user or {}, attachments=attachments)
+        sent += 1
+    detail = f"sent to {sent}"
+    if skipped:
+        detail += f", {skipped} skipped by condition"
+    if errors:
+        detail += f"; errors: {'; '.join(errors)[:500]}"
+    store.log_scheduled_run(sub.get("job_id") or sub_id, "ok", detail)
+    return {"ok": True, "detail": detail}
+
+
+def refresh_dashboard(store, security, dash_id: str) -> dict:
+    """Scheduled-job entry point: refresh a dashboard on its refresh_schedule.
+
+    Called from generated job code as
+    ``automation.refresh_dashboard(store, security, '<dash_id>')``.
+    Runs every widget's report as the dashboard's owner/run-as user
+    (validating the reports still execute), then persists ``last_run_at``
+    on the dashboard definition so the UI can show a stale-data indicator.
+    """
+    from datetime import datetime, timezone
+    dash = store.config_get("mf_dashboards", dash_id)
+    if not dash:
+        return {"ok": False, "detail": "dashboard not found"}
+    admin = security.get_user_by_username("admin")
+    creator = None
+    try:
+        creator = security.get_user(dash.get("created_by") or "")
+    except Exception:
+        creator = None
+    run_as = dash.get("run_as") or "viewer"
+    if run_as == "viewer":
+        run_user = creator or admin or {}
+    else:
+        try:
+            run_user = security.get_user(run_as) or (creator or admin or {})
+        except Exception:
+            run_user = creator or admin or {}
+    errors, ran = [], 0
+    for w in dash.get("widgets") or []:
+        wrep = store.config_get("mf_reports", w.get("report_id") or "")
+        if not wrep:
+            continue
+        data = _report_run_for_digest(store, security, run_user, wrep)
+        if data.get("error"):
+            errors.append(f"{wrep.get('name')}: {data['error']}")
+        else:
+            ran += 1
+    dash["last_run_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    store.config_put("mf_dashboards", dash)
+    detail = f"dashboard refreshed ({ran} widget(s))"
+    if errors:
+        detail += f"; errors: {'; '.join(errors)[:500]}"
+    store.log_scheduled_run(dash.get("refresh_job_id") or dash_id,
+                            "ok" if not errors else "error", detail)
+    return {"ok": not errors, "detail": detail}

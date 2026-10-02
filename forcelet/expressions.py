@@ -104,10 +104,24 @@ def set_custom_setting_resolver(fn):
     global _custom_setting_resolver
     _custom_setting_resolver = fn
 
-def eval_expr(expr, record: dict, old_record: dict | None = None, user: dict | None = None):
+def eval_expr(expr, record: dict, old_record: dict | None = None, user: dict | None = None,
+            rel_resolver=None):
+    """Evaluate a formula/validation expression against a record.
+
+    ``rel_resolver`` is an optional callable taking a dotted path like
+    ``"Account.Name"`` and returning the traversed value (or None). When
+    provided, ``{"field": "A.B"}`` references resolve through relationship
+    fields; without it they behave as before (plain ``record.get``).
+    """
     if isinstance(expr, dict):
         if "field" in expr:
-            return record.get(expr["field"])
+            fname = expr["field"]
+            if isinstance(fname, str) and "." in fname and rel_resolver is not None:
+                try:
+                    return rel_resolver(fname)
+                except Exception:
+                    return None
+            return record.get(fname)
         if "field_old" in expr:
             return (old_record or {}).get(expr["field_old"])
         if expr.get("today"):
@@ -117,10 +131,10 @@ def eval_expr(expr, record: dict, old_record: dict | None = None, user: dict | N
         for _pred in REL_DATE_PREDICATES:
             if _pred in expr:
                 _args = expr[_pred]
-                _fld = eval_expr(_args[0], record, old_record, user) \
-                    if isinstance(_args, list) else eval_expr(_args, record, old_record, user)
+                _fld = eval_expr(_args[0], record, old_record, user, rel_resolver) \
+                    if isinstance(_args, list) else eval_expr(_args, record, old_record, user, rel_resolver)
                 if _pred == "is_last_n_days":
-                    _n = eval_expr(_args[1], record, old_record, user) \
+                    _n = eval_expr(_args[1], record, old_record, user, rel_resolver) \
                         if isinstance(_args, list) and len(_args) > 1 else 0
                     return _in_relative_range(_fld, "last_n_days", _n)
                 return _in_relative_range(_fld, _pred[3:])
@@ -139,19 +153,19 @@ def eval_expr(expr, record: dict, old_record: dict | None = None, user: dict | N
             return _custom_setting_resolver(spec.get("name"), spec.get("field"))
         if len(expr) == 1:
             op, args = next(iter(expr.items()))
-            return _apply_op(op, args, record, old_record, user)
+            return _apply_op(op, args, record, old_record, user, rel_resolver)
         raise ValueError(f"Invalid expression: {expr}")
     if isinstance(expr, list):
-        return [eval_expr(e, record, old_record, user) for e in expr]
+        return [eval_expr(e, record, old_record, user, rel_resolver) for e in expr]
     return expr
 
 
-def _val(x, record, old_record, user):
-    return eval_expr(x, record, old_record, user)
+def _val(x, record, old_record, user, rel_resolver=None):
+    return eval_expr(x, record, old_record, user, rel_resolver)
 
 
-def _apply_op(op, args, record, old_record, user):
-    v = lambda x: _val(x, record, old_record, user)
+def _apply_op(op, args, record, old_record, user, rel_resolver=None):
+    v = lambda x: _val(x, record, old_record, user, rel_resolver)
     if op == "==":
         return v(args[0]) == v(args[1])
     if op == "!=":
@@ -253,3 +267,138 @@ def record_context(rec: dict | None) -> dict:
     ctx.setdefault("LastModifiedDate", ctx.get("last_modified_date"))
     ctx.setdefault("RecordType", ctx.get("record_type"))
     return ctx
+
+
+# ------------------------------------------------- relationship traversal
+#: Max relationship hops when resolving a dotted path like
+#: ``Account.ParentAccount.Name``.
+DOTTED_PATH_MAX_DEPTH = 5
+
+_RELATIONSHIP_TYPES = ("Lookup", "MasterDetail", "PolymorphicLookup")
+
+
+def _relationship_field_for(obj_def: dict, segment: str):
+    """Find the relationship field whose Salesforce-style relationship name
+    matches ``segment``: the exact API name, or the API name minus a trailing
+    ``Id`` (``AccountId`` -> ``Account``). Returns None when no match."""
+    for f in obj_def.get("fields", []) or []:
+        if f.get("type") not in _RELATIONSHIP_TYPES:
+            continue
+        name = f.get("name") or ""
+        if segment == name:
+            return f
+        if name.endswith("Id") and segment == name[:-2]:
+            return f
+    return None
+
+
+def _rel_targets(fdef: dict) -> list:
+    ref = fdef.get("reference_to")
+    return [t for t in (ref if isinstance(ref, list) else [ref]) if t]
+
+
+def resolve_dotted_field(store, registry, obj_name: str, record: dict,
+                         path: str, max_depth: int = DOTTED_PATH_MAX_DEPTH):
+    """Resolve a dotted relationship path (``Account.Name``,
+    ``Account.ParentAccount.Name``) starting from ``record`` of ``obj_name``.
+
+    Null-safe: a missing intermediate record, a null FK, or an unresolvable
+    segment yields None instead of raising. Traversal is cycle-guarded with
+    a visited set and capped at ``max_depth`` hops. Never raises.
+    """
+    try:
+        segments = [s for s in str(path or "").split(".") if s]
+        if len(segments) < 2 or len(segments) - 1 > max_depth:
+            return None
+        cur_obj, cur_rec = obj_name, record
+        visited = set()
+        for seg in segments[:-1]:
+            obj_def = registry.get_object(cur_obj)
+            if not obj_def:
+                return None
+            fdef = _relationship_field_for(obj_def, seg)
+            if not fdef:
+                return None
+            fk = (cur_rec or {}).get(fdef["name"])
+            if not fk:
+                return None
+            nxt, nxt_obj = None, None
+            for target in _rel_targets(fdef):
+                if not registry.get_object(target):
+                    continue
+                try:
+                    cand = store.get(target, fk)
+                except Exception:
+                    cand = None
+                if cand:
+                    nxt, nxt_obj = cand, target
+                    break
+            if not nxt:
+                return None
+            key = (nxt_obj, nxt.get("id"))
+            if key in visited:
+                return None
+            visited.add(key)
+            cur_rec, cur_obj = nxt, nxt_obj
+        return (cur_rec or {}).get(segments[-1])
+    except Exception:
+        return None
+
+
+#: System keys available in formula contexts (see record_context).
+FORMULA_SYSTEM_KEYS = frozenset({
+    "Id", "OwnerId", "CreatedDate", "LastModifiedDate", "RecordType",
+    "id", "owner_id", "created_by", "created_date", "last_modified_date",
+    "record_type",
+})
+
+
+def validate_formula_refs(registry, obj_name: str, formula,
+                          max_depth: int = DOTTED_PATH_MAX_DEPTH):
+    """Validate every ``{"field": ...}`` reference in a formula expression.
+
+    Plain names must be fields (or system keys) on ``obj_name``; dotted paths
+    must traverse real relationship fields (depth-capped) and end on a real
+    field of the final object (for polymorphic targets, resolution on any one
+    target suffices). Raises ValueError on the first bad reference.
+    """
+    obj_def = registry.get_object(obj_name)
+    if not obj_def:
+        raise ValueError(f"Unknown object '{obj_name}'")
+
+    def _resolvable(cur_def: dict, segs: list) -> bool:
+        if len(segs) == 1:
+            leaf = segs[0]
+            names = {f.get("name") for f in cur_def.get("fields", []) or []}
+            return leaf in names or leaf in FORMULA_SYSTEM_KEYS
+        fdef = _relationship_field_for(cur_def, segs[0])
+        if not fdef:
+            return False
+        for target in _rel_targets(fdef):
+            tdef = registry.get_object(target)
+            if tdef and _resolvable(tdef, segs[1:]):
+                return True
+        return False
+
+    def _walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "field" and isinstance(v, str):
+                    segs = [s for s in v.split(".") if s]
+                    if not segs:
+                        raise ValueError("Formula contains an empty field reference")
+                    if len(segs) - 1 > max_depth:
+                        raise ValueError(
+                            f"Formula field reference '{v}' exceeds the max "
+                            f"traversal depth of {max_depth}")
+                    if not _resolvable(obj_def, segs):
+                        raise ValueError(
+                            f"Formula field reference '{v}' does not resolve "
+                            f"on {obj_name}")
+                else:
+                    _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    _walk(formula)
