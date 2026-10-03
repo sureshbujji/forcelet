@@ -14,7 +14,7 @@ from .. import changesets
 from .. import cron as _cron
 from .. import history_tracking
 from .. import semantic as _semantic
-from ._shared import require_admin, require_auth
+from ._shared import _audit, require_admin, require_auth
 
 
 def register(app: Flask):
@@ -96,6 +96,7 @@ def register(app: Flask):
                 body.get("status") or "Draft")
         except ValueError as e:
             return jsonify({"error": str(e)}), 422
+        _audit("create", "change-set", cs["name"])
         return jsonify(changesets._public(cs)), 201
 
     @app.get("/api/admin/change-sets/<cs_id>")
@@ -124,6 +125,8 @@ def register(app: Flask):
                                               body.get("ref") or "")
         except ValueError as e:
             return jsonify({"error": str(e)}), 422
+        _audit(action, "change-set",
+               f"{cs['name']}: {body.get('type') or ''}/{body.get('ref') or ''}")
         return jsonify(changesets._public(cs))
 
     @app.post("/api/admin/change-sets/<cs_id>/status")
@@ -138,6 +141,7 @@ def register(app: Flask):
             return jsonify({"error": f"status must be one of {changesets.STATUSES}"}), 422
         cs["status"] = status
         changesets._save(store, cs)
+        _audit("status-change", "change-set", f"{cs['name']} -> {status}")
         return jsonify(changesets._public(cs))
 
     @app.get("/api/admin/change-sets/components/available")
@@ -168,6 +172,7 @@ def register(app: Flask):
                 store, doc, request.mf_user.get("username", ""))
         except ValueError as e:
             return jsonify({"error": str(e)}), 422
+        _audit("upload", "change-set", cs.get("name") or "Uploaded change set")
         return jsonify(cs)
 
     @app.post("/api/admin/change-sets/<cs_id>/validate")
@@ -175,19 +180,27 @@ def register(app: Flask):
     @require_admin
     def cs_validate(cs_id):
         try:
-            return jsonify(changesets.validate_changeset(store, registry, cs_id))
+            result = changesets.validate_changeset(store, registry, cs_id)
         except ValueError as e:
             return jsonify({"error": str(e)}), 404
+        cs = changesets.get_changeset(store, cs_id)
+        _audit("validate", "change-set", (cs or {}).get("name") or cs_id)
+        return jsonify(result)
 
     @app.post("/api/admin/change-sets/<cs_id>/deploy")
     @require_auth
     @require_admin
     def cs_deploy(cs_id):
+        cs = changesets.get_changeset(store, cs_id)
+        if not cs:
+            return jsonify({"error": "not found"}), 404
         try:
             dep = changesets.deploy_changeset(store, registry, cs_id,
                                               request.mf_user)
         except ValueError as e:
             return jsonify({"error": str(e)}), 422
+        _audit("deploy", "change-set",
+               f"{cs['name']} ({dep.get('status')})")
         return jsonify(dep)
 
     @app.get("/api/admin/change-sets/<cs_id>/deployments")
@@ -195,6 +208,27 @@ def register(app: Flask):
     @require_admin
     def cs_deployments(cs_id):
         return jsonify(changesets.list_deployments(store, cs_id))
+
+    @app.delete("/api/admin/change-sets/<cs_id>")
+    @require_auth
+    @require_admin
+    def cs_delete(cs_id):
+        # Change sets are SQL rows, not records: delete + audit, no recycle
+        # bin. Deployment history must not be orphaned: a change set that
+        # was ever deployed (or deploy-attempted) is frozen.
+        cs = changesets.get_changeset(store, cs_id)
+        if not cs:
+            return jsonify({"error": "not found"}), 404
+        deployments = changesets.list_deployments(store, cs_id)
+        if deployments:
+            latest = deployments[0].get("status")
+            return jsonify({"error": f"Change set has {len(deployments)} "
+                                     f"deployment record(s) (latest: {latest}) "
+                                     "— deployment history is kept, the "
+                                     "change set cannot be deleted"}), 409
+        changesets.delete_changeset(store, cs_id)
+        _audit("delete", "change-set", cs["name"])
+        return jsonify({"deleted": cs_id})
 
     @app.get("/api/admin/deployments")
     @require_auth

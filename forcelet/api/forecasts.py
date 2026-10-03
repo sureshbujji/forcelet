@@ -29,6 +29,13 @@ def register(app: Flask):
     @app.get("/api/forecasts")
     @require_auth
     def forecasts():
+        """Monthly forecast for ``period`` (YYYY-MM).
+
+        ``attainment`` on each row is a percent (0-100), consistent with
+        the quarterly ``attainment_pct`` from /api/platform/forecasts/summary
+        (which takes a YYYY-QN period). The two systems are intentionally
+        separate; only the attainment contract is shared.
+        """
         try:
             ft = automation.get_forecast_type(store, request.args.get("type"))
             if request.args.get("type") and not ft:

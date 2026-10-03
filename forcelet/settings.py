@@ -22,6 +22,10 @@ ORG_DEFAULTS = {
     "default_timezone": "America/Los_Angeles",
     "default_currency": "USD",
     "fiscal_year_start_month": 1,
+    # Org-wide default record access (sharing baseline) applied when no
+    # role-hierarchy grant, sharing rule, or per-object org_wide_visible
+    # flag grants visibility. "private" preserves the historical behavior.
+    "default_record_access": "private",  # "private" | "public_read_only" | "public_read_write"
 }
 
 # Defaults mirror the previously hardcoded behavior: 8-char minimum,
@@ -124,6 +128,11 @@ def save_settings(store, key: str, patch: dict) -> dict:
         m = clean["fiscal_year_start_month"]
         if not 1 <= m <= 12:
             raise ValueError("fiscal_year_start_month must be 1-12")
+    if key == ORG_KEY and "default_record_access" in clean:
+        if clean["default_record_access"] not in (
+                "private", "public_read_only", "public_read_write"):
+            raise ValueError("default_record_access must be 'private', "
+                             "'public_read_only', or 'public_read_write'")
     merged = get_settings(store, key)
     merged.update(clean)
     store.meta_kv_set(key, json.dumps(merged))

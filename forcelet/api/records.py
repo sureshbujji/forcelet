@@ -171,11 +171,16 @@ def register(app: Flask):
     @app.post("/api/sobjects/Lead/<rid>/convert")
     @require_auth
     def convert_lead_ep(rid):
-        """Convert a Lead into an Account + Contact (+ Opportunity)."""
+        """Convert a Lead into an Account + Contact (+ Opportunity).
+
+        Duplicate-rule blocks surface as 409 (same as record create);
+        other conversion failures are 422.
+        """
         result, err = automation.convert_lead(store, registry, security, rid,
                                               request.mf_user, request.json or {})
         if err:
-            return jsonify({"error": err}), 422
+            return jsonify({"error": str(err)}), \
+                getattr(err, "status", 422)
         return jsonify(result), 201
 
     @app.get("/api/sobjects/Lead/<rid>/conversion")

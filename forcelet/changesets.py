@@ -106,6 +106,15 @@ def get_changeset(store, cs_id: str) -> dict | None:
     return _decode_cs(dict(rows[0])) if rows else None
 
 
+def delete_changeset(store, cs_id: str) -> bool:
+    """Delete a change set row (change sets are SQL rows, not records: no
+    recycle bin). Callers must refuse when deployment history exists."""
+    _ensure(store)
+    cur = store._execute(f"DELETE FROM {CS_TABLE} WHERE id=?", (cs_id,))
+    store._commit()
+    return bool(cur.rowcount)
+
+
 def create_changeset(store, name: str, description: str = "",
                      created_by: str = "", status: str = "Draft") -> dict:
     _ensure(store)

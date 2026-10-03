@@ -536,7 +536,8 @@ def delete_sandbox(store, sandbox_id: str) -> bool:
     if not sb:
         return False
     parent = os.path.dirname(sb.get("db_path") or "")
-    if parent and os.path.isdir(parent) and sandbox_root() in os.path.abspath(parent):
+    if parent and os.path.isdir(parent) \
+            and os.path.abspath(parent).startswith(sandbox_root() + os.sep):
         shutil.rmtree(parent, ignore_errors=True)
     return store.config_delete(SANDBOX_TABLE, sandbox_id)
 

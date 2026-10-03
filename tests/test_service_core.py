@@ -1,11 +1,17 @@
 """Tests for service core: case teams, entitlement management, notes."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from helpers import login
 from forcelet.api import create_app
 from forcelet.api import service_core
+
+
+def _utc_today():
+    # Platform dates are UTC (service_core._today); use UTC here so the
+    # suite is deterministic regardless of the container's local timezone.
+    return datetime.now(timezone.utc).date()
 
 
 @pytest.fixture()
@@ -52,7 +58,7 @@ def _mk_user(client, h, username, profile="Standard User"):
 
 
 def _dates(delta_start, delta_end):
-    today = date.today()
+    today = _utc_today()
     return ((today + timedelta(days=delta_start)).isoformat(),
             (today + timedelta(days=delta_end)).isoformat())
 

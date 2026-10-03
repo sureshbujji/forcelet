@@ -43,7 +43,9 @@ def register(app: Flask):
         user = request.mf_user
         obj = registry.get_object(obj_name)
         rec = obj and store.get(obj_name, rid)
-        if not obj or not rec or not security.can(user, "read", obj_name) \
+        # Posting a timeline entry mutates the parent record, so it needs
+        # create-level access on the parent object, not just read access.
+        if not obj or not rec or not security.can(user, "create", obj_name) \
                 or not security.can_see_record(user, rec, obj_name):
             return jsonify({"error": "Not found"}), 404
         body = request.json or {}

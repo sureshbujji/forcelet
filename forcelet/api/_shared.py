@@ -118,6 +118,11 @@ def recompute_stored_rollups(user, child_obj_name, child_rec, old_rec=None):
     Never raises: a stale parent value is better than a 500 on a saved
     record. A per-thread ``seen`` set stops cyclic rule chains from looping.
     """
+    # Persist read-computed line totals on the parent as well
+    # (Quote.GrandTotal, Order.TotalAmount): the field-level ``rollup``
+    # attribute computes these on read, but raw record reads need the stored
+    # value too. Runs even when no mf_rollup_rules exist for the child.
+    _store_line_item_totals(user, child_obj_name, child_rec, old_rec)
     rules = _rollup_rules_for(child_obj_name)
     if not rules:
         return
@@ -149,6 +154,89 @@ def recompute_stored_rollups(user, child_obj_name, child_rec, old_rec=None):
     finally:
         if top:
             _rollup_local.seen = None
+
+
+#: Read-computed rollup fields (field-level ``rollup`` attribute, evaluated on
+#: read in ``serialize``) that are ALSO persisted on the parent record when a
+#: child is written, so integrations reading raw records see the same total
+#: the API returns. Maps child object -> (link field, child amount field,
+#: parent object, parent amount field). Note these deliberately bypass
+#: ``mf_rollup_rules``: ``_apply_rollup_rule`` refuses to write into fields
+#: carrying the ``rollup`` attribute.
+_STORED_LINE_TOTALS = {
+    "QuoteLineItem": ("QuoteId", "TotalPrice", "Quote", "GrandTotal"),
+    "OrderItem": ("OrderId", "LineTotal", "Order", "TotalAmount"),
+}
+
+
+def ensure_stored_total_column(parent_obj: str, parent_field: str):
+    """Create the physical column for a read-computed rollup total if missing.
+
+    Bootstrap skips physical columns for fields carrying the ``rollup``
+    attribute (they are computed on read in ``serialize``), so a stored
+    write must ensure the column first. Idempotent; never raises.
+    """
+    store, registry, _sec = ctx()
+    try:
+        if parent_field in set(store.existing_columns(parent_obj)):
+            return
+        pdef = registry.get_object(parent_obj)
+        fdef = next((f for f in (pdef or {}).get("fields", [])
+                     if f["name"] == parent_field), None)
+        if fdef:
+            store.add_column(parent_obj, fdef)
+    except Exception:
+        logging.getLogger("forcelet").warning(
+            "Could not ensure column %s.%s", parent_obj, parent_field,
+            exc_info=True)
+
+
+def _store_line_item_totals(user, child_obj_name, child_rec, old_rec=None):
+    """Write the parent's stored line total after a child create/update/delete.
+
+    Sums the child amount field over the parent's visible children and writes
+    the parent amount field directly via ``store.update``. The write bypasses
+    the normal update pipeline on purpose: these fields carry the field-level
+    ``rollup`` attribute, so ``validate_record`` rejects them as "computed"
+    (and the read-time rollup in ``serialize`` stays the API source of
+    truth). Raw record reads (sync code, integrations) get the stored value.
+    Handles reparenting via ``old_rec``. Never raises.
+    """
+    spec = _STORED_LINE_TOTALS.get(child_obj_name)
+    if not spec:
+        return
+    link_field, child_field, parent_obj, parent_field = spec
+    store, registry, security = ctx()
+    pdef = registry.get_object(parent_obj)
+    if not pdef or parent_field not in {
+            f["name"] for f in pdef.get("fields", [])}:
+        return
+    if not security.can(user, "edit", parent_obj):
+        return
+    parent_ids = set()
+    for rec in (child_rec, old_rec):
+        pid = (rec or {}).get(link_field)
+        if pid:
+            parent_ids.add(pid)
+    if not parent_ids:
+        return
+    try:
+        recs, _ = _visible_records(user, child_obj_name)
+    except Exception:
+        return
+    for pid in parent_ids:
+        parent = store.get(parent_obj, pid)
+        if not parent or not security.can_see_record(user, parent, parent_obj):
+            continue
+        total = round(sum(_num(r.get(child_field))
+                          for r in recs if r.get(link_field) == pid), 2)
+        ensure_stored_total_column(parent_obj, parent_field)
+        try:
+            store.update(parent_obj, pid, {parent_field: total})
+        except Exception:
+            logging.getLogger("forcelet").warning(
+                "Could not store %s.%s for %s",
+                parent_obj, parent_field, pid, exc_info=True)
 
 
 #: KnowledgeArticle fields whose change snapshots a new article version.
@@ -260,7 +348,12 @@ def current_user():
         rec = store.get_api_key(hashlib.sha256(token.encode()).hexdigest())
         if rec:
             store.touch_api_key(rec["key_hash"])
-            return security.get_user(rec["user_id"])
+            user = security.get_user(rec["user_id"])
+            if user and not user.get("is_active", True):
+                # Deactivated: the key stops working immediately, same as a
+                # session token (see the session branch below).
+                return None
+            return user
         return None
     from ..security import SESSION_PREFIX
     if token.startswith(SESSION_PREFIX):

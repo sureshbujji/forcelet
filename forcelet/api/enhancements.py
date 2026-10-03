@@ -17,8 +17,8 @@ from .. import totp_util
 from ..pdfgen import build_pdf
 from ..expressions import eval_expr, record_context
 from ._shared import (
-    DEFAULT_MEMBER_STATUSES, _audit, _do_update, _visible_records,
-    issue_session, require_admin, require_auth, serialize,
+    DEFAULT_MEMBER_STATUSES, _audit, _client_ip, _do_update, _visible_records,
+    issue_session, rate_limit, require_admin, require_auth, serialize,
 )
 
 # in-memory TOTP login challenges: challenge_id -> {user_id, expires}
@@ -661,6 +661,8 @@ def register(app: Flask):
     _orig_login_view = app.view_functions.get("login")
 
     @app.post("/api/login/totp")
+    @rate_limit(max_requests=10, window_seconds=300,
+                key_fn=lambda: "login:" + _client_ip())
     def login_totp():
         body = request.json or {}
         with _TOTP_LOCK:
@@ -712,7 +714,8 @@ def register(app: Flask):
             lines.append((str(q["Description"])[:500], 11, False))
         lines += [("", 11, False), ("Line items", 14, True)]
         items = [r for r in store.query("QuoteLineItem", limit=10000)
-                 if r.get("QuoteId") == qid]
+                 if r.get("QuoteId") == qid
+                 and security.can_see_record(user, r, "QuoteLineItem")]
         total = 0.0
         lines.append((f"{'Qty':>5}  {'Unit price':>12}  {'Disc.':>6}  {'Total':>12}", 10, True))
         for it in items:
@@ -723,6 +726,8 @@ def register(app: Flask):
             total += lt or 0
             prod = ""
             pbe = store.get("PriceBookEntry", it.get("PriceBookEntryId") or "")
+            if pbe and not security.can_see_record(user, pbe, "PriceBookEntry"):
+                pbe = None
             if pbe:
                 prod = str(pbe.get("ProductId") or pbe.get("Name") or "")[:28]
             lines.append((f"{prod:<28} {qty:>5}  {up:>12.2f}  {disc:>5}%  {lt:>12.2f}",

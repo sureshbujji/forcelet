@@ -454,10 +454,12 @@ def test_email_log_filters(app_client, admin):
               query_string={"template": "Welcome", "offset": 0})
     rows = r.get_json()["rows"]
     assert rows and all(e["template"] == "Welcome" for e in rows)
-    from datetime import date
+    from datetime import datetime, timezone
+    # Email sent_at is stored in UTC; compare against the UTC date so the
+    # filter is deterministic regardless of local timezone.
     r = c.get("/api/admin/email-log", headers=admin,
               query_string={"date_from": "2000-01-01",
-                            "date_to": date.today().isoformat(),
+                            "date_to": datetime.now(timezone.utc).date().isoformat(),
                             "offset": 0})
     assert r.get_json()["total"] == 4
 

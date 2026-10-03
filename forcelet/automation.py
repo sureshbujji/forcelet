@@ -602,7 +602,8 @@ def pending_request_for(store, obj_name: str, record_id: str):
     return None
 
 
-def submit_for_approval(store, security, obj_name: str, record: dict, user: dict):
+def submit_for_approval(store, security, obj_name: str, record: dict, user: dict,
+                      comment: str = ""):
     proc = find_approval_process(store, obj_name, record)
     if not proc:
         return None, "No approval process matches this record"
@@ -612,7 +613,8 @@ def submit_for_approval(store, security, obj_name: str, record: dict, user: dict
     req = {"object": obj_name, "record_id": record["id"], "process_id": proc["id"],
            "process_name": proc.get("name"), "status": "Pending",
            "current_step": 0, "steps": steps, "submitted_by": user["id"],
-           "submitted_at": utcnow(), "history": []}
+           "submitted_at": utcnow(), "submitter_comment": comment or "",
+           "history": []}
     # Auto-skip steps whose skip_if condition is already true.
     idx = 0
     while idx < len(steps) and _step_skipped(store, steps[idx], record):
@@ -627,6 +629,10 @@ def submit_for_approval(store, security, obj_name: str, record: dict, user: dict
     saved = store.config_get("mf_approval_requests", rid)
     if saved.get("status") == "Pending":
         _notify_approvers(store, security, saved, obj_name, record, user)
+        try:
+            _email_approvers(store, security, saved, obj_name, record, user)
+        except Exception:
+            pass  # email notifications are fire-and-forget
     return saved, None
 
 
@@ -639,6 +645,132 @@ def _notify_approvers(store, security, req: dict, obj_name: str,
                          f"{user.get('name')} submitted a {obj_name} record "
                          f"({req.get('process_name')}) for approval.",
                          obj_name, record["id"])
+
+
+# ------------------------------------------------------------ approval email notifications
+_APPROVAL_REQUEST_TPL = "Approval request notification"
+_APPROVAL_DECISION_TPL = "Approval decision notification"
+
+_DEFAULT_REQUEST_SUBJECT = "Approval requested: {{Record.ApprovalProcess}} - {{Record.Name}}"
+_DEFAULT_REQUEST_BODY = (
+    "{{User.Name}} submitted {{Record.ApprovalObject}} '{{Record.Name}}' for approval.\n"
+    "\n"
+    "Process: {{Record.ApprovalProcess}}\n"
+    "Step: {{Record.ApprovalStep}}\n"
+    "Request ID: {{Record.ApprovalRequestId}}\n"
+    "Submitter comments: {{Record.SubmitterComments}}\n"
+    "\n"
+    "Please review it in your approval inbox."
+)
+_DEFAULT_DECISION_SUBJECT = "Approval {{Record.ApprovalDecision}}: {{Record.ApprovalProcess}} - {{Record.Name}}"
+_DEFAULT_DECISION_BODY = (
+    "Your approval request has been {{Record.ApprovalDecisionLower}}.\n"
+    "\n"
+    "Record: {{Record.ApprovalObject}} '{{Record.Name}}'\n"
+    "Process: {{Record.ApprovalProcess}}\n"
+    "Decision by: {{User.Name}}\n"
+    "Approver comments: {{Record.ApprovalComment}}\n"
+)
+
+
+def _approval_template(store, name: str, default_subject: str, default_body: str) -> dict:
+    """Admin-editable email template for approval notifications.
+
+    Looks up an mf_email_templates record by name; falls back to a built-in
+    default so notifications work with zero configuration. Templates support
+    the standard {{Record.Field}} / {{User.Name}} merge fields plus the
+    approval extras injected by the callers below.
+    """
+    try:
+        for t in store.config_all("mf_email_templates"):
+            if (t.get("name") or "").strip().lower() == name.lower():
+                return t
+    except Exception:
+        pass
+    return {"name": name + " (default)", "subject": default_subject,
+            "body": default_body}
+
+
+def _send_approval_email(store, obj_name: str, record: dict, template: dict,
+                         actor: dict, to_email: str, extra: dict) -> bool:
+    """Send one approval email. Fire-and-forget: never raises.
+
+    Returns True when an email was logged, False when skipped (no address,
+    bad address, or any send failure).
+    """
+    try:
+        email = (to_email or "").strip()
+        if not email or "@" not in email:
+            return False
+        rec = dict(record or {})
+        for k, v in (extra or {}).items():
+            rec[k] = v
+        send_templated_email(store, obj_name, rec, template, actor or {},
+                             to_addr=email)
+        return True
+    except Exception:
+        return False
+
+
+def _approval_base_extra(req: dict, obj_name: str) -> dict:
+    steps = req.get("steps") or []
+    cur = req.get("current_step", 0)
+    step_name = (steps[cur] or {}).get("name") if cur < len(steps) else ""
+    return {
+        "ApprovalObject": obj_name,
+        "ApprovalProcess": req.get("process_name") or "",
+        "ApprovalStep": step_name or "",
+        "ApprovalRequestId": req.get("id") or "",
+    }
+
+
+def _email_approvers(store, security, req: dict, obj_name: str,
+                     record: dict, submitter: dict) -> int:
+    """Email every assigned approver of the current step. Returns sent count.
+
+    Never raises; users without an email address are skipped silently.
+    """
+    template = _approval_template(store, _APPROVAL_REQUEST_TPL,
+                                  _DEFAULT_REQUEST_SUBJECT, _DEFAULT_REQUEST_BODY)
+    extra = _approval_base_extra(req, obj_name)
+    extra["SubmitterComments"] = req.get("submitter_comment") or "(none)"
+    sent = 0
+    for uid in _approver_ids(store, security, req):
+        if uid == (submitter or {}).get("id"):
+            continue  # don't email the submitter about their own request
+        try:
+            approver = security.get_user(uid)
+        except Exception:
+            approver = None
+        if not approver:
+            continue
+        if _send_approval_email(store, obj_name, record, template, submitter,
+                                approver.get("email"), extra):
+            sent += 1
+    return sent
+
+
+def _email_submitter(store, security, req: dict, obj_name: str, record: dict,
+                     approver: dict, approved: bool, comment: str) -> bool:
+    """Email the original submitter with the final approve/reject outcome.
+
+    Never raises; returns True when an email was logged.
+    """
+    try:
+        submitter = security.get_user(req.get("submitted_by") or "")
+    except Exception:
+        submitter = None
+    if not submitter:
+        return False
+    template = _approval_template(store, _APPROVAL_DECISION_TPL,
+                                  _DEFAULT_DECISION_SUBJECT, _DEFAULT_DECISION_BODY)
+    extra = _approval_base_extra(req, obj_name)
+    decision = "Approved" if approved else "Rejected"
+    extra["ApprovalDecision"] = decision
+    extra["ApprovalDecisionLower"] = decision.lower()
+    extra["ApprovalComment"] = comment or "(none)"
+    return _send_approval_email(store, obj_name, record, template, approver,
+                                submitter.get("email"), extra)
 
 
 def _approver_ids(store, security, req: dict):
@@ -726,17 +858,16 @@ def decide_request(store, security, request_id: str, user: dict, approve: bool, 
                            "step_name": step_name,
                            "decision": "Approved" if approve else "Rejected",
                            "comment": comment})
+    try:
+        record = store.get(req["object"], req["record_id"])
+    except Exception:
+        record = None
     if not approve:
         req["status"] = "Rejected"
     else:
         # Advance through any remaining steps (honoring skip_if); the request
         # is Approved only after the final step approves.
         nxt = cur + 1
-        record = None
-        try:
-            record = store.get(req["object"], req["record_id"])
-        except Exception:
-            record = None
         while nxt < len(steps) and record is not None and _step_skipped(store, steps[nxt], record):
             req["history"].append({"by": "system", "at": utcnow(), "step": nxt,
                                    "step_name": steps[nxt].get("name"),
@@ -751,10 +882,16 @@ def decide_request(store, security, request_id: str, user: dict, approve: bool, 
             try:
                 rec = record or {}
                 _notify_approvers(store, security, saved, req["object"], rec, user)
+                _email_approvers(store, security, saved, req["object"], rec, user)
             except Exception:
                 pass
             return saved, None
     store.config_put("mf_approval_requests", req)
+    try:
+        _email_submitter(store, security, req, req["object"], record or {},
+                         user, approve, comment)
+    except Exception:
+        pass  # decision emails are fire-and-forget
     return req, None
 
 
@@ -1681,9 +1818,28 @@ def post_to_feed(store, security, user: dict, object_name: str | None,
 
 
 # ------------------------------------------------------------ lead conversion
+class _DuplicateBlockError(Exception):
+    """Raised when a duplicate rule blocks a lead-conversion insert."""
+
+
+class DuplicateConflict(str):
+    """Duplicate-block error string carrying its HTTP status (409).
+
+    ``convert_lead`` returns ``(None, DuplicateConflict(msg))`` on a
+    duplicate block so the endpoint can answer 409 exactly like
+    ``_do_create`` does; plain-string errors keep mapping to 422.
+    """
+    status = 409
+
+
 def _convert_insert(store, registry, security, obj_name: str, fields: dict,
-                    owner_id: str, user: dict):
-    """Insert one converted record through validation + triggers + flows."""
+                    owner_id: str, user: dict, warnings: list | None = None):
+    """Insert one converted record through validation + triggers + flows.
+
+    Runs the same duplicate-rule check as ``_do_create``: a Block action
+    (or the legacy duplicate check) raises ``_DuplicateBlockError``; a Warn
+    action appends its message to ``warnings`` without blocking.
+    """
     obj = registry.get_object(obj_name)
     clean, errors = registry.validate_record(obj, fields)
     if errors:
@@ -1698,6 +1854,21 @@ def _convert_insert(store, registry, security, obj_name: str, fields: dict,
     vr = check_validation_rules(store, obj_name, clean)
     if vr:
         raise ValueError("; ".join(vr))
+    # Declarative duplicate rules, mirroring _do_create's handling: an
+    # explicit Block/Warn decides the outcome; otherwise the legacy
+    # mf_matching_rules check applies.
+    from . import duplicate_rules as _duprules
+    dup_action, dup_message = _duprules.evaluate_duplicate_rules(
+        store, obj_name, "create", clean)
+    if dup_action == "block":
+        raise _DuplicateBlockError(dup_message)
+    if dup_action == "warn":
+        if warnings is not None:
+            warnings.append(dup_message)
+    else:
+        dups = check_duplicates(store, obj_name, clean)
+        if dups:
+            raise _DuplicateBlockError("Possible duplicates found")
     rid = store.insert(obj_name, clean)
     rec = store.get(obj_name, rid)
     terr = run_triggers(store, registry, security, obj_name,
@@ -1753,7 +1924,9 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
               "opportunity": {...overrides}}
     Field values come from built-in defaults, overridden by active
     mf_lead_field_mappings rows, overridden by explicit ``options``.
-    Returns (result, error).
+    Returns (result, error). ``error`` is a plain string (422 at the API)
+    except for duplicate-rule blocks, which come back as a
+    ``DuplicateConflict`` carrying HTTP 409, matching ``_do_create``.
     """
     options = options or {}
     lead = store.get("Lead", lead_id)
@@ -1775,13 +1948,15 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
     # Transactional conversion: track every created record so a later failure
     # compensates (deletes) the earlier ones instead of orphaning them.
     created: list[tuple[str, str]] = []
+    conversion_warnings: list[str] = []
     account = contact = opportunity = None
     try:
         account_fields = _apply_lead_mappings(
             lead, {"Name": account_name}, acct_map, skip=("Name",))
         account = _convert_insert(store, registry, security, "Account",
                                   account_fields, lead.get("owner_id")
-                                  or user["id"], user)
+                                  or user["id"], user,
+                                  warnings=conversion_warnings)
         created.append(("Account", account["id"]))
         contact_fields = {"FirstName": lead.get("FirstName"),
                           "LastName": lead.get("LastName"),
@@ -1796,7 +1971,8 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
         contact = _convert_insert(store, registry, security, "Contact",
                                   {k: v for k, v in contact_fields.items()
                                    if v not in (None, "")},
-                                  account["owner_id"], user)
+                                  account["owner_id"], user,
+                                  warnings=conversion_warnings)
         created.append(("Contact", contact["id"]))
         opportunity = None
         if options.get("create_opportunity", True):
@@ -1812,8 +1988,18 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
                 skip=("AccountId", "Name"))
             opp_fields.update(options.get("opportunity") or {})
             opportunity = _convert_insert(store, registry, security, "Opportunity",
-                                          opp_fields, account["owner_id"], user)
+                                          opp_fields, account["owner_id"], user,
+                                          warnings=conversion_warnings)
             created.append(("Opportunity", opportunity["id"]))
+    except _DuplicateBlockError as e:
+        # Duplicate block: same 409-style response _do_create uses. Compensate
+        # partial creates first, exactly like the ValueError path below.
+        for obj_name, rid in reversed(created):
+            try:
+                store.delete(obj_name, rid)
+            except Exception:
+                pass
+        return None, DuplicateConflict(str(e))
     except ValueError as e:
         # Compensate: delete everything already created, in reverse order,
         # so a failed conversion leaves no orphaned Account/Contact behind.
@@ -1832,9 +2018,14 @@ def convert_lead(store, registry, security, lead_id: str, user: dict,
                                 if not _crypto.is_encrypted(v)})
     store.log_lead_conversion(lead_id, account["id"], contact["id"],
                               opportunity["id"] if opportunity else None, user)
-    return {"lead_id": lead_id, "account_id": account["id"],
-            "contact_id": contact["id"],
-            "opportunity_id": opportunity["id"] if opportunity else None}, None
+    result = {"lead_id": lead_id, "account_id": account["id"],
+              "contact_id": contact["id"],
+              "opportunity_id": opportunity["id"] if opportunity else None}
+    if conversion_warnings:
+        # Warn-action duplicate rules don't block; surface them like
+        # _do_create's "warning" payload key.
+        result["warnings"] = conversion_warnings
+    return result, None
 
 
 # ------------------------------------------------------------ auto-response rules
@@ -2173,6 +2364,10 @@ def forecast_for_period(store, security, period: str, viewer: dict,
     Records whose category is in won_values count at full amount; lost_values
     are excluded; open records count at amount x probability (or full amount
     when the type has no probability field).
+
+    ``period`` must be a monthly label ``YYYY-MM``. ``attainment`` is a
+    percent (0-100), matching the ``attainment_pct`` percent returned by
+    ``forecasting.forecast_summary`` on the quarterly ``YYYY-QN`` path.
     """
     import re
     if not re.fullmatch(r"\d{4}-\d{2}", period or ""):
@@ -2218,11 +2413,13 @@ def forecast_for_period(store, security, period: str, viewer: dict,
                      "quota": quota, "closed_amount": round(closed, 2),
                      "weighted_pipeline": round(weighted, 2),
                      "forecast": total,
-                     "attainment": round(total / quota, 4) if quota else None,
+                     "attainment": round(total / quota * 100, 2)
+                     if quota else None,
                      "pipeline": pipeline})
     rows.sort(key=lambda r: r["user_name"] or "")
     return {"period": period, "forecast_type": {"id": type_id, "name": ft.get("name"),
-                                               "object": obj_name},
+                                               "object": obj_name,
+                                               "lost_values": list(lost)},
             "rows": rows}
 
 

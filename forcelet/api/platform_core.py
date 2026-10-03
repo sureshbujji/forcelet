@@ -25,8 +25,8 @@ from .. import duplicate_rules, email_alerts, forecasting
 from .. import datamodel as _datamodel
 from .. import automation
 from ._shared import (
-    _do_create, _do_update, _visible_records, current_user, require_auth,
-    serialize,
+    _audit, _do_create, _do_update, _visible_records, current_user,
+    require_auth, serialize,
 )
 
 ATTRIBUTION_MODELS = ("Primary Campaign Source", "First Touch",
@@ -35,7 +35,9 @@ ATTRIBUTION_MODELS = ("Primary Campaign Source", "First Touch",
 
 # ------------------------------------------------- campaign influence engine
 def attribute_campaign_influence(store, opportunity_id: str,
-                                 model: str = "Primary Campaign Source") -> list:
+                                 model: str = "Primary Campaign Source",
+                                 user: dict | None = None,
+                                 security=None) -> list:
     """Create CampaignInfluence records attributing ``opportunity_id``.
 
     Candidate campaigns come from (a) ``Opportunity.PrimaryCampaignId``
@@ -51,12 +53,17 @@ def attribute_campaign_influence(store, opportunity_id: str,
         order; CampaignMember carries no touch timestamp).
 
     Idempotent per (opportunity, model): existing influence records for
-    the pair are replaced. Returns the created record dicts.
+    the pair are replaced (recycled when ``user`` is given, so the audit
+    trail is kept). When ``user``/``security`` are given, the opportunity
+    must be visible to that user. Returns the created record dicts.
     """
     if model not in ATTRIBUTION_MODELS:
         raise ValueError(f"Unknown model '{model}'")
     opp = store.get("Opportunity", opportunity_id)
     if not opp:
+        raise ValueError("Opportunity not found")
+    if user is not None and security is not None \
+            and not security.can_see_record(user, opp, "Opportunity"):
         raise ValueError("Opportunity not found")
 
     primary_id = opp.get("PrimaryCampaignId")
@@ -87,10 +94,14 @@ def attribute_campaign_influence(store, opportunity_id: str,
         pick = pool[0] if model == "First Touch" else pool[-1] if pool else None
         targets = [(pick[0], pick[1])] if pick else []
 
-    # idempotent: replace existing influence for this (opportunity, model)
+    # idempotent: replace existing influence for this (opportunity, model);
+    # replaced rows go through the recycle bin (with an audit entry from the
+    # endpoint) instead of a silent raw delete.
     for existing in store.query("CampaignInfluence", owner_ids=None, limit=10000):
         if existing.get("OpportunityId") == opportunity_id \
                 and existing.get("Model") == model:
+            if user is not None:
+                store.recycle_put("CampaignInfluence", existing, user["id"])
             store.delete("CampaignInfluence", existing["id"])
 
     created = []
@@ -241,37 +252,129 @@ def register(app: Flask):
     @app.get("/api/platform/forecasts/summary")
     @require_auth
     def forecast_summary():
+        """Per-owner forecast summary for one quarterly period.
+
+        ``period`` is a quarterly label ``YYYY-QN`` (``YYYY-MM`` is also
+        accepted). Only open opportunities whose ``CloseDate`` falls inside
+        the period are counted; dateless opportunities are counted in every
+        period. When ``period`` is absent no date filter is applied (legacy
+        behavior). ``attainment_pct`` is a percent (0-100). When a manager
+        set a forecast adjustment for this owner+period, the response also
+        carries ``adjusted_amount`` (the manager's number) alongside the
+        unadjusted originals.
+        """
         user = current_user()
         owner_id = request.args.get("owner_id") or user["id"]
-        period = request.args.get("period") or forecasting.current_period()
+        period = request.args.get("period")  # None -> no date filter
         try:
             summary = forecasting.forecast_summary(store, owner_id, period)
         except Exception as exc:  # object not provisioned yet
             return jsonify({"error": str(exc)}), 404
         return jsonify(summary)
 
+    @app.post("/api/platform/forecasts/adjust")
+    @require_auth
+    def forecast_adjust():
+        """Set a manager forecast adjustment for an owner+period.
+
+        Body: ``{"owner_id", "period", "adjusted_amount", "note?"}``.
+        ``period`` must be a quarterly label ``YYYY-QN``. Only a manager
+        may adjust: a user with at least one direct/indirect report, i.e. a
+        user in a strictly lower role in the role hierarchy (same-role peers
+        don't count), or an admin. Managers may only adjust owners inside
+        their own visible subtree. The adjustment is stored in the
+        ``mf_forecast_adjustments`` config table and surfaced by
+        ``forecast_summary`` as ``adjusted_amount`` next to the unadjusted
+        numbers. Upserts: posting again for the same owner+period replaces
+        the previous adjustment.
+        """
+        user = current_user()
+        body = request.json or {}
+        owner_id = (body.get("owner_id") or "").strip()
+        period = (body.get("period") or "").strip() \
+            or forecasting.current_period()
+        amount = body.get("adjusted_amount")
+        if not owner_id:
+            return jsonify({"error": "owner_id is required"}), 422
+        if not security.get_user(owner_id):
+            return jsonify({"error": "User not found"}), 422
+        if not forecasting._QUARTER_RE.match(period):
+            return jsonify({"error": "period must be YYYY-QN"}), 422
+        try:
+            amount_f = float(amount)
+        except (TypeError, ValueError):
+            return jsonify({"error": "adjusted_amount must be a number"}), 422
+        if amount_f < 0:
+            return jsonify({"error": "adjusted_amount cannot be negative"}), 422
+        targets = security.visible_owner_ids(user)
+        is_admin = security.is_admin(user)
+        users_by_id = {u["id"]: u for u in security.list_users()}
+        own_role = user.get("role")
+        # Reports are visible users in a strictly lower role: same-role
+        # peers are not subordinates.
+        reports = [t for t in (targets or [])
+                   if t != user["id"]
+                   and (users_by_id.get(t) or {}).get("role") != own_role]
+        if not is_admin and not reports:
+            return jsonify({"error": "Only managers can adjust forecasts"}), 403
+        if not is_admin and owner_id not in (targets or []):
+            return jsonify({"error": "Can only adjust forecasts of your "
+                                      "direct/indirect reports"}), 403
+        adjustment = forecasting.set_forecast_adjustment(
+            store, owner_id, period, amount_f, user["id"],
+            body.get("note"))
+        _audit("forecast.adjust", "forecast-adjustment", owner_id,
+               f"period={period} adjusted_amount={adjustment['adjusted_amount']}")
+        return jsonify(adjustment), 200
+
     # -- campaign influence attribution + report -------------------------------
     @app.post("/api/platform/campaign-influence/attribute")
     @require_auth
     def influence_attribute():
+        """Attribute campaign influence to an opportunity.
+
+        Requires create access on CampaignInfluence and visibility of the
+        opportunity (mirrors the parent-visibility check used for notes in
+        service_core). Replaced rows go through the recycle bin + audit.
+        """
+        user = current_user()
         body = request.json or {}
         opp_id = body.get("opportunity_id") or ""
         model = body.get("model") or "Primary Campaign Source"
         obj, err = _obj_or_404("CampaignInfluence")
         if err:
             return err
+        if not security.can(user, "create", "CampaignInfluence"):
+            return jsonify({"error": "Not found"}), 404
+        opp = store.get("Opportunity", opp_id)
+        if not opp:
+            return jsonify({"error": "Opportunity not found"}), 404
+        if not security.can_see_record(user, opp, "Opportunity"):
+            return jsonify({"error": "Not found"}), 404
         try:
-            created = attribute_campaign_influence(store, opp_id, model)
+            created = attribute_campaign_influence(store, opp_id, model,
+                                                   user=user, security=security)
         except ValueError as e:
             return jsonify({"error": str(e)}), 422
+        _audit("attribute", "campaign-influence", opp_id,
+               f"model={model}; {len(created)} record(s)")
         return jsonify({"attributed": len(created),
-                        "records": [serialize(current_user(), obj, r)
+                        "records": [serialize(user, obj, r)
                                     for r in created]})
 
     @app.get("/api/platform/campaign-influence/report")
     @require_auth
     def influence_report_ep():
+        """Influence report for an opportunity.
+
+        ``period`` semantics: n/a. The opportunity must be visible to the
+        caller; otherwise 404.
+        """
+        user = current_user()
         opp_id = request.args.get("opportunity_id") or ""
-        if not store.get("Opportunity", opp_id):
+        opp = store.get("Opportunity", opp_id)
+        if not opp:
             return jsonify({"error": "Opportunity not found"}), 404
+        if not security.can_see_record(user, opp, "Opportunity"):
+            return jsonify({"error": "Not found"}), 404
         return jsonify(influence_report(store, opp_id))

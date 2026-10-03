@@ -47,7 +47,9 @@ def register(app: Flask):
         rec = obj and store.get(obj_name, rid)
         if not obj or not rec or not security.can_see_record(user, rec, obj_name):
             return jsonify({"error": "Not found"}), 404
-        req, err = automation.submit_for_approval(store, security, obj_name, rec, user)
+        req, err = automation.submit_for_approval(
+            store, security, obj_name, rec, user,
+            (request.get_json(silent=True) or {}).get("comment", ""))
         if err:
             return jsonify({"error": err}), 422
         return jsonify(req), 201

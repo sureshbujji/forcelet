@@ -215,7 +215,7 @@ def test_forecast_math_and_quotas(client, admin, leo):
     assert row["weighted_pipeline"] == 10000  # 20000 * 50%
     assert row["forecast"] == 20000
     assert row["quota"] == 40000
-    assert row["attainment"] == pytest.approx(0.5)
+    assert row["attainment"] == pytest.approx(50.0)  # percent, 0-100
 
     # leo sees himself (and nobody above him)
     r = client.get(f"/api/forecasts?period={period}", headers=leo)

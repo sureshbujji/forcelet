@@ -39,8 +39,8 @@ from datetime import date
 from flask import Flask, jsonify, request
 
 from ._shared import (
-    _do_create, _do_update, _visible_records, current_user, require_auth,
-    recompute_stored_rollups, serialize, ctx,
+    _audit, _do_create, _do_update, _visible_records, current_user, require_auth,
+    ensure_stored_total_column, recompute_stored_rollups, serialize, ctx,
 )
 
 # Serializes check-then-act sequences (split total validation, quote sync)
@@ -158,6 +158,15 @@ def register(app: Flask):
         fields, err = _oli_payload(body)
         if err:
             return jsonify({"error": err}), 422
+        pbe_id = fields.get("PriceBookEntryId")
+        if pbe_id:
+            # Same active-entry gate as the from-pricebook path.
+            pbe = _visible_map(user, "PriceBookEntry").get(pbe_id)
+            if not pbe:
+                return jsonify({"error": "PriceBookEntry not found: %s"
+                                           % pbe_id}), 422
+            if not pbe.get("IsActive", True):
+                return jsonify({"error": "PriceBookEntry is not active"}), 422
         fields["OpportunityId"] = body.get("opportunity_id") or body.get("OpportunityId")
         code, data = _do_create(user, "OpportunityLineItem", fields)
         if code not in (200, 201):
@@ -330,6 +339,22 @@ def register(app: Flask):
     @app.post("/api/sales/quotes/<quote_id>/sync")
     @require_auth
     def quote_sync(quote_id):
+        """Sync a quote's line items onto its opportunity's products.
+
+        Behavior:
+          * Price-book consistency: when both the quote and the opportunity
+            have a price book set and they differ, sync is rejected (422).
+            When the opportunity has no price book yet, it adopts the
+            quote's price book.
+          * Only opportunity line items previously synced from THIS quote
+            are updated or deleted. The link is
+            ``OpportunityLineItem.SourceQuoteLineItemId`` (per quote line);
+            ``SourceQuoteId`` is the quote-level sync marker, with a legacy
+            PriceBookEntry fallback for rows synced before the per-line
+            link existed. Manually-added line items (no ``SourceQuoteId``)
+            are NEVER touched by sync.
+          * Opportunity.Amount is recomputed from the resulting products.
+        """
         user = current_user()
         quote = _visible_map(user, "Quote").get(quote_id)
         if not quote:
@@ -339,6 +364,18 @@ def register(app: Flask):
             return jsonify({"error": "Quote has no Opportunity"}), 422
         if not _opp(user, opp_id):
             return jsonify({"error": "Opportunity not found"}), 404
+        quote_pb = quote.get("PriceBookId")
+        opp_pb = _visible_map(user, "Opportunity")[opp_id].get("PriceBookId")
+        if quote_pb and opp_pb and quote_pb != opp_pb:
+            return jsonify({"error": "Quote's price book differs from the "
+                                     "opportunity's price book"}), 422
+        if quote_pb and not opp_pb:
+            # Adopt the quote's price book onto the opportunity, mirroring
+            # how a fresh opportunity takes its first line items' book.
+            code, data = _do_update(user, "Opportunity", opp_id,
+                                    {"PriceBookId": quote_pb})
+            if code not in (200, 201):
+                return jsonify(data), code
         with _SALES_LOCK:
             syncs = [s for s in _visible_map(user, "QuoteSync").values()
                      if s.get("IsActive")]
@@ -349,12 +386,18 @@ def register(app: Flask):
             qlis = [q for q in _visible_map(user, "QuoteLineItem").values()
                     if q.get("QuoteId") == quote_id]
             olis = _visible_map(user, "OpportunityLineItem")
-            synced = { _qli_key(o): o for o in olis.values()
-                       if o.get("OpportunityId") == opp_id
-                       and o.get("SourceQuoteId") == quote_id }
-            manual = [o for o in olis.values()
-                      if o.get("OpportunityId") == opp_id
-                      and not o.get("SourceQuoteId")]
+            # Previously synced rows only — never manual line items.
+            synced_by_qli = {}
+            synced_legacy = {}
+            for o in olis.values():
+                if o.get("OpportunityId") != opp_id \
+                        or o.get("SourceQuoteId") != quote_id:
+                    continue
+                qli_id = o.get("SourceQuoteLineItemId")
+                if qli_id:
+                    synced_by_qli[qli_id] = o
+                else:
+                    synced_legacy[_qli_key(o)] = o
             created = updated = 0
             matched = set()
             for q in qlis:
@@ -363,13 +406,11 @@ def register(app: Flask):
                 price = _num(q.get("UnitPrice"))
                 disc = _num(q.get("Discount"))
                 fields = {"OpportunityId": opp_id, "SourceQuoteId": quote_id,
+                          "SourceQuoteLineItemId": q["id"],
                           "PriceBookEntryId": q.get("PriceBookEntryId"),
                           "Quantity": qty, "UnitPrice": price, "Discount": disc,
                           "TotalPrice": _total_price(qty, price, disc)}
-                target = synced.get(k)
-                if target is None and k[0] == "pbe":
-                    target = next((o for o in manual
-                                   if o.get("PriceBookEntryId") == k[1]), None)
+                target = synced_by_qli.get(q["id"]) or synced_legacy.get(k)
                 if target:
                     code, data = _do_update(user, "OpportunityLineItem",
                                             target["id"], fields)
@@ -377,6 +418,7 @@ def register(app: Flask):
                         return jsonify(data), code
                     updated += 1
                     matched.add(target["id"])
+                    synced_legacy.pop(k, None)
                 else:
                     code, data = _do_create(user, "OpportunityLineItem", fields)
                     if code not in (200, 201):
@@ -384,7 +426,7 @@ def register(app: Flask):
                     created += 1
                     matched.add(data["Id"])
             deleted = 0
-            for o in list(synced.values()):
+            for o in list(synced_by_qli.values()) + list(synced_legacy.values()):
                 if o["id"] not in matched:
                     _recycle_delete(user, "OpportunityLineItem", o["id"])
                     deleted += 1
@@ -433,6 +475,159 @@ def register(app: Flask):
         return jsonify({"quote_id": quote_id,
                         "is_syncing": bool(active),
                         "opportunity_id": quote.get("OpportunityId")})
+
+    # ------------------------------------- order activation (quote-to-cash)
+    def _order_items(user, order_id):
+        return [i for i in _visible_map(user, "OrderItem").values()
+                if i.get("OrderId") == order_id]
+
+    def _next_order_number(user):
+        existing = {o.get("OrderNumber") for o in
+                    _visible_map(user, "Order").values()}
+        n = len(existing) + 1
+        while f"ORD-{n:06d}" in existing:
+            n += 1
+        return f"ORD-{n:06d}"
+
+    @app.post("/api/sales/orders/<order_id>/activate")
+    @require_auth
+    def order_activate(order_id):
+        """Activate a Draft order: validates line items, stamps ActivatedDate.
+
+        Activation is one-way; use /cancel to void an order afterwards.
+        """
+        user = current_user()
+        order = _visible_map(user, "Order").get(order_id)
+        if not order:
+            return jsonify({"error": "Order not found"}), 404
+        status = order.get("Status") or "Draft"
+        if status == "Activated":
+            return jsonify({"error": "Order is already activated"}), 422
+        if status != "Draft":
+            return jsonify({"error": "Only Draft orders can be activated "
+                                     f"(current status: {status})"}), 422
+        items = _order_items(user, order_id)
+        if not items:
+            return jsonify({"error": "Order has no line items"}), 422
+        # Recompute the total from the current line items in case they
+        # changed since the order was created. Written via store.update:
+        # TotalAmount is a computed (rollup) field, so the normal update
+        # pipeline would reject it.
+        total = round(sum(_num(i.get("LineTotal")) for i in items), 2)
+        with _SALES_LOCK:
+            code, data = _do_update(user, "Order", order_id,
+                                    {"Status": "Activated",
+                                     "ActivatedDate": date.today().isoformat()})
+            if code not in (200, 201):
+                return jsonify(data), code
+            ensure_stored_total_column("Order", "TotalAmount")
+            store.update("Order", order_id, {"TotalAmount": total})
+        _audit("order.activate", "Order", order.get("OrderNumber") or order_id,
+               f"Activated with {len(items)} line item(s)")
+        return jsonify(_ser(user, "Order",
+                             _visible_map(user, "Order")[order_id])), 200
+
+    @app.post("/api/sales/orders/<order_id>/cancel")
+    @require_auth
+    def order_cancel(order_id):
+        """Cancel an order. Allowed from Draft/Submitted/Activated; a
+        Fulfilled order cannot be cancelled."""
+        user = current_user()
+        order = _visible_map(user, "Order").get(order_id)
+        if not order:
+            return jsonify({"error": "Order not found"}), 404
+        status = order.get("Status") or "Draft"
+        if status == "Cancelled":
+            return jsonify({"error": "Order is already cancelled"}), 422
+        if status == "Fulfilled":
+            return jsonify({"error": "Fulfilled orders cannot be cancelled"}), 422
+        with _SALES_LOCK:
+            code, data = _do_update(user, "Order", order_id,
+                                    {"Status": "Cancelled",
+                                     "ActivatedDate": None})
+            if code not in (200, 201):
+                return jsonify(data), code
+        _audit("order.cancel", "Order", order.get("OrderNumber") or order_id,
+               f"Cancelled from {status}")
+        return jsonify(_ser(user, "Order",
+                             _visible_map(user, "Order")[order_id])), 200
+
+    @app.post("/api/sales/quotes/<quote_id>/create-order")
+    @require_auth
+    def quote_create_order(quote_id):
+        """Create a Draft Order (with OrderItems) from a quote's line items.
+
+        Completes the quote-to-cash chain: Quote -> Order -> /activate.
+        The order takes its account from the quote's opportunity.
+        Only quotes in ``Approved`` status can be ordered (422 otherwise).
+        ``Order.TotalAmount`` is set from the created line items.
+        """
+        user = current_user()
+        quote = _visible_map(user, "Quote").get(quote_id)
+        if not quote:
+            return jsonify({"error": "Quote not found"}), 404
+        status = quote.get("Status") or "Draft"
+        if status != "Approved":
+            return jsonify({"error": "Quote must be Approved to create an "
+                                     f"order (current status: {status})"}), 422
+        opp = _opp(user, quote.get("OpportunityId"))
+        if not opp:
+            return jsonify({"error": "Quote has no Opportunity"}), 422
+        qlis = [q for q in _visible_map(user, "QuoteLineItem").values()
+                if q.get("QuoteId") == quote_id]
+        if not qlis:
+            return jsonify({"error": "Quote has no line items"}), 422
+        with _SALES_LOCK:
+            order_number = _next_order_number(user)
+            code, data = _do_create(user, "Order", {
+                "OrderNumber": order_number,
+                "AccountId": opp.get("AccountId"),
+                "Status": "Draft",
+                "OrderDate": date.today().isoformat(),
+                "Description": f"Created from quote {quote.get('Name') or quote_id}",
+            })
+            if code not in (200, 201):
+                return jsonify(data), code
+            order_id = data["Id"]
+            pbes = _visible_map(user, "PriceBookEntry")
+            created = 0
+            total = 0.0
+            for q in qlis:
+                pbe = pbes.get(q.get("PriceBookEntryId") or "")
+                qty = _num(q.get("Quantity"), 1)
+                price = _num(q.get("UnitPrice"))
+                disc = _num(q.get("Discount"))
+                # OrderItem has no Discount field (the seeded
+                # "Compute order line total" trigger sets
+                # LineTotal = Quantity * UnitPrice), so the quote discount is
+                # baked into the order line's unit price.
+                unit = round(price * (1.0 - disc / 100.0), 2)
+                line_total = round(qty * unit, 2)
+                code, idata = _do_create(user, "OrderItem", {
+                    "OrderId": order_id,
+                    "ProductId": pbe.get("ProductId") if pbe else None,
+                    "Quantity": qty,
+                    "UnitPrice": unit,
+                    "LineTotal": line_total,
+                })
+                if code not in (200, 201):
+                    return jsonify(idata), code
+                created += 1
+                total = round(total + line_total, 2)
+            # Store the order total explicitly (the read-time rollup computes
+            # it on serialize, but raw record reads need the stored value).
+            # Written via store.update: TotalAmount is a computed (rollup)
+            # field, so the normal update pipeline would reject it.
+            ensure_stored_total_column("Order", "TotalAmount")
+            store.update("Order", order_id, {"TotalAmount": total})
+            recompute_stored_rollups(user, "Order",
+                                     _visible_map(user, "Order")[order_id])
+        _audit("order.create_from_quote", "Order", order_number,
+               f"Created from quote {quote.get('Name') or quote_id} "
+               f"with {created} line item(s)")
+        return jsonify({"order": _ser(user, "Order",
+                                      _visible_map(user, "Order")[order_id]),
+                        "line_items_created": created}), 201
 
     # ------------------------------------- account hierarchy
     @app.get("/api/sales/accounts/<account_id>/hierarchy")

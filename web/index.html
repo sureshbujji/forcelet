@@ -863,6 +863,8 @@ async function showDetail(id){
   }
   if(curObj==="Quote") html+=`<button class="btn secondary" onclick="dlQuotePdf('${rec.Id}')">Download PDF</button>`;
   if(curObj==="Quote") html+=`<button class="btn secondary" onclick="syncQuote('${rec.Id}')">Sync with Opportunity</button><button class="btn secondary" onclick="unsyncQuote('${rec.Id}')">Stop Sync</button>`;
+  if(curObj==="Quote") html+=`<button class="btn" onclick="createOrder('${rec.Id}')">Create Order</button>`;
+  if(curObj==="Order") html+=`<button class="btn" onclick="activateOrder('${rec.Id}')">Activate</button><button class="btn danger" onclick="cancelOrder('${rec.Id}')">Cancel</button>`;
   html+=`</div>`;
   html+=`<div class="btnrow" style="align-items:center;margin:2px 0 10px"><h2 style="margin:0">${esc(String(detailTitle)).slice(0,80)}</h2>${curObj==="Account"&&rec.IsPersonAccount?' <span class="pill">Person Account</span>':""}${isBigObj?' <span class="pill">Big Object · read-only</span>':""}</div>`;
   const tabs=[["details","Details"],["related","Related"],["activity","Activity"],["chatter","Chatter"],["files","Files"],["history","History"]];
@@ -1287,6 +1289,24 @@ async function unsyncQuote(qid){
   const r=await api("POST",`/api/sales/quotes/${qid}/unsync`);
   if(r.ok){ toast("Quote sync stopped.","ok"); showDetail(qid); }
   else toast("Unsync failed: "+((r.data&&r.data.error)||r.status),"error");
+}
+async function createOrder(qid){
+  if(!confirm("Create a Draft order from this quote's line items?")) return;
+  const r=await api("POST",`/api/sales/quotes/${qid}/create-order`);
+  if(r.ok){ toast("Order created.","ok"); jumpTo("Order",r.data.order.Id); }
+  else toast("Create order failed: "+((r.data&&r.data.error)||r.status),"error");
+}
+async function activateOrder(oid){
+  if(!confirm("Activate this order?")) return;
+  const r=await api("POST",`/api/sales/orders/${oid}/activate`);
+  if(r.ok){ toast("Order activated.","ok"); showDetail(oid); }
+  else toast("Activate failed: "+((r.data&&r.data.error)||r.status),"error");
+}
+async function cancelOrder(oid){
+  if(!confirm("Cancel this order?")) return;
+  const r=await api("POST",`/api/sales/orders/${oid}/cancel`);
+  if(r.ok){ toast("Order cancelled.","ok"); showDetail(oid); }
+  else toast("Cancel failed: "+((r.data&&r.data.error)||r.status),"error");
 }
 async function addQuoteLine(recId){
   const pbeId=v("ql_pbe");
@@ -2019,15 +2039,16 @@ async function showForecasts(){
   const rows=r.data.rows||[];
   const maxF=Math.max(1,...rows.map(x=>x.forecast||0));
   const typeName=(r.data.forecast_type||{}).name||"Forecast";
+  const lostStages=((r.data.forecast_type||{}).lost_values||[]).join(", ");
   let html=`<div class="btnrow"><h2 style="margin:0">Forecasts</h2><span style="flex:1"></span><label style="margin:0">Type</label><select id="fc_type" style="width:auto" onchange="fcType=this.value;showForecasts()">${types.map(t=>`<option value="${t.id}" ${t.id===fcType?"selected":""}>${esc(t.name)} (${esc(t.object)})</option>`).join("")}</select><label style="margin:0">Period</label><input id="fc_per" type="month" value="${fcPeriod}" style="width:auto"><button class="btn secondary small" onclick="fcPeriod=v('fc_per');showForecasts()">Go</button></div>`;
   html+=`<p class="muted" style="margin:0 0 8px">${esc(typeName)}${types.length>1?` · <a href="#" onclick="showSetup('forecast-types');return false">manage forecast types</a>`:""}</p>`;
   html+=`<div class="card"><table><tr><th>Salesperson</th><th>Quota</th><th>Closed</th><th>Weighted pipeline</th><th>Forecast</th><th>Attainment</th></tr>`;
   html+=rows.map(x=>{
-    const att=x.attainment==null?"—":`${(x.attainment*100).toFixed(1)}%`;
-    const color=x.attainment==null?"#999":x.attainment>=1?"#2e7d32":x.attainment>=0.7?"#d98a1f":"#c0392b";
+    const att=x.attainment==null?"—":`${Number(x.attainment).toFixed(1)}%`;
+    const color=x.attainment==null?"#999":x.attainment>=100?"#2e7d32":x.attainment>=70?"#d98a1f":"#c0392b";
     return `<tr><td>${esc(x.user_name)}</td><td>${x.quota==null?"—":"$"+Number(x.quota).toLocaleString()}</td><td>$${Number(x.closed_amount).toLocaleString()}</td><td>$${Number(x.weighted_pipeline).toLocaleString()}</td><td><b>$${Number(x.forecast).toLocaleString()}</b><div class="bar" style="width:${Math.round(100*x.forecast/maxF)}%"></div></td><td style="color:${color};font-weight:600">${att}</td></tr>`;
   }).join("")||`<tr><td colspan="6" class="muted">No forecast data for this period.</td></tr>`;
-  html+=`</table><p class="muted">Closed Won counts at full amount; open stages count at Amount × Probability. Lost deals are excluded.</p></div>`;
+  html+=`</table><p class="muted">Closed Won counts at full amount; open stages count at Amount × Probability. Lost deals are excluded per the forecast type's lost-stage settings${lostStages?` (${esc(lostStages)})`:""}.</p></div>`;
   if(me.profile==="System Administrator"){
     const users=(await api("GET","/api/admin/users")).data||[];
     const quotas=(await api("GET",`/api/admin/forecast-quotas?type=${fcType}`)).data||[];
@@ -2429,6 +2450,7 @@ async function showAdmin(section, highlight){
     <label>Default timezone</label><input id="org_tz" placeholder="America/Los_Angeles">
     <label>Default currency (ISO code)</label><input id="org_cur" placeholder="USD" maxlength="3" style="max-width:120px">
     <label>Fiscal year starts</label><select id="org_fy">${months.map((m,i)=>`<option value="${i+1}">${m}</option>`).join("")}</select>
+    <label>Default record access</label><select id="org_owd"><option value="private">Private</option><option value="public_read_only">Public Read-Only</option><option value="public_read_write">Public Read-Write</option></select>
     </div></div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="saveOrgSettings()">Save</button></div></div>
   <div class="card"><div class="section-title">Community portal</div><div id="porerr"></div>
@@ -2548,13 +2570,13 @@ const SETUP_SECTIONS=[
 ];
 const CARD_SECTION={
  "Create custom object":"datamodel","Add field to object":"datamodel","Object fields":"datamodel","Record type":"datamodel","Page layouts":"datamodel","Sales path":"datamodel",
- "Relationships":"datamodel","Person Accounts":"datamodel","Territories":"datamodel","Big Objects & Archival":"datamodel",
+ "Relationships":"datamodel","Person Accounts":"datamodel","Territories":"datamodel","Big Objects & Archival":"datamodel","Stored roll-up rules":"datamodel",
  "App Manager":"apps",
- "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Dynamic Forms":"automation","Approval process":"automation","Assignment rule":"automation","Case SLA policy":"automation","Escalation rule":"automation","Auto-response rule":"automation","Queue":"automation","Notification type":"automation","Service channel":"automation","Routing configuration":"automation","Invocable action":"automation","Currency":"company","Exchange rate":"company",
+ "Flow (workflow automation)":"automation","Screen flow":"automation","Code trigger (Apex-style)":"automation","Validation rule":"automation","Dynamic Forms":"automation","Approval process":"automation","Assignment rule":"automation","SLA policy":"automation","Lead field mappings":"automation","Web-to forms":"automation","Escalation rule":"automation","Auto-response rule":"automation","Queue":"automation","Notification type":"automation","Service channel":"automation","Routing configuration":"automation","Invocable action":"automation","Currency":"company","Exchange rate":"company",
  "Users":"security","Create role":"security","Permission set":"security","Profiles":"security","Security policies":"security","Sharing rule (criteria-based)":"security","Duplicate matching rule":"security","Divisions":"security","Delegated administration":"security","API keys":"security",
  "Webhook":"integrations","Named credential (HTTP callouts)":"integrations","Email template":"integrations","CSV import":"integrations","Metadata package":"integrations","Change sets":"integrations",
  "Company settings":"company","Community portal":"company","Chatter settings":"company","Translation workbench":"company","Login branding & flows":"company",
- "Bulk API 2.0":"devops","Streaming events":"devops","Sandboxes":"devops","Source tracking":"devops","Custom metadata types":"devops","Custom settings":"devops","External objects":"devops",
+ "Bulk API 2.0":"devops","Streaming events":"devops","Sandboxes":"devops","Source tracking":"devops","Custom metadata types":"devops","Custom settings":"devops","External objects":"devops","Test data seeding":"devops",
  "Scheduled job":"monitoring","Field history tracking":"monitoring","Audit trail & change events":"monitoring","AI lead scoring":"monitoring","Login history":"monitoring","Storage usage":"monitoring",
  "Duplicate rules, email alerts & forecasting":"corecrm","Case teams & entitlements":"corecrm",
 };
@@ -2565,7 +2587,7 @@ const SETUP_TILES=[
  {section:"datamodel",card:"Record type",desc:"Per-type picklists & defaults",kind:"record-types"},
  {section:"datamodel",card:"Page layouts",desc:"Visual page-layout editor"},
  {section:"datamodel",card:"Sales path",desc:"Stage guidance paths"},
- {section:"datamodel",card:"Stored roll-up rule",desc:"Parent fields recomputed from child records",kind:"rollup-rules"},
+ {section:"datamodel",card:"Stored roll-up rules",desc:"Parent fields recomputed from child records",kind:"rollup-rules"},
  {section:"datamodel",card:"Relationships",desc:"Lookup & master-detail, cascade delete"},
  {section:"datamodel",card:"Person Accounts",desc:"B2C person records on Account"},
  {section:"datamodel",card:"Territories",desc:"Hierarchy, assignment rules, sharing"},
@@ -2578,8 +2600,8 @@ const SETUP_TILES=[
  {section:"automation",card:"Dynamic Forms",desc:"Conditional field visibility"},
  {section:"automation",card:"Approval process",desc:"Multi-step approvals",kind:"approval-processes"},
  {section:"automation",card:"Assignment rule",desc:"Round-robin & rule assignment",kind:"assignment-rules"},
- {section:"automation",card:"Lead field mapping",desc:"Lead conversion field mappings",kind:"lead-field-mappings"},
- {section:"automation",card:"Web-to form",desc:"Public intake forms and their field lists",kind:"web-to-forms"},
+ {section:"automation",card:"Lead field mappings",desc:"Lead conversion field mappings",kind:"lead-field-mappings"},
+ {section:"automation",card:"Web-to forms",desc:"Public intake forms and their field lists",kind:"web-to-forms"},
  {section:"automation",card:"SLA policy",desc:"Milestones & breach tracking",kind:"sla-policies"},
  {section:"automation",card:"Escalation rule",desc:"Save & breach escalations",kind:"escalation-rules"},
  {section:"automation",card:"Auto-response rule",desc:"Instant email replies",kind:"auto-response-rules"},
@@ -3262,9 +3284,10 @@ async function loadOrgSettings(){
   document.getElementById("org_tz").value=d.default_timezone||"";
   document.getElementById("org_cur").value=d.default_currency||"";
   if(d.fiscal_year_start_month) document.getElementById("org_fy").value=String(d.fiscal_year_start_month);
+  document.getElementById("org_owd").value=d.default_record_access||"private";
 }
 async function saveOrgSettings(){
-  const r=await api("PUT","/api/admin/settings/org",{org_name:v("org_name"),default_locale:v("org_locale"),default_timezone:v("org_tz"),default_currency:v("org_cur").toUpperCase(),fiscal_year_start_month:parseInt(document.getElementById("org_fy").value,10)||1});
+  const r=await api("PUT","/api/admin/settings/org",{org_name:v("org_name"),default_locale:v("org_locale"),default_timezone:v("org_tz"),default_currency:v("org_cur").toUpperCase(),fiscal_year_start_month:parseInt(document.getElementById("org_fy").value,10)||1,default_record_access:document.getElementById("org_owd").value});
   document.getElementById("orger").innerHTML=r.ok?`<div class="ok">Company settings saved.</div>`:`<div class="err">${esc(r.data.error||"Failed")}</div>`;
   if(r.ok&&v("org_name")) showAdmin("company","Company settings");
 }
@@ -3324,9 +3347,16 @@ async function loadStorage(){
   const max=Math.max(1,...objs.map(o=>o.records||0));
   let h=`<div class="grid2"><div><b>Database</b><div class="muted">${fmt(d.database_bytes)}</div></div><div><b>Uploaded files</b><div class="muted">${fmt(d.files_bytes)}</div></div></div>
   <div class="grid2" style="margin-top:6px"><div><b>Backups (${(d.backups||[]).length})</b><div class="muted">${fmt(d.backups_bytes)}</div></div><div><b>Total records</b><div class="muted">${d.total_records!=null?d.total_records:"—"}</div></div></div>`;
-  if((d.backups||[]).length) h+=`<table style="margin-top:10px"><tr><th>Backup</th><th style="text-align:right">Size</th></tr>${d.backups.map(b=>`<tr><td>${esc(b.name)}</td><td style="text-align:right">${fmt(b.size_bytes)}</td></tr>`).join("")}</table>`;
+  if((d.backups||[]).length) h+=`<table style="margin-top:10px"><tr><th>Backup</th><th style="text-align:right">Size</th><th></th></tr>${d.backups.map(b=>`<tr><td>${esc(b.name)}</td><td style="text-align:right">${fmt(b.size_bytes)}</td><td style="text-align:right"><button class="btn secondary small" onclick="restoreBackup('${esc(b.name)}')">Restore</button></td></tr>`).join("")}</table>`;
   h+=`<table style="margin-top:10px"><tr><th>Object</th><th style="width:45%">Records</th><th style="text-align:right"></th></tr>${objs.slice(0,40).map(o=>{const pct=Math.round(100*(o.records||0)/max);return `<tr><td>${esc(o.label||o.object)}<div class="muted">${esc(o.object)}${o.custom?" · custom":""}</div></td><td><div style="background:#eef1f5;border-radius:4px;height:10px"><div style="background:#0176d3;height:10px;border-radius:4px;width:${pct}%"></div></div></td><td style="text-align:right">${o.records.toLocaleString()}</td></tr>`;}).join("")}</table>`;
   el.innerHTML=h;
+}
+async function restoreBackup(name){
+  if(!confirm("Restore backup '"+name+"'? The current database will be replaced by this backup.")) return;
+  if(!confirm("This cannot be undone directly — a pre-restore safety snapshot is kept. Restore now?")) return;
+  const r=await api("POST","/api/admin/backups/"+encodeURIComponent(name)+"/restore",{confirm:true});
+  if(r.ok){ toast("Database restored from "+name+" — reloading…","ok"); setTimeout(()=>location.reload(),1500); }
+  else toast((r.data&&r.data.error)||"Restore failed","error");
 }
 async function listSetupRoles(){
   const el=document.getElementById("rl_list"); if(!el) return;

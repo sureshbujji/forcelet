@@ -330,6 +330,16 @@ class Security:
                             return True
             except Exception:
                 pass
+        # Org-wide default record access (OWD): the baseline when no grant
+        # above applies. "private" preserves the historical behavior
+        # (nothing visible unless granted); the public levels extend baseline
+        # visibility to every user. Object-level profile permissions still
+        # gate create/edit/delete actions.
+        from .settings import ORG_KEY, get_settings
+        owd = get_settings(self.store, ORG_KEY).get("default_record_access",
+                                                   "private")
+        if owd in ("public_read_only", "public_read_write"):
+            return True
         return False
 
     def _sharing_target_includes(self, target: dict, user: dict) -> bool:

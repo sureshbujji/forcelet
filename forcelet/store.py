@@ -88,7 +88,7 @@ class Store:
                       "mf_auto_responses", "mf_paths", "mf_ml_models",
                       "mf_sla_policies", "mf_case_milestones", "mf_escalation_rules",
                       "mf_named_credentials", "mf_forecast_quotas", "mf_flow_runs",
-                      "mf_forecast_types",
+                      "mf_forecast_types", "mf_forecast_adjustments",
                       "mf_apps",
                       "mf_dashboards", "mf_case_queues", "mf_macros",
                       "mf_bulk_jobs", "mf_report_subs", "mf_flow_versions",

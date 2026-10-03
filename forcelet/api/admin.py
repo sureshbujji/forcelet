@@ -10,6 +10,8 @@ import json
 import os
 import re
 import secrets
+import shutil
+import sqlite3
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -35,6 +37,60 @@ from ._shared import (
 def _backup_dir() -> str:
     return os.environ.get("FORCELET_BACKUP_DIR") or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backups")
+
+
+def _take_backup(store) -> str:
+    """Write a VACUUM INTO snapshot of the live DB; return the file name.
+
+    Shared by the manual backup endpoint and the pre-restore safety
+    snapshot. VACUUM INTO writes a consistent snapshot while the DB stays
+    online, so a plain file copy back is its exact inverse on restore.
+    """
+    bdir = _backup_dir()
+    os.makedirs(bdir, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dest = os.path.join(bdir, f"forcelet-{stamp}.db")
+    # Same-second callers (e.g. restore's safety snapshot right after a
+    # manual backup) must not collide: VACUUM INTO refuses existing files.
+    n = 1
+    while os.path.exists(dest):
+        n += 1
+        dest = os.path.join(bdir, f"forcelet-{stamp}-{n}.db")
+    store._execute("VACUUM INTO ?", (dest,))
+    # Retention: keep the newest N backups.
+    keep = int(os.environ.get("FORCELET_BACKUP_KEEP", "14"))
+    existing = sorted(f for f in os.listdir(bdir)
+                      if f.startswith("forcelet-") and f.endswith(".db"))
+    for old in existing[:-keep]:
+        os.remove(os.path.join(bdir, old))
+    return os.path.basename(dest)
+
+
+def _restore_db_file(store, backup_path: str) -> None:
+    """Replace the live SQLite file with a backup snapshot, in process.
+
+    The store holds a single shared connection, so the swap happens under
+    the store lock: every other thread blocks on the lock until the new
+    connection is in place. WAL sidecars are removed so the fresh
+    connection cannot replay the old log over the restored file.
+    """
+    db_path = store.db_path
+    with store._lock:
+        store.conn.commit()
+        store.conn.close()
+        for suffix in ("-wal", "-shm"):
+            try:
+                os.remove(db_path + suffix)
+            except OSError:
+                pass
+        shutil.copyfile(backup_path, db_path)
+        conn = sqlite3.connect(db_path, check_same_thread=False,
+                               timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        store.conn = conn
 
 
 def register(app: Flask):
@@ -83,6 +139,42 @@ def register(app: Flask):
                 return None
         return jsonify({"error": "Target is outside your delegated "
                                  "administration scope"}), 403
+
+    def _delegated_profile_ok(profile):
+        """403 response when a delegated (non-full) admin tries to grant the
+        System Administrator profile. Full admins are unaffected."""
+        if profile == "System Administrator" \
+                and not security.is_admin(request.mf_user):
+            return jsonify({"error": "Delegated administrators cannot grant "
+                                     "the System Administrator profile"}), 403
+        return None
+
+    def _validate_grants(obj_perms, field_perms):
+        """422 response or None. Object/field references must exist — the
+        same structural rules as profile PUT, applied to permission sets
+        too so typos fail loudly instead of silently at can() time."""
+        if obj_perms is not None and not isinstance(obj_perms, dict):
+            return jsonify({"error": "object_permissions must be an object"}), 422
+        if field_perms is not None and not isinstance(field_perms, dict):
+            return jsonify({"error": "field_permissions must be an object"}), 422
+        for obj_name, perms in (obj_perms or {}).items():
+            if obj_name != "*" and not registry.get_object(obj_name):
+                return jsonify({"error": f"Unknown object '{obj_name}'"}), 422
+            for act in (perms or {}):
+                if act not in ("create", "read", "edit", "delete"):
+                    return jsonify({"error": f"Unknown permission '{act}'"}), 422
+        for obj_name, fields in (field_perms or {}).items():
+            obj = registry.get_object(obj_name)
+            if not obj:
+                return jsonify({"error": f"Unknown object '{obj_name}'"}), 422
+            fmap = registry.field_map(obj)
+            for fname, fp in (fields or {}).items():
+                if fname not in fmap:
+                    return jsonify({"error": f"Unknown field '{obj_name}.{fname}'"}), 422
+                for k in (fp or {}):
+                    if k not in ("read", "edit"):
+                        return jsonify({"error": f"Unknown field permission '{k}'"}), 422
+        return None
 
     def _validate_sla_policy(policy):
         """422 response or None. ``policy`` is the merged policy dict."""
@@ -244,20 +336,50 @@ def register(app: Flask):
     @require_admin
     @rate_limit(max_requests=6, window_seconds=3600)
     def backup_create():
+        name = _take_backup(store)
+        _audit("backup_create", "Database", name)
+        return jsonify({"backup": name}), 201
+
+    @app.post("/api/admin/backups/<bid>/restore")
+    @require_auth
+    @require_admin
+    @rate_limit(max_requests=6, window_seconds=3600)
+    def backup_restore(bid):
+        body = request.json or {}
+        if body.get("confirm") is not True:
+            return jsonify({"error": "Restoring a backup replaces the live "
+                                     "database — retry with "
+                                     "{\"confirm\": true}"}), 422
         bdir = _backup_dir()
-        os.makedirs(bdir, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        dest = os.path.join(bdir, f"forcelet-{stamp}.db")
-        # VACUUM INTO writes a consistent snapshot while the DB stays online.
-        store._execute("VACUUM INTO ?", (dest,))
-        # Retention: keep the newest N backups.
-        keep = int(os.environ.get("FORCELET_BACKUP_KEEP", "14"))
-        existing = sorted(f for f in os.listdir(bdir)
-                          if f.startswith("forcelet-") and f.endswith(".db"))
-        for old in existing[:-keep]:
-            os.remove(os.path.join(bdir, old))
-        _audit("backup_create", "Database", os.path.basename(dest))
-        return jsonify({"backup": os.path.basename(dest)}), 201
+        if not re.fullmatch(r"forcelet-[0-9]{8}-[0-9]{6}(-\d+)?\.db",
+                             bid or ""):
+            return jsonify({"error": "Unknown backup"}), 404
+        # Path-traversal guard: resolve and require containment in the
+        # backups directory.
+        target = os.path.realpath(os.path.join(bdir, bid))
+        if not target.startswith(os.path.realpath(bdir) + os.sep) \
+                or not os.path.isfile(target):
+            return jsonify({"error": "Unknown backup"}), 404
+        from .. import scheduler as _scheduler
+        if not _scheduler.acquire_lock(store):
+            return jsonify({"error": "The scheduler is running — "
+                                     "retry shortly"}), 409
+        try:
+            # Safety snapshot first: the pre-restore DB is recoverable even
+            # if the restore itself fails midway.
+            snapshot = _take_backup(store)
+            try:
+                _restore_db_file(store, target)
+            except (OSError, sqlite3.Error) as e:
+                return jsonify({"error": f"Restore failed: {e}. A "
+                                         f"pre-restore snapshot was kept as "
+                                         f"{snapshot}"}), 422
+            # Written after the swap so it lands in the restored DB's trail.
+            _audit("restore", "Database",
+                   f"{bid} (safety snapshot: {snapshot})")
+            return jsonify({"restored": bid, "safety_snapshot": snapshot})
+        finally:
+            _scheduler.release_lock(store)
 
     @app.get("/api/admin/<kind>/<rid>")
     @require_auth
@@ -438,6 +560,13 @@ def register(app: Flask):
             if not (body.get("name") or "").strip():
                 return jsonify({"error": "Name is required"}), 422
             body.setdefault("active", True)
+        if kind == "permission-sets":
+            # Structural validation: referenced objects/fields must exist so
+            # typos fail loudly instead of silently at can() time.
+            err = _validate_grants(body.get("object_permissions"),
+                                   body.get("field_permissions"))
+            if err:
+                return err
         rid = store.config_put(table, body)
         _audit("create", kind, body.get("name") or rid)
         return jsonify(store.config_get(table, rid)), 201
@@ -507,6 +636,11 @@ def register(app: Flask):
             err = _validate_web_to_form(merged)
             if err:
                 return err
+        if kind == "permission-sets":
+            err = _validate_grants(merged.get("object_permissions"),
+                                   merged.get("field_permissions"))
+            if err:
+                return err
         if kind == "currencies" and merged.get("is_corporate"):
             for c in store.config_all(table):
                 if c.get("id") != rid and c.get("is_corporate"):
@@ -537,6 +671,57 @@ def register(app: Flask):
         _audit("update", kind, merged.get("name") or rid)
         return jsonify(store.config_get(table, rid))
 
+    def _referenced_by(kind, rid, row):
+        """409 response listing live dependents of a config row, or None.
+
+        Scoped to the highest-risk kinds: queues (omni-channel routing
+        configs, approval-step approvers), flows (subflow actions in other
+        flows), and approval processes (pending approval requests).
+        """
+        deps = []
+        if kind == "queues":
+            qname = (row or {}).get("name")
+            for rc in store.config_all("mf_routing_configs"):
+                if rc.get("queue_id") == rid:
+                    deps.append("routing config "
+                                f"'{rc.get('name') or rc.get('id')}'")
+            for proc in store.config_all("mf_approval_processes"):
+                for step in proc.get("steps") or []:
+                    ap = step.get("approver") or {}
+                    if isinstance(ap, dict) and ap.get("type") == "queue" \
+                            and (ap.get("id") == rid
+                                 or (qname and ap.get("name") == qname)):
+                        deps.append("approval process "
+                                    f"'{proc.get('name') or proc.get('id')}' "
+                                    f"(step '{step.get('name') or '?'}')")
+                        break
+        elif kind == "flows":
+            fname = (row or {}).get("name")
+            for fl in store.config_all("mf_flows"):
+                if fl.get("id") == rid:
+                    continue
+                for act in fl.get("actions") or []:
+                    if isinstance(act, dict) \
+                            and act.get("type") == "subflow" \
+                            and (act.get("flow") == rid
+                                 or (fname and act.get("flow") == fname)):
+                        deps.append("flow "
+                                    f"'{fl.get('name') or fl.get('id')}' "
+                                    "(subflow action)")
+                        break
+        elif kind == "approval-processes":
+            for req in store.config_all("mf_approval_requests"):
+                if req.get("process_id") == rid \
+                        and req.get("status") == "Pending":
+                    deps.append("pending approval request for "
+                                f"{req.get('object')}:{req.get('record_id')}")
+        if deps:
+            seen = sorted(set(deps))
+            return jsonify({"error": "Cannot delete: referenced by "
+                                     f"{len(seen)} dependent(s)",
+                            "dependents": seen}), 409
+        return None
+
     @app.delete("/api/admin/<kind>/<rid>")
     @require_auth
     @require_admin
@@ -550,6 +735,10 @@ def register(app: Flask):
             if n:
                 return jsonify({"error": f"Division has {n} assigned record(s) — "
                                          "move them to another division first"}), 409
+        if old:
+            blocked = _referenced_by(kind, rid, old)
+            if blocked:
+                return blocked
         ok = store.config_delete(table, rid)
         if ok:
             _audit("delete", kind, (old or {}).get("name") or rid)
@@ -726,6 +915,9 @@ def register(app: Flask):
         denied = _delegated_target_ok(("users",), body.get("role"))
         if denied:
             return denied
+        denied = _delegated_profile_ok(body.get("profile"))
+        if denied:
+            return denied
         password = body.get("password") or "forcelet"
         sec = get_settings(store, SECURITY_KEY)
         perr = check_password_policy(password, body.get("username", ""), sec)
@@ -748,11 +940,21 @@ def register(app: Flask):
         target = security.get_user(uid)
         if not target:
             return jsonify({"error": "Unknown user"}), 404
-        denied = _delegated_target_ok(
-            ("users",), (request.json or {}).get("role", target.get("role")))
+        body = request.json or {}
+        # Scope is judged against the target's CURRENT role (a delegated
+        # admin cannot hijack an out-of-scope user by retargeting the role).
+        denied = _delegated_target_ok(("users",), target.get("role"))
         if denied:
             return denied
-        body = request.json or {}
+        new_role = body.get("role", target.get("role"))
+        if new_role != target.get("role"):
+            # ...and the replacement role must be in scope as well.
+            denied = _delegated_target_ok(("users",), new_role)
+            if denied:
+                return denied
+        denied = _delegated_profile_ok(body.get("profile"))
+        if denied:
+            return denied
         if target["id"] == request.mf_user["id"] and "is_active" in body \
                 and not body["is_active"]:
             return jsonify({"error": "You cannot deactivate your own account"}), 422
@@ -999,6 +1201,30 @@ def register(app: Flask):
             return jsonify({"error": "Unknown profile"}), 404
         return jsonify(prof)
 
+    @app.delete("/api/admin/profiles/<name>")
+    @require_auth
+    @require_admin_scope("profiles")
+    def admin_delete_profile(name):
+        # Profiles are config entries (mf_profiles), not records: delete +
+        # audit, no recycle bin.
+        if name == "System Administrator":
+            return jsonify({"error": "The built-in System Administrator "
+                                     "profile cannot be deleted"}), 409
+        prof = security.get_profile(name)
+        if not prof:
+            return jsonify({"error": "Unknown profile"}), 404
+        assigned = [u["username"] for u in security.list_users()
+                    if u.get("profile") == name]
+        if assigned:
+            return jsonify({"error": f"Profile is assigned to "
+                                     f"{len(assigned)} user(s): "
+                                     f"{', '.join(sorted(assigned)[:5])}"
+                                     f"{' …' if len(assigned) > 5 else ''} — "
+                                     "reassign them first"}), 409
+        store.meta_delete("mf_profiles", name)
+        _audit("delete", "profile", name)
+        return jsonify({"deleted": name})
+
     @app.put("/api/admin/profiles/<name>")
     @require_auth
     @require_admin_scope("profiles")
@@ -1012,23 +1238,9 @@ def register(app: Flask):
         obj_perms = body.get("object_permissions", prof.get("object_permissions") or {})
         field_perms = body.get("field_permissions", prof.get("field_permissions") or {})
         # Structured validation: objects and fields must exist.
-        for obj_name, perms in (obj_perms or {}).items():
-            if obj_name != "*" and not registry.get_object(obj_name):
-                return jsonify({"error": f"Unknown object '{obj_name}'"}), 422
-            for act in (perms or {}):
-                if act not in ("create", "read", "edit", "delete"):
-                    return jsonify({"error": f"Unknown permission '{act}'"}), 422
-        for obj_name, fields in (field_perms or {}).items():
-            obj = registry.get_object(obj_name)
-            if not obj:
-                return jsonify({"error": f"Unknown object '{obj_name}'"}), 422
-            fmap = registry.field_map(obj)
-            for fname, fp in (fields or {}).items():
-                if fname not in fmap:
-                    return jsonify({"error": f"Unknown field '{obj_name}.{fname}'"}), 422
-                for k in (fp or {}):
-                    if k not in ("read", "edit"):
-                        return jsonify({"error": f"Unknown field permission '{k}'"}), 422
+        err = _validate_grants(obj_perms, field_perms)
+        if err:
+            return err
         prof["object_permissions"] = {o: {a: bool(v) for a, v in (p or {}).items()}
                                      for o, p in (obj_perms or {}).items()}
         prof["field_permissions"] = {o: {f: {k: bool(v) for k, v in (fp or {}).items()}
